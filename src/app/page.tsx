@@ -30,6 +30,11 @@ type SessionResponse = {
   user?: UserProfile;
 };
 
+type AppInfo = {
+  branch: string;
+  version: string;
+};
+
 type NavidromeLibraryStatus = {
   configured: boolean;
   exists: boolean;
@@ -122,6 +127,7 @@ type ResolveResponse = {
 const numberFormatter = new Intl.NumberFormat("en-US");
 
 export default function Home() {
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
@@ -188,6 +194,17 @@ export default function Home() {
     }
   }, []);
 
+  const loadAppInfo = useCallback(async () => {
+    try {
+      setAppInfo(await fetchJson<AppInfo>("/api/app-info"));
+    } catch {
+      setAppInfo({
+        branch: "unknown",
+        version: "unknown"
+      });
+    }
+  }, []);
+
   const resolveCatalogSource = useCallback(async () => {
     const trimmedInput = lookupInput.trim();
 
@@ -232,9 +249,10 @@ export default function Home() {
       window.history.replaceState({}, "", "/");
     }
 
+    void loadAppInfo();
     void loadSession();
     void loadNavidromeStatus();
-  }, [loadNavidromeStatus, loadSession]);
+  }, [loadAppInfo, loadNavidromeStatus, loadSession]);
 
   useEffect(() => {
     if (session?.authenticated && sourceKind === "playlist") {
@@ -335,7 +353,8 @@ export default function Home() {
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark" aria-hidden="true">
-            <Music2 size={26} />
+            <span className="brand-orbit" />
+            <span className="brand-note">BU</span>
           </div>
           <div>
             <p className="eyebrow">SpotifyBU</p>
@@ -803,6 +822,11 @@ export default function Home() {
           </div>
         </section>
       )}
+      <footer className="app-footer">
+        <span>SpotifyBU</span>
+        <span>v{appInfo?.version ?? "..."}</span>
+        <span>{appInfo?.branch ?? "..."} branch</span>
+      </footer>
     </main>
   );
 }
