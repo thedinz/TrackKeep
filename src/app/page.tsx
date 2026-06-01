@@ -48,6 +48,31 @@ type NavidromeLibraryStatus = {
   writable: boolean;
 };
 
+type SourceKind = "album" | "playlist" | "track";
+
+type ResolvedSource = {
+  externalUrl?: string;
+  id?: string;
+  imageUrl?: string;
+  name: string;
+  subtitle: string;
+  tracksTotal: number;
+  type: SourceKind;
+};
+
+type FolderPlan = {
+  absolutePath?: string;
+  album: string;
+  albumArtist: string;
+  albumId?: string;
+  folderName: string;
+  key: string;
+  logged: boolean;
+  relativePath: string;
+  trackCount: number;
+  trackIds: string[];
+};
+
 type PlaylistSummary = {
   collaborative: boolean;
   description: string;
@@ -63,7 +88,10 @@ type PlaylistSummary = {
 type BackupTrack = {
   addedAt?: string;
   album: string;
+  albumArtist: string;
+  albumId?: string;
   artists: string[];
+  discNumber?: number;
   durationMs: number;
   explicit: boolean;
   id?: string;
@@ -71,6 +99,7 @@ type BackupTrack = {
   name: string;
   position: number;
   spotifyUrl?: string;
+  trackNumber?: number;
 };
 
 type PlaylistResponse = {
@@ -78,8 +107,16 @@ type PlaylistResponse = {
 };
 
 type TracksResponse = {
+  folderPlans: FolderPlan[];
   playlist: PlaylistSummary;
   tracks: BackupTrack[];
+};
+
+type ResolveResponse = {
+  folderPlans: FolderPlan[];
+  source: ResolvedSource;
+  tracks: BackupTrack[];
+  type: "album" | "track";
 };
 
 const numberFormatter = new Intl.NumberFormat("en-US");
@@ -91,12 +128,17 @@ export default function Home() {
   const [selectedPlaylist, setSelectedPlaylist] = useState<PlaylistSummary | null>(
     null
   );
+  const [sourceKind, setSourceKind] = useState<SourceKind>("playlist");
+  const [lookupInput, setLookupInput] = useState("");
+  const [resolvedSource, setResolvedSource] = useState<ResolvedSource | null>(null);
   const [tracks, setTracks] = useState<BackupTrack[]>([]);
+  const [folderPlans, setFolderPlans] = useState<FolderPlan[]>([]);
   const [query, setQuery] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [isLoadingPlaylists, setIsLoadingPlaylists] = useState(false);
   const [isLoadingTracks, setIsLoadingTracks] = useState(false);
+  const [isResolvingSource, setIsResolvingSource] = useState(false);
   const [navidromeStatus, setNavidromeStatus] =
     useState<NavidromeLibraryStatus | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
@@ -146,6 +188,41 @@ export default function Home() {
     }
   }, []);
 
+  const resolveCatalogSource = useCallback(async () => {
+    const trimmedInput = lookupInput.trim();
+
+    if (sourceKind === "playlist" || !trimmedInput) {
+      return;
+    }
+
+    setIsResolvingSource(true);
+    setRequestError(null);
+
+    try {
+      const response = await fetchJson<ResolveResponse>(
+        `/api/spotify/resolve?type=${sourceKind}&input=${encodeURIComponent(
+          trimmedInput
+        )}`
+      );
+      setResolvedSource(response.source);
+      setTracks(response.tracks);
+      setFolderPlans(response.folderPlans);
+    } catch (error) {
+      setRequestError(errorMessage(error));
+    } finally {
+      setIsResolvingSource(false);
+    }
+  }, [lookupInput, sourceKind]);
+
+  const changeSourceKind = useCallback((nextSourceKind: SourceKind) => {
+    setSourceKind(nextSourceKind);
+    setRequestError(null);
+    setResolvedSource(null);
+    setTracks([]);
+    setFolderPlans([]);
+    setSelectedPlaylist(null);
+  }, []);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const error = params.get("error");
@@ -160,15 +237,20 @@ export default function Home() {
   }, [loadNavidromeStatus, loadSession]);
 
   useEffect(() => {
-    if (session?.authenticated) {
+    if (session?.authenticated && sourceKind === "playlist") {
       void loadPlaylists();
     }
-  }, [loadPlaylists, session?.authenticated]);
+  }, [loadPlaylists, session?.authenticated, sourceKind]);
 
   useEffect(() => {
+    if (sourceKind !== "playlist") {
+      return;
+    }
+
     if (!selectedPlaylistId) {
       setSelectedPlaylist(null);
       setTracks([]);
+      setFolderPlans([]);
       return;
     }
 
@@ -186,6 +268,7 @@ export default function Home() {
         if (!cancelled) {
           setSelectedPlaylist(response.playlist);
           setTracks(response.tracks);
+          setFolderPlans(response.folderPlans);
         }
       } catch (error) {
         if (!cancelled) {
@@ -203,7 +286,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [selectedPlaylistId]);
+  }, [selectedPlaylistId, sourceKind]);
 
   const filteredPlaylists = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -231,6 +314,21 @@ export default function Home() {
   const navidromeStatusLabel = navidromeStatus
     ? navidromeStatusMessage(navidromeStatus)
     : "Checking library target";
+  const playlistSource = selectedPlaylist
+    ? ({
+        externalUrl: selectedPlaylist.externalUrl,
+        id: selectedPlaylist.id,
+        imageUrl: selectedPlaylist.imageUrl,
+        name: selectedPlaylist.name,
+        subtitle: selectedPlaylist.owner,
+        tracksTotal: selectedPlaylist.tracksTotal,
+        type: "playlist"
+      } satisfies ResolvedSource)
+    : null;
+  const activeSource = sourceKind === "playlist" ? playlistSource : resolvedSource;
+  const canExportPlaylist = sourceKind === "playlist" && Boolean(selectedPlaylistId);
+  const selectedTracksLabel =
+    sourceKind === "playlist" ? "Selected Tracks" : "Resolved Tracks";
 
   return (
     <main className="app-shell">
@@ -323,15 +421,15 @@ export default function Home() {
               <div className="panel-title">
                 <ListMusic size={20} />
                 <div>
-                  <h2>Playlists</h2>
+                  <h2>Backup Scope</h2>
                   <p className="muted">
-                    {numberFormatter.format(playlists.length)} lists
+                    {sourceKindLabel(sourceKind)}
                   </p>
                 </div>
               </div>
               <button
                 className="icon-command"
-                disabled={isLoadingPlaylists}
+                disabled={sourceKind !== "playlist" || isLoadingPlaylists}
                 onClick={() => void loadPlaylists()}
                 title="Refresh playlists"
                 type="button"
@@ -344,43 +442,121 @@ export default function Home() {
             </div>
 
             <div className="library-tools">
-              <label className="search-box">
-                <Search size={18} />
-                <input
-                  aria-label="Search playlists"
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search"
-                  value={query}
-                />
+              <label className="scope-control">
+                <span className="stat-label">Type</span>
+                <select
+                  aria-label="Backup source type"
+                  onChange={(event) =>
+                    changeSourceKind(event.target.value as SourceKind)
+                  }
+                  value={sourceKind}
+                >
+                  <option value="playlist">User playlist</option>
+                  <option value="album">Album</option>
+                  <option value="track">Song</option>
+                </select>
               </label>
+
+              {sourceKind === "playlist" ? (
+                <label className="search-box">
+                  <Search size={18} />
+                  <input
+                    aria-label="Search playlists"
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="Search"
+                    value={query}
+                  />
+                </label>
+              ) : (
+                <form
+                  className="lookup-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void resolveCatalogSource();
+                  }}
+                >
+                  <label className="search-box">
+                    <Search size={18} />
+                    <input
+                      aria-label={`Spotify ${sourceKindLabel(sourceKind)} URL`}
+                      onChange={(event) => setLookupInput(event.target.value)}
+                      placeholder={
+                        sourceKind === "album"
+                          ? "Spotify album URL or ID"
+                          : "Spotify song URL or ID"
+                      }
+                      value={lookupInput}
+                    />
+                  </label>
+                  <button
+                    className="command"
+                    disabled={!lookupInput.trim() || isResolvingSource}
+                    type="submit"
+                  >
+                    {isResolvingSource ? (
+                      <Loader2 className="spin" size={18} />
+                    ) : (
+                      <Search size={18} />
+                    )}
+                    Resolve
+                  </button>
+                </form>
+              )}
             </div>
 
-            <div className="playlist-list">
-              {filteredPlaylists.map((playlist) => (
-                <button
-                  className={`playlist-button ${
-                    playlist.id === selectedPlaylistId ? "active" : ""
-                  }`}
-                  key={playlist.id}
-                  onClick={() => setSelectedPlaylistId(playlist.id)}
-                  type="button"
-                >
-                  <span className="playlist-art">
-                    {playlist.imageUrl ? (
-                      <img alt="" src={playlist.imageUrl} />
-                    ) : (
-                      <Music2 size={22} />
-                    )}
-                  </span>
-                  <span className="playlist-meta">
-                    <span className="playlist-name">{playlist.name}</span>
-                    <span className="playlist-count">
-                      {numberFormatter.format(playlist.tracksTotal)} tracks
+            {sourceKind === "playlist" ? (
+              <div className="playlist-list">
+                {filteredPlaylists.map((playlist) => (
+                  <button
+                    className={`playlist-button ${
+                      playlist.id === selectedPlaylistId ? "active" : ""
+                    }`}
+                    key={playlist.id}
+                    onClick={() => setSelectedPlaylistId(playlist.id)}
+                    type="button"
+                  >
+                    <span className="playlist-art">
+                      {playlist.imageUrl ? (
+                        <img alt="" src={playlist.imageUrl} />
+                      ) : (
+                        <Music2 size={22} />
+                      )}
                     </span>
+                    <span className="playlist-meta">
+                      <span className="playlist-name">{playlist.name}</span>
+                      <span className="playlist-count">
+                        {numberFormatter.format(playlist.tracksTotal)} tracks
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="source-preview">
+                {resolvedSource ? (
+                  <>
+                    <span className="playlist-art">
+                      {resolvedSource.imageUrl ? (
+                        <img alt="" src={resolvedSource.imageUrl} />
+                      ) : (
+                        <Music2 size={22} />
+                      )}
+                    </span>
+                    <span>
+                      <span className="playlist-name">{resolvedSource.name}</span>
+                      <span className="playlist-count">
+                        {resolvedSource.subtitle}
+                      </span>
+                    </span>
+                  </>
+                ) : (
+                  <span className="muted">
+                    Paste a Spotify {sourceKindLabel(sourceKind).toLowerCase()} URL
+                    or ID to preview its Navidrome target.
                   </span>
-                </button>
-              ))}
-            </div>
+                )}
+              </div>
+            )}
           </aside>
 
           <section className="panel detail-panel">
@@ -388,22 +564,22 @@ export default function Home() {
               <div className="panel-title">
                 <Download size={20} />
                 <div>
-                  <h2>{selectedPlaylist?.name ?? "Select a playlist"}</h2>
-                  <p className="muted">
-                    {selectedPlaylist ? selectedPlaylist.owner : "Ready"}
-                  </p>
+                  <h2>{activeSource?.name ?? `Select a ${sourceKindLabel(sourceKind)}`}</h2>
+                  <p className="muted">{activeSource?.subtitle ?? "Ready"}</p>
                 </div>
               </div>
               <div className="detail-actions">
                 <a
                   className={`command secondary ${
-                    selectedPlaylistId ? "" : "disabled"
+                    canExportPlaylist ? "" : "disabled"
                   }`}
                   href={
-                    selectedPlaylistId
+                    canExportPlaylist
                       ? `/api/spotify/playlists/${selectedPlaylistId}/export?format=json`
                       : "#"
                   }
+                  aria-disabled={!canExportPlaylist}
+                  tabIndex={canExportPlaylist ? undefined : -1}
                   title="Export JSON"
                 >
                   <FileJson size={18} />
@@ -411,13 +587,15 @@ export default function Home() {
                 </a>
                 <a
                   className={`command secondary ${
-                    selectedPlaylistId ? "" : "disabled"
+                    canExportPlaylist ? "" : "disabled"
                   }`}
                   href={
-                    selectedPlaylistId
+                    canExportPlaylist
                       ? `/api/spotify/playlists/${selectedPlaylistId}/export?format=csv`
                       : "#"
                   }
+                  aria-disabled={!canExportPlaylist}
+                  tabIndex={canExportPlaylist ? undefined : -1}
                   title="Export CSV"
                 >
                   <FileText size={18} />
@@ -429,29 +607,55 @@ export default function Home() {
             <div className="detail-body">
               <div className="summary-strip">
                 <span>
-                  <span className="stat-label">Library Tracks</span>
+                  <span className="stat-label">
+                    {sourceKind === "playlist" ? "Library Tracks" : "Source Tracks"}
+                  </span>
                   <span className="stat-value">
-                    {numberFormatter.format(totalTracks)}
+                    {numberFormatter.format(
+                      sourceKind === "playlist"
+                        ? totalTracks
+                        : activeSource?.tracksTotal ?? 0
+                    )}
                   </span>
                 </span>
                 <span>
-                  <span className="stat-label">Selected Tracks</span>
+                  <span className="stat-label">{selectedTracksLabel}</span>
                   <span className="stat-value">
                     {numberFormatter.format(tracks.length)}
                   </span>
                 </span>
                 <span>
-                  <span className="stat-label">Match Key</span>
-                  <span className="stat-value">ISRC</span>
+                  <span className="stat-label">Folder Rule</span>
+                  <span className="stat-value">Artist - Album</span>
                 </span>
               </div>
+
+              {folderPlans.length ? (
+                <div className="folder-plan-list">
+                  {folderPlans.map((plan) => (
+                    <div className="folder-plan" key={plan.key}>
+                      <HardDrive size={18} />
+                      <span>
+                        <span className="folder-plan-name">{plan.folderName}</span>
+                        <span className="folder-plan-path">
+                          {plan.absolutePath ?? plan.relativePath}
+                        </span>
+                      </span>
+                      <span className="folder-plan-count">
+                        {numberFormatter.format(plan.trackCount)} tracks
+                        {plan.logged ? " logged" : " planned"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
 
               {isLoadingTracks ? (
                 <div className="loading-state">
                   <Loader2 className="spin" size={28} />
                   <span>Loading tracks</span>
                 </div>
-              ) : selectedPlaylist ? (
+              ) : activeSource ? (
                 <div className="track-table">
                   <div className="track-row track-head">
                     <span>#</span>
@@ -478,7 +682,7 @@ export default function Home() {
               ) : (
                 <div className="empty-state">
                   <ListMusic size={30} />
-                  <span>No playlist selected</span>
+                  <span>No {sourceKindLabel(sourceKind).toLowerCase()} selected</span>
                 </div>
               )}
             </div>
@@ -652,4 +856,16 @@ function navidromeStatusMessage(status: NavidromeLibraryStatus) {
   }
 
   return status.message;
+}
+
+function sourceKindLabel(sourceKind: SourceKind) {
+  if (sourceKind === "album") {
+    return "Album";
+  }
+
+  if (sourceKind === "track") {
+    return "Song";
+  }
+
+  return "User playlist";
 }

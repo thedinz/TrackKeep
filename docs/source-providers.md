@@ -8,7 +8,8 @@ SpotifyBU's source layer should follow the same broad shape as spotDL while keep
 4. Score candidates by title, artist, duration, album, explicit flag, ISRC, and provider confidence.
 5. Download only from sources the user is authorized to use.
 6. Write the final audio file into `NAVIDROME_LIBRARY_PATH`.
-7. Tag the file and let Navidrome scan it.
+7. Record the album folder mapping in `.spotifybu/album-folders.json`.
+8. Tag the file and let Navidrome scan it.
 
 ## spotDL Reference
 
@@ -33,6 +34,7 @@ Useful references:
 - Providers must declare whether they can search, download, tag, and report provenance.
 - Providers must declare their authorization model before any download action is enabled.
 - Providers must stage files only through the Navidrome target helper, never by accepting arbitrary output paths.
+- Download workers must record successful writes with `recordNavidromeAlbumFolders` so later tracks from the same album reuse the same `Artist - Album` folder.
 - Providers should preserve provenance in a sidecar or database record: source name, source URL, candidate score, selected reason, and user confirmation.
 - Provider downloads should run as background jobs with retry, cancellation, and a dry-run preview.
 

@@ -37,7 +37,8 @@ a {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -312,7 +313,25 @@ button {
 }
 
 .library-tools {
+  display: grid;
+  gap: 10px;
   padding: 14px;
+}
+
+.scope-control {
+  display: grid;
+  gap: 6px;
+}
+
+.scope-control select {
+  appearance: none;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  min-height: 42px;
+  outline: none;
+  padding: 0 34px 0 10px;
 }
 
 .search-box {
@@ -333,6 +352,27 @@ button {
   min-width: 0;
   outline: none;
   width: 100%;
+}
+
+.lookup-form {
+  display: grid;
+  gap: 10px;
+}
+
+.source-preview {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 52px minmax(0, 1fr);
+  margin: 0 14px 14px;
+  min-height: 82px;
+  padding: 10px;
+}
+
+.source-preview > .muted {
+  grid-column: 1 / -1;
 }
 
 .playlist-list {
@@ -413,6 +453,47 @@ button {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin: 0 -16px 16px;
   padding: 14px 16px;
+}
+
+.folder-plan-list {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.folder-plan {
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  min-height: 58px;
+  padding: 10px;
+}
+
+.folder-plan-name,
+.folder-plan-path {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-plan-name {
+  font-weight: 850;
+}
+
+.folder-plan-path,
+.folder-plan-count {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.folder-plan-count {
+  white-space: nowrap;
 }
 
 .stat-label,
@@ -616,6 +697,14 @@ button {
 
   .playlist-list {
     max-height: 420px;
+  }
+
+  .folder-plan {
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .folder-plan-count {
+    grid-column: 2;
   }
 
   .track-row {

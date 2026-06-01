@@ -35,6 +35,50 @@ type SpotifyArtist = {
   name: string;
 };
 
+type SpotifyAlbumSummaryObject = {
+  artists?: SpotifyArtist[];
+  external_urls?: SpotifyExternalUrls;
+  id?: string;
+  images?: SpotifyImage[];
+  name?: string;
+  release_date?: string;
+  total_tracks?: number;
+};
+
+type SpotifyTrackObject = {
+  album?: SpotifyAlbumSummaryObject;
+  artists?: SpotifyArtist[];
+  disc_number?: number;
+  duration_ms?: number;
+  explicit?: boolean;
+  external_ids?: {
+    isrc?: string;
+  };
+  external_urls?: SpotifyExternalUrls;
+  id?: string;
+  name?: string;
+  track_number?: number;
+  type?: string;
+  uri?: string;
+};
+
+type SpotifyAlbumTrackObject = {
+  artists?: SpotifyArtist[];
+  disc_number?: number;
+  duration_ms?: number;
+  explicit?: boolean;
+  external_urls?: SpotifyExternalUrls;
+  id?: string;
+  name?: string;
+  track_number?: number;
+  type?: string;
+  uri?: string;
+};
+
+type SpotifyAlbumObject = SpotifyAlbumSummaryObject & {
+  tracks: SpotifyPaging<SpotifyAlbumTrackObject>;
+};
+
 type SpotifyPlaylistObject = {
   collaborative: boolean;
   description?: string;
@@ -54,25 +98,7 @@ type SpotifyPlaylistObject = {
 
 type SpotifyPlaylistTrackItem = {
   added_at?: string;
-  track?: {
-    album?: {
-      id?: string;
-      images?: SpotifyImage[];
-      name?: string;
-      release_date?: string;
-    };
-    artists?: SpotifyArtist[];
-    duration_ms?: number;
-    explicit?: boolean;
-    external_ids?: {
-      isrc?: string;
-    };
-    external_urls?: SpotifyExternalUrls;
-    id?: string;
-    name?: string;
-    type?: string;
-    uri?: string;
-  } | null;
+  track?: SpotifyTrackObject | null;
 };
 
 export type SpotifyUserProfile = {
@@ -94,12 +120,28 @@ export type PlaylistSummary = {
   tracksTotal: number;
 };
 
+export type AlbumSummary = {
+  artists: string[];
+  artistIds: string[];
+  externalUrl?: string;
+  id: string;
+  imageUrl?: string;
+  name: string;
+  releaseDate?: string;
+  tracksTotal: number;
+};
+
 export type BackupTrack = {
   addedAt?: string;
   album: string;
+  albumArtist: string;
+  albumArtistIds: string[];
   albumId?: string;
+  albumImageUrl?: string;
+  albumReleaseDate?: string;
   artists: string[];
   artistIds: string[];
+  discNumber?: number;
   durationMs: number;
   explicit: boolean;
   id?: string;
@@ -108,6 +150,7 @@ export type BackupTrack = {
   position: number;
   spotifyUri?: string;
   spotifyUrl?: string;
+  trackNumber?: number;
 };
 
 export type BackupPayload = {
@@ -279,28 +322,52 @@ export async function getPlaylistTracks(
 
   return items
     .filter((item) => item.track?.type === "track")
-    .map((item, index) => {
-      const track = item.track;
+    .map((item, index) => mapTrackObject(item.track, index, item.added_at));
+}
 
-      return {
-        addedAt: item.added_at,
-        album: track?.album?.name ?? "",
-        albumId: track?.album?.id,
-        artists: track?.artists?.map((artist) => artist.name) ?? [],
-        artistIds:
-          track?.artists
-            ?.map((artist) => artist.id)
-            .filter((id): id is string => Boolean(id)) ?? [],
-        durationMs: track?.duration_ms ?? 0,
-        explicit: Boolean(track?.explicit),
-        id: track?.id,
-        isrc: track?.external_ids?.isrc,
-        name: track?.name ?? "Unknown track",
-        position: index + 1,
-        spotifyUri: track?.uri,
-        spotifyUrl: track?.external_urls?.spotify
-      } satisfies BackupTrack;
-    });
+export async function getTrack(tokenSet: SpotifyTokenSet, trackId: string) {
+  return mapTrackObject(
+    await spotifyFetch<SpotifyTrackObject>(
+      tokenSet,
+      `/tracks/${encodeURIComponent(trackId)}`
+    ),
+    0
+  );
+}
+
+export async function getAlbum(tokenSet: SpotifyTokenSet, albumId: string) {
+  const album = await spotifyFetch<SpotifyAlbumObject>(
+    tokenSet,
+    `/albums/${encodeURIComponent(albumId)}`
+  );
+
+  return mapAlbum(album);
+}
+
+export async function getAlbumTracks(
+  tokenSet: SpotifyTokenSet,
+  albumId: string
+) {
+  const simplifiedTracks = await getAllPages<SpotifyAlbumTrackObject>(
+    tokenSet,
+    `/albums/${encodeURIComponent(albumId)}/tracks?limit=50`
+  );
+  const trackIds = simplifiedTracks
+    .map((track) => track.id)
+    .filter((id): id is string => Boolean(id));
+  const fullTracks = await getTracksByIds(tokenSet, trackIds);
+  const fullTrackById = new Map(
+    fullTracks
+      .filter((track): track is SpotifyTrackObject => Boolean(track?.id))
+      .map((track) => [track.id, track])
+  );
+
+  return simplifiedTracks.map((track, index) =>
+    mapTrackObject(
+      track.id ? fullTrackById.get(track.id) ?? track : track,
+      index
+    )
+  );
 }
 
 export function buildBackupPayload(
@@ -339,7 +406,10 @@ export function backupTracksToCsv(
       "track_id",
       "track_name",
       "artists",
+      "album_artist",
       "album",
+      "disc_number",
+      "track_number",
       "duration_ms",
       "isrc",
       "spotify_uri",
@@ -354,7 +424,10 @@ export function backupTracksToCsv(
       track.id ?? "",
       track.name,
       track.artists.join("; "),
+      track.albumArtist,
       track.album,
+      track.discNumber ? String(track.discNumber) : "",
+      track.trackNumber ? String(track.trackNumber) : "",
       String(track.durationMs),
       track.isrc ?? "",
       track.spotifyUri ?? "",
@@ -365,6 +438,44 @@ export function backupTracksToCsv(
   ];
 
   return rows.map((row) => row.map(csvCell).join(",")).join("\n");
+}
+
+export type SpotifyItemType = "album" | "playlist" | "track";
+
+export function parseSpotifyItemId(input: string, expectedType: SpotifyItemType) {
+  const trimmedInput = input.trim();
+  const uriMatch = trimmedInput.match(/^spotify:(album|playlist|track):([A-Za-z0-9]+)$/);
+
+  if (uriMatch) {
+    const [, type, id] = uriMatch;
+
+    if (type !== expectedType) {
+      throw new Error(`Expected a Spotify ${expectedType}, got ${type}.`);
+    }
+
+    return id;
+  }
+
+  try {
+    const url = new URL(trimmedInput);
+    const pathSegments = url.pathname.split("/").filter(Boolean);
+    const typeIndex = pathSegments.findIndex(
+      (segment) => segment === expectedType
+    );
+    const id = typeIndex >= 0 ? pathSegments[typeIndex + 1] : undefined;
+
+    if (url.hostname.endsWith("spotify.com") && id) {
+      return id;
+    }
+  } catch {
+    // Fall through to raw ID parsing.
+  }
+
+  if (/^[A-Za-z0-9]{22}$/.test(trimmedInput)) {
+    return trimmedInput;
+  }
+
+  throw new Error(`Enter a Spotify ${expectedType} URL, URI, or ID.`);
 }
 
 async function spotifyFetch<T>(
@@ -417,6 +528,77 @@ function mapPlaylist(playlist: SpotifyPlaylistObject) {
     public: playlist.public,
     tracksTotal: playlist.tracks.total
   } satisfies PlaylistSummary;
+}
+
+function mapAlbum(album: SpotifyAlbumObject) {
+  const artists = album.artists ?? [];
+
+  return {
+    artists: artists.map((artist) => artist.name),
+    artistIds: artists
+      .map((artist) => artist.id)
+      .filter((id): id is string => Boolean(id)),
+    externalUrl: album.external_urls?.spotify,
+    id: album.id ?? "",
+    imageUrl: firstImageUrl(album.images),
+    name: album.name ?? "Unknown album",
+    releaseDate: album.release_date,
+    tracksTotal: album.total_tracks ?? album.tracks.total
+  } satisfies AlbumSummary;
+}
+
+function mapTrackObject(
+  track: SpotifyTrackObject | SpotifyAlbumTrackObject | null | undefined,
+  index: number,
+  addedAt?: string
+) {
+  const fullTrack = track as SpotifyTrackObject | null | undefined;
+  const album = fullTrack?.album;
+  const artists = track?.artists ?? [];
+  const albumArtists = album?.artists ?? artists;
+  const albumArtistNames = albumArtists.map((artist) => artist.name);
+  const fallbackArtistName = artists[0]?.name ?? "Unknown Artist";
+
+  return {
+    addedAt,
+    album: album?.name ?? "Unknown Album",
+    albumArtist: albumArtistNames.join(", ") || fallbackArtistName,
+    albumArtistIds: albumArtists
+      .map((artist) => artist.id)
+      .filter((id): id is string => Boolean(id)),
+    albumId: album?.id,
+    albumImageUrl: firstImageUrl(album?.images),
+    albumReleaseDate: album?.release_date,
+    artists: artists.map((artist) => artist.name),
+    artistIds: artists
+      .map((artist) => artist.id)
+      .filter((id): id is string => Boolean(id)),
+    discNumber: track?.disc_number,
+    durationMs: track?.duration_ms ?? 0,
+    explicit: Boolean(track?.explicit),
+    id: track?.id,
+    isrc: fullTrack?.external_ids?.isrc,
+    name: track?.name ?? "Unknown track",
+    position: index + 1,
+    spotifyUri: track?.uri,
+    spotifyUrl: track?.external_urls?.spotify,
+    trackNumber: track?.track_number
+  } satisfies BackupTrack;
+}
+
+async function getTracksByIds(tokenSet: SpotifyTokenSet, trackIds: string[]) {
+  const tracks: Array<SpotifyTrackObject | null> = [];
+
+  for (let index = 0; index < trackIds.length; index += 50) {
+    const ids = trackIds.slice(index, index + 50);
+    const response = await spotifyFetch<{
+      tracks: Array<SpotifyTrackObject | null>;
+    }>(tokenSet, `/tracks?ids=${ids.map(encodeURIComponent).join(",")}`);
+
+    tracks.push(...response.tracks);
+  }
+
+  return tracks;
 }
 
 function firstImageUrl(images?: SpotifyImage[]) {
