@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { planNavidromeAlbumFolders } from "@/lib/navidrome";
 import { getSpotifySession, withSessionCookie } from "@/lib/server-session";
 import { getPlaylist, getPlaylistTracks } from "@/lib/spotify";
 
@@ -21,6 +22,10 @@ export async function GET(_request: Request, context: RouteContext) {
     getPlaylist(session.token, playlistId),
     getPlaylistTracks(session.token, playlistId)
   ]);
+  const folderPlans = await planNavidromeAlbumFolders(tracks);
 
-  return withSessionCookie(NextResponse.json({ playlist, tracks }), session);
+  return withSessionCookie(
+    NextResponse.json({ folderPlans, playlist, tracks }),
+    session
+  );
 }
