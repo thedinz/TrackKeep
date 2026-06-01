@@ -11,7 +11,7 @@ This project intentionally does not rip audio from YouTube or other services. Fu
 - Playlist track preview
 - JSON and CSV exports with track title, artists, album, ISRC, duration, Spotify URI, and Spotify URL
 - Navidrome library target status using `NAVIDROME_LIBRARY_PATH`
-- Provider-ready UI for legal media backup sources
+- Provider-ready UI and type contract for legal media backup sources
 
 ## Local Setup
 
@@ -39,6 +39,8 @@ Navidrome's getting-started docs note that Navidrome scans its configured music 
 
 Navidrome multi-library support can also point additional libraries at separate folders: https://www.navidrome.org/docs/usage/features/multi-library/
 
+spotDL is a useful comparison point: it resolves Spotify metadata to audio candidates from providers such as YouTube Music and then downloads through `yt-dlp`. SpotifyBU keeps that same provider-oriented shape, but download-capable providers must be configured for media the user is authorized to download. See `docs/source-providers.md`.
+
 ## Navidrome Target
 
 SpotifyBU is designed to stage authorized audio files into a Navidrome library folder, usually with a structure like:
@@ -54,6 +56,7 @@ The app currently checks whether the configured folder exists and whether the Sp
 - Access and refresh tokens are stored in an HTTP-only cookie for the local prototype. Before production, move tokens into an encrypted server-side session store.
 - `src/lib/spotify.ts` owns Spotify API calls and export shaping.
 - `src/lib/navidrome.ts` owns Navidrome library path checks and safe target directory creation.
+- `src/lib/providers/types.ts` defines the source-provider contract for matching, downloading, tagging, and provenance.
 - `src/lib/session.ts` and `src/lib/server-session.ts` own PKCE cookie and token-session handling.
 - Source providers should expose match/search/download capability only for authorized sources.
 
@@ -63,5 +66,5 @@ The app currently checks whether the configured folder exists and whether the Sp
 - Add background backup jobs
 - Stage authorized downloads into the configured Navidrome music folder
 - Add local/Navidrome-file matching by ISRC, artist, title, and duration
-- Add provider plugin contracts for authorized media sources
+- Add provider adapters inspired by spotDL's source-provider model
 - Add import/recreate-playlist workflows

@@ -526,8 +526,8 @@ export default function Home() {
                   <ShieldCheck size={18} />
                 </span>
                 <span>
-                  <h3>Licensed sources</h3>
-                  <p>Downloads stage into Navidrome only with rights</p>
+                  <h3>SpotDL-style sources</h3>
+                  <p>Provider matching, then authorized Navidrome staging</p>
                 </span>
               </div>
               {navidromeStatus?.libraryPath ? (
@@ -593,7 +593,7 @@ export default function Home() {
               </div>
               <div className="signal waiting">
                 <h3>Media providers</h3>
-                <p className="muted">Authorized downloads to the music folder</p>
+                <p className="muted">SpotDL-style matching with explicit rights</p>
               </div>
             </div>
           </div>
