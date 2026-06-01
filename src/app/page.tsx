@@ -30,6 +30,24 @@ type SessionResponse = {
   user?: UserProfile;
 };
 
+type NavidromeLibraryStatus = {
+  configured: boolean;
+  exists: boolean;
+  libraryPath?: string;
+  message: string;
+  navidromeUrl?: string;
+  readable: boolean;
+  state:
+    | "not_configured"
+    | "missing"
+    | "not_directory"
+    | "not_readable"
+    | "not_writable"
+    | "ready"
+    | "error";
+  writable: boolean;
+};
+
 type PlaylistSummary = {
   collaborative: boolean;
   description: string;
@@ -79,6 +97,8 @@ export default function Home() {
   const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [isLoadingPlaylists, setIsLoadingPlaylists] = useState(false);
   const [isLoadingTracks, setIsLoadingTracks] = useState(false);
+  const [navidromeStatus, setNavidromeStatus] =
+    useState<NavidromeLibraryStatus | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
 
   const loadSession = useCallback(async () => {
@@ -109,6 +129,23 @@ export default function Home() {
     }
   }, []);
 
+  const loadNavidromeStatus = useCallback(async () => {
+    try {
+      setNavidromeStatus(
+        await fetchJson<NavidromeLibraryStatus>("/api/navidrome/library")
+      );
+    } catch {
+      setNavidromeStatus({
+        configured: false,
+        exists: false,
+        message: "SpotifyBU could not check the Navidrome library target.",
+        readable: false,
+        state: "error",
+        writable: false
+      });
+    }
+  }, []);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const error = params.get("error");
@@ -119,7 +156,8 @@ export default function Home() {
     }
 
     void loadSession();
-  }, [loadSession]);
+    void loadNavidromeStatus();
+  }, [loadNavidromeStatus, loadSession]);
 
   useEffect(() => {
     if (session?.authenticated) {
@@ -189,6 +227,10 @@ export default function Home() {
 
   const isConnected = Boolean(session?.authenticated);
   const userInitial = session?.user?.displayName?.charAt(0).toUpperCase() ?? "S";
+  const navidromeReady = navidromeStatus?.state === "ready";
+  const navidromeStatusLabel = navidromeStatus
+    ? navidromeStatusMessage(navidromeStatus)
+    : "Checking library target";
 
   return (
     <main className="app-shell">
@@ -259,6 +301,13 @@ export default function Home() {
         <div className="alert">
           <ShieldCheck size={18} />
           <span>Set SPOTIFY_CLIENT_ID in .env.local before connecting.</span>
+        </div>
+      ) : null}
+
+      {navidromeStatus && !navidromeReady ? (
+        <div className="alert">
+          <HardDrive size={18} />
+          <span>{navidromeStatus.message}</span>
         </div>
       ) : null}
 
@@ -456,12 +505,20 @@ export default function Home() {
                 </span>
               </div>
               <div className="provider-row">
-                <span className="provider-icon teal">
-                  <HardDrive size={18} />
+                <span
+                  className={`provider-icon ${
+                    navidromeReady ? "green" : "amber"
+                  }`}
+                >
+                  {navidromeReady ? (
+                    <CheckCircle2 size={18} />
+                  ) : (
+                    <HardDrive size={18} />
+                  )}
                 </span>
                 <span>
-                  <h3>Local library</h3>
-                  <p>Next provider target</p>
+                  <h3>Navidrome library</h3>
+                  <p>{navidromeStatusLabel}</p>
                 </span>
               </div>
               <div className="provider-row">
@@ -470,9 +527,15 @@ export default function Home() {
                 </span>
                 <span>
                   <h3>Licensed sources</h3>
-                  <p>Download only with rights</p>
+                  <p>Downloads stage into Navidrome only with rights</p>
                 </span>
               </div>
+              {navidromeStatus?.libraryPath ? (
+                <div className="path-readout">
+                  <span className="stat-label">Music folder</span>
+                  <span>{navidromeStatus.libraryPath}</span>
+                </div>
+              ) : null}
             </div>
           </aside>
         </section>
@@ -525,12 +588,12 @@ export default function Home() {
                 <p className="muted">Private and collaborative scopes</p>
               </div>
               <div className="signal locked">
-                <h3>Exports</h3>
-                <p className="muted">JSON and CSV catalogs</p>
+                <h3>Navidrome target</h3>
+                <p className="muted">{navidromeStatusLabel}</p>
               </div>
               <div className="signal waiting">
                 <h3>Media providers</h3>
-                <p className="muted">Authorized sources only</p>
+                <p className="muted">Authorized downloads to the music folder</p>
               </div>
             </div>
           </div>
@@ -565,4 +628,28 @@ function formatDuration(durationMs: number) {
   const seconds = totalSeconds % 60;
 
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function navidromeStatusMessage(status: NavidromeLibraryStatus) {
+  if (status.state === "ready") {
+    return "Ready for Navidrome library staging";
+  }
+
+  if (status.state === "not_configured") {
+    return "Set NAVIDROME_LIBRARY_PATH";
+  }
+
+  if (status.state === "not_writable") {
+    return "Needs write access";
+  }
+
+  if (status.state === "not_readable") {
+    return "Needs read access";
+  }
+
+  if (status.state === "missing") {
+    return "Music folder not found";
+  }
+
+  return status.message;
 }
