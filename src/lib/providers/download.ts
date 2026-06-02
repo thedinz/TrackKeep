@@ -147,6 +147,12 @@ type JioSaavnSongEntry = {
   url?: string;
 };
 
+type ExecFileError = Error & {
+  code?: number | string;
+  stderr?: Buffer | string;
+  stdout?: Buffer | string;
+};
+
 type ProviderDownloadLogEntry = {
   album: string;
   artists: string[];
@@ -174,6 +180,7 @@ const provenanceLogSegments = [".spotifybu", "provider-downloads.json"];
 const maxBatchItems = 500;
 const stagingRootSegments = [".spotifybu", "tmp", "provider-downloads"];
 const idleCleanupDelayMs = 10 * 60 * 1000;
+const defaultYtDlpJsRuntime = "node";
 let idleCleanupTimer: ReturnType<typeof setTimeout> | null = null;
 let activeDownloadOperations = 0;
 
@@ -491,21 +498,28 @@ async function searchJioSaavnCandidates(
 
 async function runYtDlpSearch(searchUrl: string) {
   const timeoutMs = Number(process.env.SPOTIFYBU_PROVIDER_SEARCH_TIMEOUT_MS);
-  const { stdout } = await execFileAsync(
-    "yt-dlp",
-    [
-      "--dump-single-json",
-      "--flat-playlist",
-      "--skip-download",
-      "--no-warnings",
-      "--quiet",
-      searchUrl
-    ],
-    {
-      maxBuffer: 1024 * 1024 * 4,
-      timeout: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 45000
-    }
-  );
+  let stdout: Buffer | string;
+
+  try {
+    ({ stdout } = await execFileAsync(
+      "yt-dlp",
+      [
+        "--dump-single-json",
+        "--flat-playlist",
+        "--skip-download",
+        "--no-warnings",
+        "--quiet",
+        ...ytDlpJsRuntimeArgs(),
+        searchUrl
+      ],
+      {
+        maxBuffer: 1024 * 1024 * 4,
+        timeout: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 45000
+      }
+    ));
+  } catch (error) {
+    throw new Error(formatYtDlpError(error, "YouTube search failed."));
+  }
 
   return JSON.parse(stdout.toString()) as YtDlpSearchResult;
 }
@@ -1006,42 +1020,132 @@ async function runYtDlp({
 }) {
   const timeoutMs = Number(process.env.SPOTIFYBU_PROVIDER_DOWNLOAD_TIMEOUT_MS);
   const formatSelector = `bestaudio[abr<=${quality}]/bestaudio/best`;
-  const { stdout } = await execFileAsync(
-    "yt-dlp",
-    [
-      "--no-playlist",
-      "--no-overwrites",
-      "--restrict-filenames",
-      "--extract-audio",
-      "--audio-format",
-      format,
-      "--audio-quality",
-      `${quality}K`,
-      "--format",
-      formatSelector,
-      "--embed-metadata",
-      "--embed-thumbnail",
-      "--convert-thumbnails",
-      "jpg",
-      "--sleep-requests",
-      "1",
-      "--sleep-interval",
-      "2",
-      "--max-sleep-interval",
-      "6",
-      "--print",
-      "after_move:filepath",
-      "--output",
-      outputTemplate,
-      downloadUrl
-    ],
-    {
-      maxBuffer: 1024 * 1024 * 2,
-      timeout: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 600000
-    }
-  );
+  let stdout: Buffer | string;
+
+  try {
+    ({ stdout } = await execFileAsync(
+      "yt-dlp",
+      [
+        "--no-playlist",
+        "--no-overwrites",
+        "--restrict-filenames",
+        "--extract-audio",
+        "--audio-format",
+        format,
+        "--audio-quality",
+        `${quality}K`,
+        "--format",
+        formatSelector,
+        "--embed-metadata",
+        "--embed-thumbnail",
+        "--convert-thumbnails",
+        "jpg",
+        ...ytDlpJsRuntimeArgs(),
+        "--sleep-requests",
+        "1",
+        "--sleep-interval",
+        "2",
+        "--max-sleep-interval",
+        "6",
+        "--print",
+        "after_move:filepath",
+        "--output",
+        outputTemplate,
+        downloadUrl
+      ],
+      {
+        maxBuffer: 1024 * 1024 * 2,
+        timeout: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 600000
+      }
+    ));
+  } catch (error) {
+    throw new Error(
+      formatYtDlpError(error, "Provider download failed.", downloadUrl)
+    );
+  }
 
   return stdout.toString();
+}
+
+function ytDlpJsRuntimeArgs() {
+  const configuredRuntime = process.env.SPOTIFYBU_YTDLP_JS_RUNTIME?.trim();
+  const runtime =
+    configuredRuntime === "none"
+      ? ""
+      : configuredRuntime || defaultYtDlpJsRuntime;
+
+  return runtime ? ["--js-runtimes", runtime] : [];
+}
+
+function formatYtDlpError(
+  error: unknown,
+  fallbackMessage: string,
+  sourceUrl?: string
+) {
+  const execError = error as ExecFileError;
+  const output = [
+    bufferishToString(execError.stderr),
+    bufferishToString(execError.stdout),
+    error instanceof Error ? error.message : ""
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const normalizedOutput = output.toLowerCase();
+  const sourceHost = sourceUrl ? safeHostname(sourceUrl) : "";
+  const lastErrorLine = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .reverse()
+    .find((line) => /^error:/i.test(line) || /^warning:/i.test(line));
+  const youtubeExtractorFailed =
+    sourceHost.includes("youtube") ||
+    sourceHost.includes("youtu.be") ||
+    normalizedOutput.includes("[youtube]");
+
+  if (
+    youtubeExtractorFailed &&
+    (normalizedOutput.includes("precondition check failed") ||
+      normalizedOutput.includes("signature extraction failed") ||
+      normalizedOutput.includes("n challenge") ||
+      normalizedOutput.includes("only images are available") ||
+      normalizedOutput.includes("requested format is not available"))
+  ) {
+    return [
+      "YouTube did not expose a downloadable audio stream for that result.",
+      "Pull or rebuild the latest SpotifyBU image so yt-dlp, yt-dlp-ejs, and the Node challenge runtime are current.",
+      "If this specific video still fails, choose a JioSaavn candidate or another YouTube result.",
+      lastErrorLine ? `yt-dlp reported: ${stripYtDlpPrefix(lastErrorLine)}` : ""
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  if (execError.code === "ETIMEDOUT") {
+    return "The provider download timed out. Try the candidate again or choose another source.";
+  }
+
+  return [
+    fallbackMessage,
+    lastErrorLine ? `yt-dlp reported: ${stripYtDlpPrefix(lastErrorLine)}` : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function bufferishToString(value: Buffer | string | undefined) {
+  return typeof value === "string" ? value : value?.toString() ?? "";
+}
+
+function safeHostname(value: string) {
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function stripYtDlpPrefix(value: string) {
+  return value.replace(/^(error|warning):\s*/i, "");
 }
 
 async function matchingOutputPaths(directory: string, fileBase: string) {

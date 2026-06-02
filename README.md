@@ -28,11 +28,20 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - Output controls for MP3 or FLAC, with 128 kbps or 320 kbps quality targets
 - Navidrome-volume staging with idle cleanup for abandoned failed download/convert temp files
 - Docker image with Node.js, `ffmpeg`, `yt-dlp`, Python 3, and `pip`
-- GitHub Container Registry image publishing for `latest` and version tags
+- GitHub Container Registry image publishing for `dev`, `latest`, and version tags
 
 ## Docker Quick Start
 
-The published image is:
+The test image built from the `dev` branch is:
+
+```text
+ghcr.io/thedinz/spotifybu:dev
+```
+
+Use `dev` while testing changes. After changes are tested and approved, they are
+promoted to `main`, which publishes the stable `latest` image.
+
+The stable image is:
 
 ```text
 ghcr.io/thedinz/spotifybu:latest
@@ -51,7 +60,7 @@ Create a folder for SpotifyBU and save this Compose template as `docker-compose.
 ```yaml
 services:
   spotifybu:
-    image: ghcr.io/thedinz/spotifybu:latest
+    image: ghcr.io/thedinz/spotifybu:dev
     pull_policy: always
     container_name: spotifybu
     restart: unless-stopped
@@ -60,7 +69,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      GIT_BRANCH: main
+      GIT_BRANCH: dev
       NAVIDROME_LIBRARY_PATH: /music
       NAVIDROME_URL: http://host.docker.internal:4533
       NAVIDROME_USERNAME: your-navidrome-username
@@ -111,7 +120,7 @@ Set these values before starting the app:
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `SPOTIFYBU_IMAGE` | No | Docker image tag to run. Defaults to `ghcr.io/thedinz/spotifybu:latest`. |
+| `SPOTIFYBU_IMAGE` | No | Docker image tag to run. Defaults to `ghcr.io/thedinz/spotifybu:dev` for testing. Use `ghcr.io/thedinz/spotifybu:latest` after a tested `main` promotion. |
 | `SPOTIFYBU_PORT` | No | Host port for the web UI. Defaults to `3000`. |
 | `NEXT_PUBLIC_APP_URL` | Yes | Public URL for SpotifyBU. Must match the Spotify redirect base URL. |
 | `SPOTIFYBU_APP_SECRET` | Yes | Long random value used to sign SpotifyBU's own login sessions. This is not your Spotify app Client Secret. |
@@ -319,7 +328,7 @@ docker run --rm -p 3000:3000 \
 - `src/app/api/providers/download/route.ts` handles confirmed single-track provider download requests.
 - `src/app/api/providers/download/batch/route.ts` supports confirmed throttled provider download queues.
 - `src/lib/session.ts` and `src/lib/server-session.ts` own PKCE cookie and Spotify token-session handling.
-- `.github/workflows/docker-image.yml` publishes GHCR images for `main` and `v*` tags.
+- `.github/workflows/docker-image.yml` publishes GHCR images for `dev`, `main`, and `v*` tags. The `dev` branch publishes `dev`; `main` and version tags publish stable tags such as `latest`.
 
 ## Source Providers
 

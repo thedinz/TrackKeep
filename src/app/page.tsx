@@ -845,35 +845,64 @@ export default function Home() {
               track
             }
           );
-          const selectedCandidate = searchResponse.search.candidates.find(
+          const candidateQueue = searchResponse.search.candidates.filter(
             (candidate) => candidate.url
           );
 
-          if (!selectedCandidate?.url) {
+          if (!candidateQueue.length) {
             throw new Error("No provider candidate found.");
           }
 
-          setBulkDownloadProgress({
-            completedCount,
-            failedCount,
-            phase: `Downloading from ${providerDisplayName(
-              selectedCandidate.providerId
-            )}`,
-            totalCount: downloadTrackOptions.length,
-            trackLabel
-          });
+          const candidateErrors: string[] = [];
+          let downloaded = false;
 
-          await postJson<ProviderDownloadResponse>("/api/providers/download", {
-            bulkRiskAccepted: downloadBulkRiskAccepted,
-            format: downloadFormat,
-            providerId: selectedCandidate.providerId,
-            quality: downloadQuality,
-            rightsConfirmed: downloadRightsConfirmed,
-            selectedReason: `SpotifyBU automatic provider search selected ${selectedCandidate.title}`,
-            sourceUrl: selectedCandidate.url,
-            track
-          });
-          completedCount += 1;
+          for (const candidate of candidateQueue) {
+            if (!candidate.url) {
+              continue;
+            }
+
+            setBulkDownloadProgress({
+              completedCount,
+              failedCount,
+              phase: `Downloading from ${providerDisplayName(
+                candidate.providerId
+              )}`,
+              totalCount: downloadTrackOptions.length,
+              trackLabel
+            });
+
+            try {
+              await postJson<ProviderDownloadResponse>(
+                "/api/providers/download",
+                {
+                  bulkRiskAccepted: downloadBulkRiskAccepted,
+                  format: downloadFormat,
+                  providerId: candidate.providerId,
+                  quality: downloadQuality,
+                  rightsConfirmed: downloadRightsConfirmed,
+                  selectedReason: `SpotifyBU automatic provider search selected ${candidate.title}`,
+                  sourceUrl: candidate.url,
+                  track
+                }
+              );
+              completedCount += 1;
+              downloaded = true;
+              break;
+            } catch (error) {
+              candidateErrors.push(
+                `${providerDisplayName(candidate.providerId)}: ${errorMessage(
+                  error
+                )}`
+              );
+            }
+          }
+
+          if (!downloaded) {
+            throw new Error(
+              candidateErrors[0] ??
+                "No provider candidate could be downloaded."
+            );
+          }
         } catch (error) {
           failedCount += 1;
           failedTrackLabels.push(`${trackLabel}: ${errorMessage(error)}`);
@@ -1317,22 +1346,397 @@ export default function Home() {
               </div>
 
               {folderPlans.length ? (
-                <div className="folder-plan-list">
-                  {folderPlans.map((plan) => (
-                    <div className="folder-plan" key={plan.key}>
-                      <HardDrive size={18} />
-                      <span>
-                        <span className="folder-plan-name">{plan.folderName}</span>
-                        <span className="folder-plan-path">
-                          {plan.absolutePath ?? plan.relativePath}
+                <div className="folder-plan-section">
+                  <div className="section-heading">
+                    <span className="stat-label">Navidrome folder destinations</span>
+                    <p>
+                      Album folders that matched or newly downloaded tracks will use.
+                    </p>
+                  </div>
+                  <div className="folder-plan-list">
+                    {folderPlans.map((plan) => (
+                      <div className="folder-plan" key={plan.key}>
+                        <HardDrive size={18} />
+                        <span>
+                          <span className="folder-plan-name">
+                            {plan.folderName}
+                          </span>
+                          <span className="folder-plan-path">
+                            {plan.absolutePath ?? plan.relativePath}
+                          </span>
                         </span>
-                      </span>
-                      <span className="folder-plan-count">
-                        {numberFormatter.format(plan.trackCount)} tracks
-                        {plan.logged ? " logged" : " planned"}
-                      </span>
+                        <span className="folder-plan-count">
+                          {numberFormatter.format(plan.trackCount)}{" "}
+                          {plan.trackCount === 1 ? "track" : "tracks"}{" "}
+                          {plan.logged ? "logged" : "to stage"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {!isLoadingTracks && activeSource ? (
+                <div className="provider-download backup-workflow">
+                  <div className="backup-workflow-header">
+                    <div>
+                      <span className="stat-label">Missing backup actions</span>
+                      <h3>Back up tracks that are not in Navidrome</h3>
+                      <p>
+                        The track table below shows coverage. These controls only
+                        target tracks that are still missing from the library scan.
+                      </p>
                     </div>
-                  ))}
+                    <span className="backup-workflow-count">
+                      {hasUsableLibraryIndex
+                        ? `${numberFormatter.format(missingBackupCount)} missing`
+                        : "Scan library"}
+                    </span>
+                  </div>
+                  <div className="backup-workflow-grid">
+                    <section className="backup-workflow-section">
+                      <div>
+                        <h3>Single track</h3>
+                        <p>
+                          Choose a missing Spotify track, search provider
+                          candidates, review the match, then stage it into
+                          Navidrome.
+                        </p>
+                      </div>
+                      <label className="provider-field">
+                        <span>Missing Spotify track</span>
+                        <select
+                          disabled={
+                            !downloadTrackOptions.length ||
+                            isDownloadingProvider ||
+                            isDownloadingBulkProvider
+                          }
+                          onChange={(event) => {
+                            setDownloadTrackPosition(event.target.value);
+                            setProviderCandidates([]);
+                            setSelectedProviderCandidateId("");
+                            setDownloadRightsConfirmed(false);
+                            setDownloadBulkRiskAccepted(false);
+                            setProviderDownloadMessage(null);
+                          }}
+                          value={downloadTrackPosition}
+                        >
+                          {downloadTrackOptions.length ? (
+                            downloadTrackOptions.map((track) => (
+                              <option
+                                key={`${track.position}-${track.id ?? track.name}`}
+                                value={String(track.position)}
+                              >
+                                {track.position}. {track.name}
+                              </option>
+                            ))
+                          ) : (
+                            <option value="">
+                              {tracks.length
+                                ? "No missing backup tracks"
+                                : "Resolve Spotify tracks first"}
+                            </option>
+                          )}
+                        </select>
+                      </label>
+                      <button
+                        className="command secondary"
+                        disabled={
+                          !selectedDownloadTrack ||
+                          isSearchingProvider ||
+                          isDownloadingProvider ||
+                          isDownloadingBulkProvider
+                        }
+                        onClick={() => void searchSelectedProviderTrack()}
+                        title="Search YouTube and JioSaavn for this track"
+                        type="button"
+                      >
+                        {isSearchingProvider ? (
+                          <Loader2 className="spin" size={18} />
+                        ) : (
+                          <Search size={18} />
+                        )}
+                        Find Source
+                      </button>
+                      {providerCandidates.length ? (
+                        <label className="provider-field">
+                          <span>Provider candidate</span>
+                          <select
+                            disabled={
+                              isDownloadingProvider || isDownloadingBulkProvider
+                            }
+                            onChange={(event) => {
+                              setSelectedProviderCandidateId(event.target.value);
+                              setDownloadRightsConfirmed(false);
+                              setDownloadBulkRiskAccepted(false);
+                              setProviderDownloadMessage(null);
+                            }}
+                            value={selectedProviderCandidateId}
+                          >
+                            {providerCandidates.map((candidate) => (
+                              <option key={candidate.id} value={candidate.id}>
+                                {providerDisplayName(candidate.providerId)} -{" "}
+                                {candidate.title} ({candidate.score.overall}%)
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
+                      {selectedProviderCandidate ? (
+                        <div className="provider-candidate">
+                          <span className="stat-label">
+                            {providerDisplayName(
+                              selectedProviderCandidate.providerId
+                            )}
+                          </span>
+                          <strong>{selectedProviderCandidate.title}</strong>
+                          <span>
+                            {selectedProviderCandidate.artists.join(", ") ||
+                              "Unknown artist"}
+                          </span>
+                          <span>
+                            Match score {selectedProviderCandidate.score.overall}%
+                          </span>
+                          {selectedProviderCandidate.url ? (
+                            <a
+                              href={selectedProviderCandidate.url}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              Review source
+                            </a>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      <div className="provider-throttle-grid compact">
+                        <label className="provider-field">
+                          <span>Format</span>
+                          <select
+                            disabled={
+                              isDownloadingProvider || isDownloadingBulkProvider
+                            }
+                            onChange={(event) => {
+                              setDownloadFormat(event.target.value);
+                              setDownloadRightsConfirmed(false);
+                              setDownloadBulkRiskAccepted(false);
+                              setProviderDownloadMessage(null);
+                              setBulkDownloadMessage(null);
+                              setBulkDownloadProgress(null);
+                            }}
+                            value={downloadFormat}
+                          >
+                            <option value="mp3">MP3</option>
+                            <option value="flac">FLAC</option>
+                          </select>
+                        </label>
+                        <label className="provider-field">
+                          <span>Quality</span>
+                          <select
+                            disabled={
+                              isDownloadingProvider || isDownloadingBulkProvider
+                            }
+                            onChange={(event) => {
+                              setDownloadQuality(event.target.value);
+                              setDownloadRightsConfirmed(false);
+                              setDownloadBulkRiskAccepted(false);
+                              setProviderDownloadMessage(null);
+                              setBulkDownloadMessage(null);
+                              setBulkDownloadProgress(null);
+                            }}
+                            value={downloadQuality}
+                          >
+                            <option value="128">128 kbps</option>
+                            <option value="320">320 kbps</option>
+                          </select>
+                        </label>
+                      </div>
+                      <label className="provider-check">
+                        <input
+                          checked={downloadRightsConfirmed}
+                          disabled={
+                            isDownloadingProvider || isDownloadingBulkProvider
+                          }
+                          onChange={(event) =>
+                            setDownloadRightsConfirmed(event.target.checked)
+                          }
+                          type="checkbox"
+                        />
+                        <span>
+                          I am authorized to download this selected source.
+                        </span>
+                      </label>
+                      <label className="provider-check">
+                        <input
+                          checked={downloadBulkRiskAccepted}
+                          disabled={
+                            isDownloadingProvider || isDownloadingBulkProvider
+                          }
+                          onChange={(event) =>
+                            setDownloadBulkRiskAccepted(event.target.checked)
+                          }
+                          type="checkbox"
+                        />
+                        <span>
+                          I understand provider throttling and blocking risk.
+                        </span>
+                      </label>
+                      <button
+                        className={`command secondary ${
+                          canDownloadProvider ? "" : "disabled"
+                        }`}
+                        disabled={!canDownloadProvider}
+                        onClick={() => void downloadSelectedProviderCandidate()}
+                        title="Download selected provider candidate"
+                        type="button"
+                      >
+                        {isDownloadingProvider ? (
+                          <Loader2 className="spin" size={18} />
+                        ) : (
+                          <Download size={18} />
+                        )}
+                        Download
+                      </button>
+                      {isDownloadingProvider ? (
+                        <div
+                          aria-live="polite"
+                          className="download-progress"
+                          role="status"
+                        >
+                          <div className="download-progress-meta">
+                            <span>Downloading</span>
+                            <span>
+                              {downloadFormat.toUpperCase()} {downloadQuality}
+                            </span>
+                          </div>
+                          <div
+                            aria-label="Provider download in progress"
+                            className="download-progress-bar"
+                            role="progressbar"
+                          >
+                            <span className="download-progress-fill indeterminate" />
+                          </div>
+                          <p className="download-progress-note">
+                            {selectedDownloadTrack
+                              ? `${selectedDownloadTrack.position}. ${selectedDownloadTrack.name}`
+                              : "Preparing source"}
+                          </p>
+                        </div>
+                      ) : null}
+                      {providerDownloadMessage ? (
+                        <p className="provider-success">
+                          {providerDownloadMessage}
+                        </p>
+                      ) : null}
+                    </section>
+                    <section className="backup-workflow-section">
+                      <div>
+                        <h3>Playlist queue</h3>
+                        <p>
+                          Search YouTube first, then JioSaavn, for each missing
+                          track and stage the best candidate with throttled waits.
+                        </p>
+                      </div>
+                      {downloadTrackOptions.length ? (
+                        <p className="provider-queue-note">
+                          {numberFormatter.format(downloadTrackOptions.length)}{" "}
+                          missing tracks ready for automatic provider search
+                        </p>
+                      ) : null}
+                      <div className="provider-throttle-grid">
+                        <label className="provider-field">
+                          <span>Chunk tracks</span>
+                          <input
+                            disabled={isDownloadingBulkProvider}
+                            min="1"
+                            onChange={(event) => {
+                              setBulkChunkSize(event.target.value);
+                              setBulkDownloadProgress(null);
+                            }}
+                            type="number"
+                            value={bulkChunkSize}
+                          />
+                        </label>
+                        <label className="provider-field">
+                          <span>Track waits</span>
+                          <input
+                            disabled={isDownloadingBulkProvider}
+                            min="1"
+                            onChange={(event) => {
+                              setBulkTrackDelaySeconds(event.target.value);
+                              setBulkDownloadProgress(null);
+                            }}
+                            type="number"
+                            value={bulkTrackDelaySeconds}
+                          />
+                        </label>
+                        <label className="provider-field">
+                          <span>Chunk pauses</span>
+                          <input
+                            disabled={isDownloadingBulkProvider}
+                            min="5"
+                            onChange={(event) => {
+                              setBulkChunkPauseSeconds(event.target.value);
+                              setBulkDownloadProgress(null);
+                            }}
+                            type="number"
+                            value={bulkChunkPauseSeconds}
+                          />
+                        </label>
+                      </div>
+                      <button
+                        className={`command secondary ${
+                          canDownloadBulkProvider ? "" : "disabled"
+                        }`}
+                        disabled={!canDownloadBulkProvider}
+                        onClick={() => void downloadBulkQueue()}
+                        title="Run throttled playlist backup queue"
+                        type="button"
+                      >
+                        {isDownloadingBulkProvider ? (
+                          <Loader2 className="spin" size={18} />
+                        ) : (
+                          <Download size={18} />
+                        )}
+                        Run Queue
+                      </button>
+                      {bulkDownloadProgress ? (
+                        <div
+                          aria-live="polite"
+                          className="download-progress"
+                          role="status"
+                        >
+                          <div className="download-progress-meta">
+                            <span>{bulkDownloadProgress.phase}</span>
+                            <span>
+                              {`${bulkProgressFinished}/${bulkDownloadProgress.totalCount} (${bulkProgressPercent}%)`}
+                            </span>
+                          </div>
+                          <div
+                            aria-label="Bulk download progress"
+                            aria-valuemax={bulkDownloadProgress.totalCount}
+                            aria-valuemin={0}
+                            aria-valuenow={bulkProgressFinished}
+                            className="download-progress-bar"
+                            role="progressbar"
+                          >
+                            <span
+                              className="download-progress-fill"
+                              style={{ width: `${bulkProgressPercent}%` }}
+                            />
+                          </div>
+                          <p className="download-progress-note">
+                            {bulkDownloadProgress.trackLabel ??
+                              (bulkDownloadProgress.failedCount
+                                ? `${bulkDownloadProgress.failedCount} need review`
+                                : "Queue complete")}
+                          </p>
+                        </div>
+                      ) : null}
+                      {bulkDownloadMessage ? (
+                        <p className="provider-success">{bulkDownloadMessage}</p>
+                      ) : null}
+                    </section>
+                  </div>
                 </div>
               ) : null}
 
@@ -1342,40 +1746,53 @@ export default function Home() {
                   <span>Loading tracks</span>
                 </div>
               ) : activeSource ? (
-                <div className="track-table">
-                  <div className="track-row track-head">
-                    <span>#</span>
-                    <span>Track</span>
-                    <span className="track-cell">Album</span>
-                    <span className="track-cell">Backup</span>
-                    <span className="track-cell">Time</span>
+                <>
+                  <div className="section-heading track-table-heading">
+                    <span className="stat-label">Track backup status</span>
+                    <p>
+                      Every Spotify track in the selected source, with its current
+                      Navidrome match status.
+                    </p>
                   </div>
-                  {tracks.map((track) => {
-                    const libraryMatch = libraryMatchesByPosition.get(track.position);
+                  <div className="track-table">
+                    <div className="track-row track-head">
+                      <span>#</span>
+                      <span>Track</span>
+                      <span className="track-cell">Album</span>
+                      <span className="track-cell">Backup</span>
+                      <span className="track-cell">Time</span>
+                    </div>
+                    {tracks.map((track) => {
+                      const libraryMatch = libraryMatchesByPosition.get(
+                        track.position
+                      );
 
-                    return (
-                      <div
-                        className="track-row"
-                        key={`${track.position}-${track.id}`}
-                      >
-                        <span className="track-cell">{track.position}</span>
-                        <span>
-                          <span className="track-title">{track.name}</span>
-                          <span className="track-subtitle">
-                            {track.artists.join(", ") || "Unknown artist"}
+                      return (
+                        <div
+                          className="track-row"
+                          key={`${track.position}-${track.id}`}
+                        >
+                          <span className="track-cell">{track.position}</span>
+                          <span className="track-meta">
+                            <span className="track-title">{track.name}</span>
+                            <span className="track-subtitle">
+                              {track.artists.join(", ") || "Unknown artist"}
+                            </span>
                           </span>
-                        </span>
-                        <span className="track-cell">{track.album || "Unknown"}</span>
-                        <span className="track-cell library-cell">
-                          {renderLibraryMatch(libraryMatch, libraryIndex)}
-                        </span>
-                        <span className="track-cell">
-                          {formatDuration(track.durationMs)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
+                          <span className="track-cell">
+                            {track.album || "Unknown"}
+                          </span>
+                          <span className="track-cell library-cell">
+                            {renderLibraryMatch(libraryMatch, libraryIndex)}
+                          </span>
+                          <span className="track-cell">
+                            {formatDuration(track.durationMs)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
               ) : (
                 <div className="empty-state">
                   <ListMusic size={30} />
@@ -1534,328 +1951,6 @@ export default function Home() {
                     </span>
                   </div>
                 ))}
-              </div>
-              <div className="provider-download">
-                <div>
-                  <h3>Back up missing track</h3>
-                  <p>
-                    Choose a missing Spotify track, search provider candidates,
-                    review the match, then stage it into Navidrome.
-                  </p>
-                </div>
-                <label className="provider-field">
-                  <span>Missing Spotify track</span>
-                  <select
-                    disabled={
-                      !downloadTrackOptions.length ||
-                      isDownloadingProvider ||
-                      isDownloadingBulkProvider
-                    }
-                    onChange={(event) => {
-                      setDownloadTrackPosition(event.target.value);
-                      setProviderCandidates([]);
-                      setSelectedProviderCandidateId("");
-                      setDownloadRightsConfirmed(false);
-                      setDownloadBulkRiskAccepted(false);
-                      setProviderDownloadMessage(null);
-                    }}
-                    value={downloadTrackPosition}
-                  >
-                    {downloadTrackOptions.length ? (
-                      downloadTrackOptions.map((track) => (
-                        <option
-                          key={`${track.position}-${track.id ?? track.name}`}
-                          value={String(track.position)}
-                        >
-                          {track.position}. {track.name}
-                        </option>
-                      ))
-                    ) : (
-                      <option value="">
-                        {tracks.length
-                          ? "No missing backup tracks"
-                          : "Resolve Spotify tracks first"}
-                      </option>
-                    )}
-                  </select>
-                </label>
-                <button
-                  className="command secondary"
-                  disabled={
-                    !selectedDownloadTrack ||
-                    isSearchingProvider ||
-                    isDownloadingProvider ||
-                    isDownloadingBulkProvider
-                  }
-                  onClick={() => void searchSelectedProviderTrack()}
-                  title="Search YouTube and JioSaavn for this track"
-                  type="button"
-                >
-                  {isSearchingProvider ? (
-                    <Loader2 className="spin" size={18} />
-                  ) : (
-                    <Search size={18} />
-                  )}
-                  Find Source
-                </button>
-                {providerCandidates.length ? (
-                  <label className="provider-field">
-                    <span>Provider candidate</span>
-                    <select
-                      disabled={isDownloadingProvider || isDownloadingBulkProvider}
-                      onChange={(event) => {
-                        setSelectedProviderCandidateId(event.target.value);
-                        setDownloadRightsConfirmed(false);
-                        setDownloadBulkRiskAccepted(false);
-                        setProviderDownloadMessage(null);
-                      }}
-                      value={selectedProviderCandidateId}
-                    >
-                      {providerCandidates.map((candidate) => (
-                        <option key={candidate.id} value={candidate.id}>
-                          {providerDisplayName(candidate.providerId)} -{" "}
-                          {candidate.title} ({candidate.score.overall}%)
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : null}
-                {selectedProviderCandidate ? (
-                  <div className="provider-candidate">
-                    <span className="stat-label">
-                      {providerDisplayName(selectedProviderCandidate.providerId)}
-                    </span>
-                    <strong>{selectedProviderCandidate.title}</strong>
-                    <span>
-                      {selectedProviderCandidate.artists.join(", ") ||
-                        "Unknown artist"}
-                    </span>
-                    <span>
-                      Match score {selectedProviderCandidate.score.overall}%
-                    </span>
-                    {selectedProviderCandidate.url ? (
-                      <a
-                        href={selectedProviderCandidate.url}
-                        rel="noreferrer"
-                        target="_blank"
-                      >
-                        Review source
-                      </a>
-                    ) : null}
-                  </div>
-                ) : null}
-                <div className="provider-throttle-grid">
-                  <label className="provider-field">
-                    <span>Format</span>
-                    <select
-                      disabled={isDownloadingProvider || isDownloadingBulkProvider}
-                      onChange={(event) => {
-                        setDownloadFormat(event.target.value);
-                        setDownloadRightsConfirmed(false);
-                        setDownloadBulkRiskAccepted(false);
-                        setProviderDownloadMessage(null);
-                        setBulkDownloadMessage(null);
-                        setBulkDownloadProgress(null);
-                      }}
-                      value={downloadFormat}
-                    >
-                      <option value="mp3">MP3</option>
-                      <option value="flac">FLAC</option>
-                    </select>
-                  </label>
-                  <label className="provider-field">
-                    <span>Quality</span>
-                    <select
-                      disabled={isDownloadingProvider || isDownloadingBulkProvider}
-                      onChange={(event) => {
-                        setDownloadQuality(event.target.value);
-                        setDownloadRightsConfirmed(false);
-                        setDownloadBulkRiskAccepted(false);
-                        setProviderDownloadMessage(null);
-                        setBulkDownloadMessage(null);
-                        setBulkDownloadProgress(null);
-                      }}
-                      value={downloadQuality}
-                    >
-                      <option value="128">128 kbps</option>
-                      <option value="320">320 kbps</option>
-                    </select>
-                  </label>
-                </div>
-                <label className="provider-check">
-                  <input
-                    checked={downloadRightsConfirmed}
-                    disabled={isDownloadingProvider || isDownloadingBulkProvider}
-                    onChange={(event) =>
-                      setDownloadRightsConfirmed(event.target.checked)
-                    }
-                    type="checkbox"
-                  />
-                  <span>I am authorized to download this selected source.</span>
-                </label>
-                <label className="provider-check">
-                  <input
-                    checked={downloadBulkRiskAccepted}
-                    disabled={isDownloadingProvider || isDownloadingBulkProvider}
-                    onChange={(event) =>
-                      setDownloadBulkRiskAccepted(event.target.checked)
-                    }
-                    type="checkbox"
-                  />
-                  <span>I understand provider throttling and blocking risk.</span>
-                </label>
-                <button
-                  className={`command secondary ${
-                    canDownloadProvider ? "" : "disabled"
-                  }`}
-                  disabled={!canDownloadProvider}
-                  onClick={() => void downloadSelectedProviderCandidate()}
-                  title="Download selected provider candidate"
-                  type="button"
-                >
-                  {isDownloadingProvider ? (
-                    <Loader2 className="spin" size={18} />
-                  ) : (
-                    <Download size={18} />
-                  )}
-                  Download
-                </button>
-                {isDownloadingProvider ? (
-                  <div
-                    aria-live="polite"
-                    className="download-progress"
-                    role="status"
-                  >
-                    <div className="download-progress-meta">
-                      <span>Downloading</span>
-                      <span>
-                        {downloadFormat.toUpperCase()} {downloadQuality}
-                      </span>
-                    </div>
-                    <div
-                      aria-label="Provider download in progress"
-                      className="download-progress-bar"
-                      role="progressbar"
-                    >
-                      <span className="download-progress-fill indeterminate" />
-                    </div>
-                    <p className="download-progress-note">
-                      {selectedDownloadTrack
-                        ? `${selectedDownloadTrack.position}. ${selectedDownloadTrack.name}`
-                        : "Preparing source"}
-                    </p>
-                  </div>
-                ) : null}
-                {providerDownloadMessage ? (
-                  <p className="provider-success">{providerDownloadMessage}</p>
-                ) : null}
-                <div className="provider-divider" />
-                <div>
-                  <h3>Back up playlist queue</h3>
-                  <p>
-                    Search YouTube first, then JioSaavn, for each missing track
-                    and stage the best candidate with throttled waits.
-                  </p>
-                </div>
-                {downloadTrackOptions.length ? (
-                  <p className="provider-queue-note">
-                    {numberFormatter.format(downloadTrackOptions.length)} missing
-                    tracks ready for automatic provider search
-                  </p>
-                ) : null}
-                <div className="provider-throttle-grid">
-                  <label className="provider-field">
-                    <span>Chunk tracks</span>
-                    <input
-                      disabled={isDownloadingBulkProvider}
-                      min="1"
-                      onChange={(event) => {
-                        setBulkChunkSize(event.target.value);
-                        setBulkDownloadProgress(null);
-                      }}
-                      type="number"
-                      value={bulkChunkSize}
-                    />
-                  </label>
-                  <label className="provider-field">
-                    <span>Track waits</span>
-                    <input
-                      disabled={isDownloadingBulkProvider}
-                      min="1"
-                      onChange={(event) => {
-                        setBulkTrackDelaySeconds(event.target.value);
-                        setBulkDownloadProgress(null);
-                      }}
-                      type="number"
-                      value={bulkTrackDelaySeconds}
-                    />
-                  </label>
-                  <label className="provider-field">
-                    <span>Chunk pauses</span>
-                    <input
-                      disabled={isDownloadingBulkProvider}
-                      min="5"
-                      onChange={(event) => {
-                        setBulkChunkPauseSeconds(event.target.value);
-                        setBulkDownloadProgress(null);
-                      }}
-                      type="number"
-                      value={bulkChunkPauseSeconds}
-                    />
-                  </label>
-                </div>
-                <button
-                  className={`command secondary ${
-                    canDownloadBulkProvider ? "" : "disabled"
-                  }`}
-                  disabled={!canDownloadBulkProvider}
-                  onClick={() => void downloadBulkQueue()}
-                  title="Run throttled playlist backup queue"
-                  type="button"
-                >
-                  {isDownloadingBulkProvider ? (
-                    <Loader2 className="spin" size={18} />
-                  ) : (
-                    <Download size={18} />
-                  )}
-                  Run Queue
-                </button>
-                {bulkDownloadProgress ? (
-                  <div
-                    aria-live="polite"
-                    className="download-progress"
-                    role="status"
-                  >
-                    <div className="download-progress-meta">
-                      <span>{bulkDownloadProgress.phase}</span>
-                      <span>
-                        {`${bulkProgressFinished}/${bulkDownloadProgress.totalCount} (${bulkProgressPercent}%)`}
-                      </span>
-                    </div>
-                    <div
-                      aria-label="Bulk download progress"
-                      aria-valuemax={bulkDownloadProgress.totalCount}
-                      aria-valuemin={0}
-                      aria-valuenow={bulkProgressFinished}
-                      className="download-progress-bar"
-                      role="progressbar"
-                    >
-                      <span
-                        className="download-progress-fill"
-                        style={{ width: `${bulkProgressPercent}%` }}
-                      />
-                    </div>
-                    <p className="download-progress-note">
-                      {bulkDownloadProgress.trackLabel ??
-                        (bulkDownloadProgress.failedCount
-                          ? `${bulkDownloadProgress.failedCount} need review`
-                          : "Queue complete")}
-                    </p>
-                  </div>
-                ) : null}
-                {bulkDownloadMessage ? (
-                  <p className="provider-success">{bulkDownloadMessage}</p>
-                ) : null}
               </div>
               {navidromeStatus?.libraryPath ? (
                 <div className="path-readout">

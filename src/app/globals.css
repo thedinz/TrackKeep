@@ -596,10 +596,25 @@ button {
   padding: 14px 16px;
 }
 
+.section-heading {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.section-heading p {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin: 0;
+}
+
+.folder-plan-section {
+  margin-bottom: 16px;
+}
+
 .folder-plan-list {
   display: grid;
   gap: 10px;
-  margin-bottom: 16px;
 }
 
 .folder-plan {
@@ -663,14 +678,22 @@ button {
   overflow: hidden;
 }
 
+.track-table-heading {
+  margin-top: 16px;
+}
+
 .track-row {
   align-items: center;
   border-top: 1px solid var(--line);
   display: grid;
   gap: 12px;
-  grid-template-columns: 42px minmax(180px, 2fr) minmax(130px, 1fr) minmax(130px, 0.9fr) 76px;
+  grid-template-columns: 42px minmax(150px, 1.5fr) minmax(120px, 1fr) minmax(150px, 1fr) 64px;
   min-height: 52px;
   padding: 8px 12px;
+}
+
+.track-row > span {
+  min-width: 0;
 }
 
 .track-row:first-child {
@@ -687,21 +710,34 @@ button {
   text-transform: uppercase;
 }
 
+.track-meta,
 .track-title {
-  font-weight: 850;
+  display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.track-title {
+  color: var(--ink);
+  font-weight: 850;
+}
+
 .track-subtitle,
 .track-cell {
   color: var(--muted);
+  display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.track-subtitle {
+  color: var(--muted);
+  font-size: 0.84rem;
+  margin-top: 2px;
 }
 
 .library-cell {
@@ -955,6 +991,60 @@ button {
   padding: 10px;
 }
 
+.backup-workflow {
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px;
+}
+
+.backup-workflow-header {
+  align-items: flex-start;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-width: 0;
+  padding-bottom: 12px;
+}
+
+.backup-workflow-header > div {
+  min-width: 0;
+}
+
+.backup-workflow-count {
+  background: rgba(37, 230, 109, 0.1);
+  border: 1px solid rgba(37, 230, 109, 0.34);
+  border-radius: 999px;
+  color: #b9ffd0;
+  flex: 0 0 auto;
+  font-size: 0.74rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 7px 9px;
+  white-space: nowrap;
+}
+
+.backup-workflow-grid {
+  align-items: start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.backup-workflow-section {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.backup-workflow-section .command {
+  width: 100%;
+}
+
 .provider-download h3,
 .provider-download p {
   margin: 0;
@@ -1021,6 +1111,10 @@ button {
   display: grid;
   gap: 8px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.provider-throttle-grid.compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .provider-check {
@@ -1222,8 +1316,13 @@ button {
   .connect-grid,
   .workspace-grid,
   .signal-grid,
-  .summary-strip {
+  .summary-strip,
+  .backup-workflow-grid {
     grid-template-columns: 1fr;
+  }
+
+  .backup-workflow-header {
+    display: grid;
   }
 
   .library-panel,
@@ -1245,11 +1344,18 @@ button {
   }
 
   .track-row {
-    grid-template-columns: 34px minmax(0, 1fr) minmax(86px, 0.8fr) 58px;
+    gap: 8px;
+    grid-template-columns: 34px minmax(0, 1fr) minmax(92px, 0.85fr) 54px;
+    padding: 8px;
   }
 
   .track-row .track-cell:nth-child(3),
   .track-head .track-cell:nth-child(3) {
     display: none;
+  }
+
+  .provider-throttle-grid,
+  .provider-throttle-grid.compact {
+    grid-template-columns: 1fr;
   }
 }

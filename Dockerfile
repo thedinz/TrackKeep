@@ -13,7 +13,7 @@ RUN npm ci
 
 FROM deps AS build
 
-ARG GIT_BRANCH=main
+ARG GIT_BRANCH=dev
 ENV NEXT_PUBLIC_GIT_BRANCH=${GIT_BRANCH}
 
 COPY . .
@@ -37,8 +37,8 @@ RUN apt-get update \
     python3 \
     python3-pip \
     tini \
-    yt-dlp \
   && rm -rf /var/lib/apt/lists/* \
+  && python3 -m pip install --no-cache-dir --break-system-packages --upgrade "yt-dlp[default]" \
   && mkdir -p /config /music \
   && chown -R node:node /app /config /music
 
