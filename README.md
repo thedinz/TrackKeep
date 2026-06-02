@@ -111,10 +111,10 @@ Set these values before starting the app:
 | `SPOTIFYBU_IMAGE` | No | Docker image tag to run. Defaults to `ghcr.io/thedinz/spotifybu:latest`. |
 | `SPOTIFYBU_PORT` | No | Host port for the web UI. Defaults to `3000`. |
 | `NEXT_PUBLIC_APP_URL` | Yes | Public URL for SpotifyBU. Must match the Spotify redirect base URL. |
-| `SPOTIFYBU_APP_SECRET` | Yes | Long random value used to sign SpotifyBU login sessions. |
+| `SPOTIFYBU_APP_SECRET` | Yes | Long random value used to sign SpotifyBU's own login sessions. This is not your Spotify app Client Secret. |
 | `SPOTIFYBU_SECURE_COOKIES` | No | Set `true` for HTTPS reverse-proxy installs. Defaults to `false` in the Docker example for Unraid-style HTTP installs. |
 | `NAVIDROME_MUSIC_PATH` | Yes | Host path to the music folder Navidrome scans. |
-| `SPOTIFY_CLIENT_ID` | Yes | Spotify app Client ID. |
+| `SPOTIFY_CLIENT_ID` | Yes | Spotify app Client ID. SpotifyBU uses Authorization Code with PKCE, so it does not use or ask for the Spotify Client Secret. |
 | `NAVIDROME_URL` | No | Navidrome URL as seen by the container. Defaults to `http://host.docker.internal:4533`. |
 
 Inside the container:
@@ -158,7 +158,10 @@ Your proxy should forward the original host and scheme. For most proxies, that m
 
 1. Create an app in the Spotify Developer Dashboard.
 2. Copy the app's Client ID into `SPOTIFY_CLIENT_ID`.
-3. Add this redirect URI to the Spotify app:
+3. Leave the Spotify app's Client Secret out of SpotifyBU. SpotifyBU uses
+   Authorization Code with PKCE, which exchanges the login code with
+   `client_id` and `code_verifier` instead of `client_secret`.
+4. Add this redirect URI to the Spotify app:
 
    ```text
    http://localhost:3000/api/auth/callback
