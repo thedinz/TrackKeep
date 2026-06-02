@@ -2,6 +2,7 @@
 .env
 .env*.local
 .next/
+.spotifybu/
 node_modules/
 out/
 dist/

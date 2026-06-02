@@ -11,6 +11,7 @@ This project intentionally does not rip audio from YouTube or other services. Fu
 - Song and album metadata lookup from Spotify URLs, URIs, or IDs
 - Playlist track preview
 - JSON and CSV exports with track title, artists, album, ISRC, duration, Spotify URI, and Spotify URL
+- Local app login with changeable credentials
 - Navidrome library target status using `NAVIDROME_LIBRARY_PATH`
 - Navidrome folder planning using `Artist - Album`
 - Provider-ready UI and type contract for legal media backup sources
@@ -28,12 +29,23 @@ This project intentionally does not rip audio from YouTube or other services. Fu
 4. Set `SPOTIFY_CLIENT_ID`.
 5. Set `NAVIDROME_LIBRARY_PATH` to the music folder Navidrome scans. If Navidrome is in Docker, this should be the host path mounted into the container.
 6. Optionally set `NAVIDROME_URL` if your Navidrome server is not at `http://localhost:4533`.
-7. Install dependencies and start the app:
+7. Set `SPOTIFYBU_APP_SECRET` to a long random value for signing SpotifyBU login sessions.
+8. Optionally set `SPOTIFYBU_CONFIG_DIR` to a persistent folder for SpotifyBU app settings. If unset, changed login credentials are stored in `.spotifybu/app-auth.json` in the project folder.
+9. Install dependencies and start the app:
 
    ```bash
    npm install
    npm run dev
    ```
+
+The default SpotifyBU web login is:
+
+```text
+Username: admin
+Password: admin
+```
+
+After signing in, open Settings and change the login before exposing the app on a server.
 
 Spotify's official docs for the auth flow are here: https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow
 
@@ -63,6 +75,7 @@ If another song from the same Spotify album is downloaded later, SpotifyBU reuse
 
 ## Architecture Notes
 
+- `src/lib/app-auth.ts` owns the local SpotifyBU web login, session cookie signing, and persisted credential updates.
 - Access and refresh tokens are stored in an HTTP-only cookie for the local prototype. Before production, move tokens into an encrypted server-side session store.
 - `src/lib/spotify.ts` owns Spotify API calls and export shaping.
 - `src/lib/navidrome.ts` owns Navidrome library path checks, safe target directory creation, folder planning, and album-folder logging.

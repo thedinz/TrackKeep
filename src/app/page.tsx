@@ -13,6 +13,7 @@ import {
   Music2,
   RefreshCw,
   Search,
+  Settings,
   ShieldCheck
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -381,7 +382,7 @@ export default function Home() {
           {isConnected ? (
             <a className="icon-command" href="/api/auth/logout" title="Disconnect">
               <LogOut size={18} />
-              Disconnect
+              Spotify
             </a>
           ) : (
             <a
@@ -397,6 +398,16 @@ export default function Home() {
               Connect Spotify
             </a>
           )}
+
+          <a className="icon-command" href="/settings" title="Settings">
+            <Settings size={18} />
+            Settings
+          </a>
+
+          <a className="icon-command" href="/api/app-auth/logout" title="Sign out">
+            <LogOut size={18} />
+            Sign out
+          </a>
         </div>
       </header>
 
