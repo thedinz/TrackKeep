@@ -1,10 +1,7 @@
 services:
   spotifybu:
-    build:
-      context: .
-      args:
-        GIT_BRANCH: ${GIT_BRANCH:-main}
-    image: spotifybu:latest
+    image: ${SPOTIFYBU_IMAGE:-ghcr.io/thedinz/spotifybu:latest}
+    pull_policy: always
     container_name: spotifybu
     restart: unless-stopped
     extra_hosts:

@@ -1,43 +1,82 @@
 # SpotifyBU
 
-SpotifyBU is a web UI for backing up a person's own Spotify library data into a Navidrome-ready music library. The first milestone connects to Spotify, reads playlists, resolves albums and songs, previews tracks, checks the configured Navidrome library folder, and exports playlist metadata as JSON or CSV.
+SpotifyBU is a Docker-first web app for backing up your own Spotify library metadata and preparing a Navidrome-ready music library. It connects to a user's Spotify account, reads playlists, resolves Spotify song/album metadata, previews playlist tracks, exports backup metadata, and plans stable Navidrome folder paths such as `Artist - Album`.
 
-This project intentionally does not rip audio from YouTube or other services. Future source providers should only handle media the user is authorized to download or already owns, such as local files, purchased libraries, licensed catalogs, or royalty-free sources.
+Version `1.0.0` is the first packaged release. It includes the web UI, local app login, Spotify OAuth, playlist/song/album metadata reads, Navidrome library checks, folder planning, Docker packaging, and a provider-ready architecture inspired by spotDL.
 
-## Current Slice
+SpotifyBU does not currently rip audio from Spotify, YouTube, or other services. Future download providers should only handle media the user is authorized to download or already owns, such as local files, purchased libraries, licensed catalogs, or royalty-free sources.
+
+## Features
 
 - Spotify OAuth using Authorization Code with PKCE
+- Local SpotifyBU login with default `admin/admin` credentials
+- Settings page for changing the SpotifyBU app username and password
 - Playlist listing with private and collaborative playlist scopes
 - Song and album metadata lookup from Spotify URLs, URIs, or IDs
 - Playlist track preview
-- JSON and CSV exports with track title, artists, album, ISRC, duration, Spotify URI, and Spotify URL
-- Local app login with changeable credentials
-- Docker image with the Next.js app plus `ffmpeg`, `yt-dlp`, and Python for future media-provider adapters
-- Navidrome library target status using `NAVIDROME_LIBRARY_PATH`
+- JSON and CSV metadata exports
+- Navidrome library folder status checks
 - Navidrome folder planning using `Artist - Album`
-- Provider-ready UI and type contract for legal media backup sources
+- Stable album-folder logging design for future download jobs
+- Docker image with Node.js, `ffmpeg`, `yt-dlp`, Python 3, and `pip`
+- GitHub Container Registry image publishing for `latest` and version tags
 
-## Local Setup
+## Docker Quick Start
 
-1. Create a Spotify app in the Spotify Developer Dashboard.
-2. Add this redirect URI to the Spotify app:
+The published image is:
 
-   ```text
-   http://localhost:3000/api/auth/callback
-   ```
+```text
+ghcr.io/thedinz/spotifybu:latest
+```
 
-3. Copy `.env.example` to `.env.local`.
-4. Set `SPOTIFY_CLIENT_ID`.
-5. Set `NAVIDROME_LIBRARY_PATH` to the music folder Navidrome scans. If Navidrome is in Docker, this should be the host path mounted into the container.
-6. Optionally set `NAVIDROME_URL` if your Navidrome server is not at `http://localhost:4533`.
-7. Set `SPOTIFYBU_APP_SECRET` to a long random value for signing SpotifyBU login sessions.
-8. Optionally set `SPOTIFYBU_CONFIG_DIR` to a persistent folder for SpotifyBU app settings. If unset, changed login credentials are stored in `.spotifybu/app-auth.json` in the project folder.
-9. Install dependencies and start the app:
+For the exact v1.0 release, pin one of these tags:
 
-   ```bash
-   npm install
-   npm run dev
-   ```
+```text
+ghcr.io/thedinz/spotifybu:v1.0.0
+ghcr.io/thedinz/spotifybu:1.0.0
+ghcr.io/thedinz/spotifybu:1.0
+```
+
+Create a folder for SpotifyBU and save this Compose template as `docker-compose.yml`:
+
+```yaml
+services:
+  spotifybu:
+    image: ghcr.io/thedinz/spotifybu:latest
+    pull_policy: always
+    container_name: spotifybu
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3000:3000"
+    environment:
+      GIT_BRANCH: main
+      NAVIDROME_LIBRARY_PATH: /music
+      NAVIDROME_URL: http://host.docker.internal:4533
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      SPOTIFYBU_APP_SECRET: change-this-to-a-long-random-value
+      SPOTIFYBU_CONFIG_DIR: /config
+      SPOTIFY_CLIENT_ID: your-spotify-client-id
+    volumes:
+      - spotifybu_config:/config
+      - /path/to/navidrome/music:/music
+
+volumes:
+  spotifybu_config:
+```
+
+Then start it:
+
+```bash
+docker compose up -d
+```
+
+Open:
+
+```text
+http://localhost:3000
+```
 
 The default SpotifyBU web login is:
 
@@ -46,95 +85,135 @@ Username: admin
 Password: admin
 ```
 
-After signing in, open Settings and change the login before exposing the app on a server.
+After signing in, open Settings and change the login.
 
-## Docker Setup
+## Docker Environment
 
-SpotifyBU is intended to run as a Docker app. The image builds the Next.js server and includes the runtime prerequisites planned for source-provider work:
+The repository also includes [.env.docker.example](.env.docker.example) and [docker-compose.yml](docker-compose.yml) as a reusable base:
 
-- Node.js 22
-- `ffmpeg`
-- `yt-dlp`
-- Python 3 and `pip`
+```bash
+cp .env.docker.example .env
+docker compose up -d
+```
 
-To run it with Docker Compose:
+Set these values before starting the app:
 
-1. Copy the Docker environment example:
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `SPOTIFYBU_IMAGE` | No | Docker image tag to run. Defaults to `ghcr.io/thedinz/spotifybu:latest`. |
+| `SPOTIFYBU_PORT` | No | Host port for the web UI. Defaults to `3000`. |
+| `NEXT_PUBLIC_APP_URL` | Yes | Public URL for SpotifyBU. Must match the Spotify redirect base URL. |
+| `SPOTIFYBU_APP_SECRET` | Yes | Long random value used to sign SpotifyBU login sessions. |
+| `NAVIDROME_MUSIC_PATH` | Yes | Host path to the music folder Navidrome scans. |
+| `SPOTIFY_CLIENT_ID` | Yes | Spotify app Client ID. |
+| `NAVIDROME_URL` | No | Navidrome URL as seen by the container. Defaults to `http://host.docker.internal:4533`. |
 
-   ```bash
-   cp .env.docker.example .env
-   ```
+Inside the container:
 
-2. Edit `.env`.
-3. Set `SPOTIFYBU_APP_SECRET` to a long random value.
-4. Set `NAVIDROME_MUSIC_PATH` to the host music folder Navidrome scans.
-5. Set `SPOTIFY_CLIENT_ID`.
-6. Set `NAVIDROME_URL` to the Navidrome URL as seen by the container. If Navidrome runs on the Docker host, `http://host.docker.internal:4533` is usually right.
-7. Add this redirect URI to your Spotify app:
+- `/config` stores SpotifyBU settings and changed login credentials.
+- `/music` is the mounted Navidrome music library.
+- `NAVIDROME_LIBRARY_PATH` is set to `/music`.
+- `SPOTIFYBU_CONFIG_DIR` is set to `/config`.
+
+The container runs as UID/GID `1000`. On Linux hosts, make sure the mapped Navidrome music folder is writable by that user.
+
+## Spotify Setup
+
+1. Create an app in the Spotify Developer Dashboard.
+2. Copy the app's Client ID into `SPOTIFY_CLIENT_ID`.
+3. Add this redirect URI to the Spotify app:
 
    ```text
    http://localhost:3000/api/auth/callback
    ```
 
-   If `NEXT_PUBLIC_APP_URL` points at a different host or port, use that base URL instead.
+   If `NEXT_PUBLIC_APP_URL` is different, use:
 
-8. Build and start the container:
-
-   ```bash
-   docker compose up -d --build
+   ```text
+   <NEXT_PUBLIC_APP_URL>/api/auth/callback
    ```
 
-The Compose file mounts:
+Spotify's official PKCE flow docs are here: https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow
 
-```text
-/config
+## Navidrome Setup
+
+SpotifyBU is meant to work beside Navidrome. Mount the same host music folder into SpotifyBU that Navidrome scans.
+
+Example:
+
+```yaml
+volumes:
+  - /srv/navidrome/music:/music
 ```
 
-for SpotifyBU settings and changed login credentials, and:
+SpotifyBU currently checks whether the configured folder exists and whether the app can read and write it. Future download jobs will stage authorized audio files into this folder and record album-folder mappings in:
 
 ```text
-/music
+/music/.spotifybu/album-folders.json
 ```
 
-for the Navidrome library path. Inside the container, `NAVIDROME_LIBRARY_PATH` is set to `/music` and `SPOTIFYBU_CONFIG_DIR` is set to `/config`.
+Navidrome still needs read access to the same host folder and a scan/watch configuration that sees new files.
 
-The container runs as UID/GID `1000`. On Linux hosts, make sure the mapped Navidrome music folder is writable by that user, or adjust the host folder permissions before starting the container.
+Navidrome docs:
 
-Spotify's official docs for the auth flow are here: https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow
+- https://www.navidrome.org/docs/getting-started/
+- https://www.navidrome.org/docs/usage/features/multi-library/
 
-Navidrome's getting-started docs note that Navidrome scans its configured music folder and that the Navidrome process needs read access to it: https://www.navidrome.org/docs/getting-started/
+## Local Development
 
-Navidrome multi-library support can also point additional libraries at separate folders: https://www.navidrome.org/docs/usage/features/multi-library/
+For local non-Docker development:
 
-spotDL is a useful comparison point: it resolves Spotify metadata to audio candidates from providers such as YouTube Music and then downloads through `yt-dlp`. SpotifyBU keeps that same provider-oriented shape, but download-capable providers must be configured for media the user is authorized to download. See `docs/source-providers.md`.
+```bash
+npm install
+cp .env.example .env.local
+npm run dev
+```
 
-## Navidrome Target
-
-SpotifyBU is designed to stage authorized audio files into a Navidrome library folder, usually with a structure like:
+Set at least:
 
 ```text
-Artist - Album/01 - Track.ext
+SPOTIFY_CLIENT_ID=
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+NAVIDROME_LIBRARY_PATH=/path/to/navidrome/music
+SPOTIFYBU_APP_SECRET=change-this-to-a-long-random-value
 ```
 
-The app currently checks whether the configured folder exists and whether the SpotifyBU server process can read and write it. Navidrome still needs read access to the same folder and a scan/watch configuration that sees new files.
-
-SpotifyBU plans every track through its Spotify album metadata, so a single song still resolves to the album artist and album folder. Future download jobs should call `recordNavidromeAlbumFolders` after a successful write. That stores stable album folder mappings in:
+Then open:
 
 ```text
-NAVIDROME_LIBRARY_PATH/.spotifybu/album-folders.json
+http://localhost:3000
 ```
 
-If another song from the same Spotify album is downloaded later, SpotifyBU reuses the logged folder instead of guessing a new path.
+## Building The Image Locally
 
-## Architecture Notes
+To build from source instead of using GHCR:
+
+```bash
+docker build -t spotifybu:local .
+docker run --rm -p 3000:3000 \
+  -e NEXT_PUBLIC_APP_URL=http://localhost:3000 \
+  -e SPOTIFYBU_APP_SECRET=change-this-to-a-long-random-value \
+  -e SPOTIFY_CLIENT_ID=your-spotify-client-id \
+  -e NAVIDROME_LIBRARY_PATH=/music \
+  -v spotifybu_config:/config \
+  -v /path/to/navidrome/music:/music \
+  spotifybu:local
+```
+
+## Architecture
 
 - `src/lib/app-auth.ts` owns the local SpotifyBU web login, session cookie signing, and persisted credential updates.
-- Access and refresh tokens are stored in an HTTP-only cookie for the local prototype. Before production, move tokens into an encrypted server-side session store.
 - `src/lib/spotify.ts` owns Spotify API calls and export shaping.
 - `src/lib/navidrome.ts` owns Navidrome library path checks, safe target directory creation, folder planning, and album-folder logging.
 - `src/lib/providers/types.ts` defines the source-provider contract for matching, downloading, tagging, and provenance.
-- `src/lib/session.ts` and `src/lib/server-session.ts` own PKCE cookie and token-session handling.
-- Source providers should expose match/search/download capability only for authorized sources.
+- `src/lib/session.ts` and `src/lib/server-session.ts` own PKCE cookie and Spotify token-session handling.
+- `.github/workflows/docker-image.yml` publishes GHCR images for `main` and `v*` tags.
+
+## Source Providers
+
+spotDL is a useful comparison point: it resolves Spotify metadata to audio candidates from providers such as YouTube Music and then downloads through `yt-dlp`. SpotifyBU keeps a similar provider-oriented shape, but download-capable providers must be configured for media the user is authorized to download.
+
+See [docs/source-providers.md](docs/source-providers.md).
 
 ## Roadmap
 
