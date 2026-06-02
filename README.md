@@ -12,6 +12,7 @@ This project intentionally does not rip audio from YouTube or other services. Fu
 - Playlist track preview
 - JSON and CSV exports with track title, artists, album, ISRC, duration, Spotify URI, and Spotify URL
 - Local app login with changeable credentials
+- Docker image with the Next.js app plus `ffmpeg`, `yt-dlp`, and Python for future media-provider adapters
 - Navidrome library target status using `NAVIDROME_LIBRARY_PATH`
 - Navidrome folder planning using `Artist - Album`
 - Provider-ready UI and type contract for legal media backup sources
@@ -46,6 +47,58 @@ Password: admin
 ```
 
 After signing in, open Settings and change the login before exposing the app on a server.
+
+## Docker Setup
+
+SpotifyBU is intended to run as a Docker app. The image builds the Next.js server and includes the runtime prerequisites planned for source-provider work:
+
+- Node.js 22
+- `ffmpeg`
+- `yt-dlp`
+- Python 3 and `pip`
+
+To run it with Docker Compose:
+
+1. Copy the Docker environment example:
+
+   ```bash
+   cp .env.docker.example .env
+   ```
+
+2. Edit `.env`.
+3. Set `SPOTIFYBU_APP_SECRET` to a long random value.
+4. Set `NAVIDROME_MUSIC_PATH` to the host music folder Navidrome scans.
+5. Set `SPOTIFY_CLIENT_ID`.
+6. Set `NAVIDROME_URL` to the Navidrome URL as seen by the container. If Navidrome runs on the Docker host, `http://host.docker.internal:4533` is usually right.
+7. Add this redirect URI to your Spotify app:
+
+   ```text
+   http://localhost:3000/api/auth/callback
+   ```
+
+   If `NEXT_PUBLIC_APP_URL` points at a different host or port, use that base URL instead.
+
+8. Build and start the container:
+
+   ```bash
+   docker compose up -d --build
+   ```
+
+The Compose file mounts:
+
+```text
+/config
+```
+
+for SpotifyBU settings and changed login credentials, and:
+
+```text
+/music
+```
+
+for the Navidrome library path. Inside the container, `NAVIDROME_LIBRARY_PATH` is set to `/music` and `SPOTIFYBU_CONFIG_DIR` is set to `/config`.
+
+The container runs as UID/GID `1000`. On Linux hosts, make sure the mapped Navidrome music folder is writable by that user, or adjust the host folder permissions before starting the container.
 
 Spotify's official docs for the auth flow are here: https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow
 

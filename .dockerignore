@@ -1,0 +1,10 @@
+.env
+.env*.local
+.git
+.next
+.spotifybu
+dist
+node_modules
+npm-debug.log*
+out
+tsconfig.tsbuildinfo

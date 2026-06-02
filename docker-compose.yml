@@ -1,0 +1,27 @@
+services:
+  spotifybu:
+    build:
+      context: .
+      args:
+        GIT_BRANCH: ${GIT_BRANCH:-main}
+    image: spotifybu:latest
+    container_name: spotifybu
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${SPOTIFYBU_PORT:-3000}:3000"
+    environment:
+      GIT_BRANCH: ${GIT_BRANCH:-main}
+      NAVIDROME_LIBRARY_PATH: /music
+      NAVIDROME_URL: ${NAVIDROME_URL:-http://host.docker.internal:4533}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      SPOTIFYBU_APP_SECRET: ${SPOTIFYBU_APP_SECRET:?Set SPOTIFYBU_APP_SECRET in .env before starting SpotifyBU}
+      SPOTIFYBU_CONFIG_DIR: /config
+      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
+    volumes:
+      - spotifybu_config:/config
+      - ${NAVIDROME_MUSIC_PATH:?Set NAVIDROME_MUSIC_PATH to your host Navidrome music folder}:/music
+
+volumes:
+  spotifybu_config:
