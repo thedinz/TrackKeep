@@ -1,3 +1,5 @@
+import { getAppBaseUrl } from "./app-url";
+
 export type SpotifyTokenSet = {
   access_token: string;
   expires_at: number;
@@ -181,16 +183,6 @@ export function getSpotifyClientId() {
   }
 
   return clientId;
-}
-
-export function getAppBaseUrl(request: Request) {
-  const configuredUrl = process.env.NEXT_PUBLIC_APP_URL;
-
-  if (configuredUrl) {
-    return configuredUrl.replace(/\/$/, "");
-  }
-
-  return new URL(request.url).origin;
 }
 
 export function getSpotifyRedirectUri(request: Request) {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getAppUrl } from "@/lib/app-url";
 
 const appAuthCookie = "spotifybu_app_session";
 const publicPaths = new Set([
@@ -20,7 +21,7 @@ export async function proxy(request: NextRequest) {
   );
 
   if (pathname === "/login" && authenticated) {
-    return NextResponse.redirect(new URL("/", request.url));
+    return NextResponse.redirect(getAppUrl(request, "/"));
   }
 
   if (isPublicPath) {
@@ -38,7 +39,7 @@ export async function proxy(request: NextRequest) {
     );
   }
 
-  const loginUrl = new URL("/login", request.url);
+  const loginUrl = getAppUrl(request, "/login");
   loginUrl.searchParams.set("next", `${pathname}${request.nextUrl.search}`);
 
   return NextResponse.redirect(loginUrl);

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getAppUrl } from "@/lib/app-url";
 import { clearOAuthCookies, readOAuthCookies, setSessionCookie } from "@/lib/session";
 import { exchangeCodeForToken, getSpotifyRedirectUri } from "@/lib/spotify";
 
@@ -27,7 +28,7 @@ export async function GET(request: Request) {
       codeVerifier: oauthCookies.verifier,
       redirectUri: getSpotifyRedirectUri(request)
     });
-    const response = NextResponse.redirect(new URL("/", request.url));
+    const response = NextResponse.redirect(getAppUrl(request, "/"));
     setSessionCookie(response, tokenSet);
     clearOAuthCookies(response);
 
@@ -39,7 +40,7 @@ export async function GET(request: Request) {
 
 function redirectWithError(request: Request, error: string) {
   const response = NextResponse.redirect(
-    new URL(`/?error=${encodeURIComponent(error)}`, request.url)
+    getAppUrl(request, `/?error=${encodeURIComponent(error)}`)
   );
   clearOAuthCookies(response);
 

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getAppUrl } from "@/lib/app-url";
 import {
   getSpotifyClientId,
   getSpotifyRedirectUri,
@@ -17,7 +18,9 @@ export async function GET(request: Request) {
   try {
     clientId = getSpotifyClientId();
   } catch {
-    return NextResponse.redirect(new URL("/?error=missing_spotify_client_id", request.url));
+    return NextResponse.redirect(
+      getAppUrl(request, "/?error=missing_spotify_client_id")
+    );
   }
 
   const verifier = randomUrlSafeString(64);

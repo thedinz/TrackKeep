@@ -118,6 +118,34 @@ Inside the container:
 
 The container runs as UID/GID `1000`. On Linux hosts, make sure the mapped Navidrome music folder is writable by that user.
 
+## Reverse Proxy
+
+SpotifyBU can run either directly over HTTP or behind an HTTPS reverse proxy.
+
+For a direct Unraid/LAN install, these values are fine:
+
+```text
+NEXT_PUBLIC_APP_URL=http://<server-ip>:3000
+SPOTIFYBU_SECURE_COOKIES=false
+```
+
+For an HTTPS reverse proxy, set:
+
+```text
+NEXT_PUBLIC_APP_URL=https://spotifybu.example.com
+SPOTIFYBU_SECURE_COOKIES=true
+```
+
+Then add this Spotify redirect URI:
+
+```text
+https://spotifybu.example.com/api/auth/callback
+```
+
+SpotifyBU also honors standard `X-Forwarded-Host` and `X-Forwarded-Proto` headers when `NEXT_PUBLIC_APP_URL` is not set, but setting `NEXT_PUBLIC_APP_URL` is recommended for reverse-proxy installs because Spotify OAuth redirect URIs must be exact.
+
+Your proxy should forward the original host and scheme. For most proxies, that means passing `X-Forwarded-Host` and `X-Forwarded-Proto` to the container.
+
 ## Spotify Setup
 
 1. Create an app in the Spotify Developer Dashboard.
