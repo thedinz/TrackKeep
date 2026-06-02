@@ -1,6 +1,8 @@
+import { execFile } from "child_process";
 import { constants } from "fs";
-import { access, mkdir, readFile, stat, writeFile } from "fs/promises";
+import { access, mkdir, readdir, readFile, rename, stat, writeFile } from "fs/promises";
 import path from "path";
+import { promisify } from "util";
 import type { BackupTrack } from "./spotify";
 
 export type NavidromeLibraryState =
@@ -55,7 +57,72 @@ export type NavidromeFolderPlan = {
   trackIds: string[];
 };
 
+export type NavidromeIndexedTrack = {
+  album?: string;
+  albumArtist?: string;
+  artist?: string;
+  artists: string[];
+  discNumber?: number;
+  durationMs?: number;
+  fileName: string;
+  isrc?: string;
+  mtimeMs: number;
+  relativeDirectory: string;
+  relativePath: string;
+  sizeBytes: number;
+  source: "mixed" | "path" | "tags";
+  title: string;
+  trackNumber?: number;
+};
+
+export type NavidromeLibraryIndex = {
+  generatedAt: string;
+  libraryPath: string;
+  tracks: NavidromeIndexedTrack[];
+  version: 1;
+};
+
+export type NavidromeLibraryIndexSummary = {
+  generatedAt?: string;
+  libraryPath?: string;
+  stale: boolean;
+  trackCount: number;
+};
+
+export type NavidromeTrackMatch = {
+  exists: boolean;
+  expectedFolder: string;
+  matchedBy?: "duration" | "isrc" | "metadata";
+  matchedTrack?: NavidromeIndexedTrack;
+  needsMove: boolean;
+  recommendedRelativePath?: string;
+  trackId?: string;
+  trackPosition: number;
+};
+
+export type NavidromeTrackOrganizationResult = {
+  libraryMatches: NavidromeTrackMatch[];
+  movedCount: number;
+  skippedCount: number;
+  summary: NavidromeLibraryIndexSummary;
+};
+
 const albumFolderLogSegments = [".spotifybu", "album-folders.json"];
+const libraryIndexSegments = [".spotifybu", "library-index.json"];
+const audioFileExtensions = new Set([
+  ".aac",
+  ".aiff",
+  ".alac",
+  ".ape",
+  ".flac",
+  ".m4a",
+  ".mp3",
+  ".ogg",
+  ".opus",
+  ".wav",
+  ".wma"
+]);
+const execFileAsync = promisify(execFile);
 
 export function getNavidromeLibraryPath() {
   const configuredPath = process.env.NAVIDROME_LIBRARY_PATH?.trim();
@@ -268,6 +335,152 @@ export async function recordNavidromeAlbumFolders(tracks: BackupTrack[]) {
   return planNavidromeAlbumFolders(tracks);
 }
 
+export async function getNavidromeLibraryIndexSummary() {
+  const libraryPath = getNavidromeLibraryPath();
+
+  if (!libraryPath) {
+    return {
+      stale: true,
+      trackCount: 0
+    } satisfies NavidromeLibraryIndexSummary;
+  }
+
+  const index = await readNavidromeLibraryIndex();
+
+  return summarizeNavidromeLibraryIndex(index, libraryPath);
+}
+
+export async function readNavidromeLibraryIndex() {
+  const libraryPath = getNavidromeLibraryPath();
+
+  if (!libraryPath) {
+    return null;
+  }
+
+  try {
+    const contents = await readFile(
+      path.join(/* turbopackIgnore: true */ libraryPath, ...libraryIndexSegments),
+      "utf8"
+    );
+    const parsed = JSON.parse(contents) as Partial<NavidromeLibraryIndex>;
+
+    if (parsed.version !== 1 || !Array.isArray(parsed.tracks)) {
+      return null;
+    }
+
+    return parsed as NavidromeLibraryIndex;
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+export async function scanNavidromeLibraryIndex() {
+  const status = await getNavidromeLibraryStatus();
+
+  if (status.state !== "ready" || !status.libraryPath) {
+    throw new Error(status.message);
+  }
+
+  const audioFilePaths = await findAudioFiles(status.libraryPath);
+  const tracks = await mapWithConcurrency(audioFilePaths, 4, (filePath) =>
+    indexAudioFile(status.libraryPath, filePath)
+  );
+
+  const index = {
+    generatedAt: new Date().toISOString(),
+    libraryPath: status.libraryPath,
+    tracks,
+    version: 1
+  } satisfies NavidromeLibraryIndex;
+
+  await writeNavidromeLibraryIndex(index);
+
+  return summarizeNavidromeLibraryIndex(index, status.libraryPath);
+}
+
+export async function matchNavidromeTracks(tracks: BackupTrack[]) {
+  const libraryPath = getNavidromeLibraryPath();
+  const index = await readNavidromeLibraryIndex();
+
+  return matchNavidromeTracksWithIndex(
+    tracks,
+    libraryPath && index?.libraryPath === libraryPath ? index : null
+  );
+}
+
+export async function organizeNavidromeMatchedTracks(tracks: BackupTrack[]) {
+  const libraryPath = getNavidromeLibraryPath();
+
+  if (!libraryPath) {
+    throw new Error("NAVIDROME_LIBRARY_PATH is not configured.");
+  }
+
+  const index = await readNavidromeLibraryIndex();
+
+  if (!index) {
+    throw new Error("Scan the Navidrome library before organizing matched files.");
+  }
+
+  if (index.libraryPath !== libraryPath) {
+    throw new Error("Scan the current Navidrome library before organizing files.");
+  }
+
+  const matches = matchNavidromeTracksWithIndex(tracks, index);
+  const occupiedRelativePaths = new Set(
+    index.tracks.map((track) => normalizeRelativePathKey(track.relativePath))
+  );
+  let movedCount = 0;
+  let skippedCount = 0;
+
+  for (const match of matches) {
+    const matchedTrack = match.matchedTrack;
+
+    if (!matchedTrack || !match.needsMove || !match.recommendedRelativePath) {
+      continue;
+    }
+
+    const sourcePath = absoluteLibraryPath(libraryPath, matchedTrack.relativePath);
+    const targetRelativePath = await nextAvailableRelativeTrackPath({
+      desiredRelativePath: match.recommendedRelativePath,
+      libraryPath,
+      occupiedRelativePaths,
+      originalRelativePath: matchedTrack.relativePath
+    });
+    const targetPath = absoluteLibraryPath(libraryPath, targetRelativePath);
+
+    await ensureNavidromeTargetDirectory([match.expectedFolder]);
+
+    try {
+      await rename(sourcePath, targetPath);
+      occupiedRelativePaths.delete(normalizeRelativePathKey(matchedTrack.relativePath));
+      occupiedRelativePaths.add(normalizeRelativePathKey(targetRelativePath));
+      matchedTrack.relativePath = targetRelativePath;
+      matchedTrack.relativeDirectory = relativeDirectoryName(targetRelativePath);
+      movedCount += 1;
+    } catch {
+      skippedCount += 1;
+    }
+  }
+
+  const updatedIndex = {
+    ...index,
+    generatedAt: new Date().toISOString()
+  } satisfies NavidromeLibraryIndex;
+
+  await writeNavidromeLibraryIndex(updatedIndex);
+
+  return {
+    libraryMatches: matchNavidromeTracksWithIndex(tracks, updatedIndex),
+    movedCount,
+    skippedCount,
+    summary: summarizeNavidromeLibraryIndex(updatedIndex, libraryPath)
+  } satisfies NavidromeTrackOrganizationResult;
+}
+
 function sanitizePathSegment(segment: string) {
   return (
     segment
@@ -306,6 +519,468 @@ function getAlbumFolderKey(track: BackupTrack) {
   return `spotify:album-name:${stableSlug(
     `${track.albumArtist || "Unknown Artist"}-${track.album || "Unknown Album"}`
   )}`;
+}
+
+function summarizeNavidromeLibraryIndex(
+  index: NavidromeLibraryIndex | null,
+  libraryPath: string
+) {
+  if (!index) {
+    return {
+      libraryPath,
+      stale: true,
+      trackCount: 0
+    } satisfies NavidromeLibraryIndexSummary;
+  }
+
+  return {
+    generatedAt: index.generatedAt,
+    libraryPath,
+    stale: index.libraryPath !== libraryPath,
+    trackCount: index.tracks.length
+  } satisfies NavidromeLibraryIndexSummary;
+}
+
+async function findAudioFiles(libraryPath: string) {
+  const files: string[] = [];
+
+  async function walk(directory: string) {
+    const entries = await readdir(directory, {
+      withFileTypes: true
+    });
+
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      const entryPath = path.join(/* turbopackIgnore: true */ directory, entry.name);
+
+      if (entry.isDirectory()) {
+        if (entry.name === ".spotifybu" || entry.name === "@eaDir") {
+          continue;
+        }
+
+        await walk(entryPath);
+        continue;
+      }
+
+      if (
+        entry.isFile() &&
+        audioFileExtensions.has(path.extname(entry.name).toLowerCase())
+      ) {
+        files.push(entryPath);
+      }
+    }
+  }
+
+  await walk(libraryPath);
+
+  return files;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>
+) {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await mapper(items[currentIndex]);
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      {
+        length: Math.min(concurrency, items.length)
+      },
+      () => worker()
+    )
+  );
+
+  return results;
+}
+
+async function indexAudioFile(libraryPath: string, filePath: string) {
+  const [fileStats, probe] = await Promise.all([
+    stat(filePath),
+    probeAudioFile(filePath)
+  ]);
+  const relativePath = toLibraryRelativePath(libraryPath, filePath);
+  const inferred = inferMetadataFromPath(relativePath);
+  const tagTitle = tagValue(probe?.tags, ["title"]);
+  const tagArtist = tagValue(probe?.tags, ["artist"]);
+  const tagAlbumArtist = tagValue(probe?.tags, [
+    "album_artist",
+    "albumartist",
+    "albumartistsort"
+  ]);
+  const tagAlbum = tagValue(probe?.tags, ["album"]);
+  const title = tagTitle || inferred.title;
+  const artist = tagArtist || inferred.artist;
+  const albumArtist = tagAlbumArtist || tagArtist || inferred.albumArtist;
+  const album = tagAlbum || inferred.album;
+  const tagArtists = splitArtists(
+    tagValue(probe?.tags, ["artists"]) || tagArtist || inferred.artist
+  );
+  const artists = tagArtists.length ? tagArtists : artist ? [artist] : [];
+  const usedTags = Boolean(tagTitle || tagArtist || tagAlbumArtist || tagAlbum);
+  const usedPathFallback = Boolean(
+    (!tagTitle && inferred.title) ||
+      (!tagArtist && inferred.artist) ||
+      (!tagAlbumArtist && inferred.albumArtist) ||
+      (!tagAlbum && inferred.album)
+  );
+
+  return {
+    album,
+    albumArtist,
+    artist,
+    artists,
+    discNumber: parsePositiveInteger(tagValue(probe?.tags, ["disc", "discnumber"])),
+    durationMs: probe?.durationMs,
+    fileName: path.posix.basename(relativePath),
+    isrc: normalizeIsrc(tagValue(probe?.tags, ["isrc"])),
+    mtimeMs: fileStats.mtimeMs,
+    relativeDirectory: relativeDirectoryName(relativePath),
+    relativePath,
+    sizeBytes: fileStats.size,
+    source: usedTags ? (usedPathFallback ? "mixed" : "tags") : "path",
+    title,
+    trackNumber: parsePositiveInteger(tagValue(probe?.tags, ["track", "tracknumber"]))
+  } satisfies NavidromeIndexedTrack;
+}
+
+async function probeAudioFile(filePath: string) {
+  try {
+    const { stdout } = await execFileAsync(
+      "ffprobe",
+      ["-v", "quiet", "-print_format", "json", "-show_format", filePath],
+      {
+        maxBuffer: 1024 * 1024,
+        timeout: 10000
+      }
+    );
+    const parsed = JSON.parse(stdout.toString()) as {
+      format?: {
+        duration?: string;
+        tags?: Record<string, string | number>;
+      };
+    };
+
+    return {
+      durationMs: secondsToMilliseconds(parsed.format?.duration),
+      tags: normalizeTagMap(parsed.format?.tags)
+    };
+  } catch {
+    return null;
+  }
+}
+
+function inferMetadataFromPath(relativePath: string) {
+  const parsedPath = path.posix.parse(relativePath);
+  const folderName = parsedPath.dir.split("/").filter(Boolean).at(-1) ?? "";
+  const folderMatch = folderName.match(/^(?<artist>.+?)\s+-\s+(?<album>.+)$/);
+  const title = cleanTrackFileName(parsedPath.name);
+  const artist = folderMatch?.groups?.artist?.trim();
+  const album = folderMatch?.groups?.album?.trim();
+
+  return {
+    album,
+    albumArtist: artist,
+    artist,
+    title
+  };
+}
+
+function cleanTrackFileName(value: string) {
+  return (
+    value
+      .replace(/^\s*\d{1,2}[-_.]\d{1,2}\s*[-_. ]+\s*/, "")
+      .replace(/^\s*\d{1,3}\s*[-_. ]+\s*/, "")
+      .replace(/\s+/g, " ")
+      .trim() || value
+  );
+}
+
+function normalizeTagMap(tags?: Record<string, string | number>) {
+  const tagMap = new Map<string, string>();
+
+  for (const [key, value] of Object.entries(tags ?? {})) {
+    tagMap.set(
+      key.toLowerCase().replace(/[-\s]+/g, "_"),
+      String(value).trim()
+    );
+  }
+
+  return tagMap;
+}
+
+function tagValue(tags: Map<string, string> | undefined | null, keys: string[]) {
+  for (const key of keys) {
+    const value = tags?.get(key);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function secondsToMilliseconds(value?: string) {
+  if (!value) {
+    return undefined;
+  }
+
+  const seconds = Number(value);
+
+  return Number.isFinite(seconds) ? Math.round(seconds * 1000) : undefined;
+}
+
+function parsePositiveInteger(value?: string) {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value.split("/")[0], 10);
+
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function splitArtists(value?: string) {
+  return (value ?? "")
+    .split(/\s*(?:;|\u0000)\s*/)
+    .map((artist) => artist.trim())
+    .filter(Boolean);
+}
+
+function matchNavidromeTracksWithIndex(
+  tracks: BackupTrack[],
+  index: NavidromeLibraryIndex | null
+) {
+  const indexedTracks = index?.tracks ?? [];
+  const isrcMatches = new Map<string, NavidromeIndexedTrack[]>();
+
+  for (const indexedTrack of indexedTracks) {
+    if (!indexedTrack.isrc) {
+      continue;
+    }
+
+    const matches = isrcMatches.get(indexedTrack.isrc) ?? [];
+    matches.push(indexedTrack);
+    isrcMatches.set(indexedTrack.isrc, matches);
+  }
+
+  return tracks.map((track) => {
+    const expectedFolder = buildAlbumFolderName(track);
+    const match = findIndexedTrackMatch(track, indexedTracks, isrcMatches);
+
+    if (!match) {
+      return {
+        exists: false,
+        expectedFolder,
+        needsMove: false,
+        trackId: track.id,
+        trackPosition: track.position
+      } satisfies NavidromeTrackMatch;
+    }
+
+    const needsMove = !isTrackInExpectedFolder(match.track, expectedFolder);
+
+    return {
+      exists: true,
+      expectedFolder,
+      matchedBy: match.matchedBy,
+      matchedTrack: match.track,
+      needsMove,
+      recommendedRelativePath: needsMove
+        ? path.posix.join(expectedFolder, match.track.fileName)
+        : undefined,
+      trackId: track.id,
+      trackPosition: track.position
+    } satisfies NavidromeTrackMatch;
+  });
+}
+
+function findIndexedTrackMatch(
+  track: BackupTrack,
+  indexedTracks: NavidromeIndexedTrack[],
+  isrcMatches: Map<string, NavidromeIndexedTrack[]>
+) {
+  const trackIsrc = normalizeIsrc(track.isrc);
+  const title = normalizeText(track.name);
+  const album = normalizeText(track.album);
+  const artists = normalizedSpotifyArtists(track);
+
+  if (trackIsrc) {
+    const match = isrcMatches
+      .get(trackIsrc)
+      ?.find((candidate) => hasArtistOverlap(artists, indexedArtists(candidate)));
+
+    if (match) {
+      return {
+        matchedBy: "isrc" as const,
+        track: match
+      };
+    }
+  }
+
+  const metadataMatch = indexedTracks.find(
+    (candidate) =>
+      normalizeText(candidate.title) === title &&
+      normalizeText(candidate.album) === album &&
+      hasArtistOverlap(artists, indexedArtists(candidate))
+  );
+
+  if (metadataMatch) {
+    return {
+      matchedBy: "metadata" as const,
+      track: metadataMatch
+    };
+  }
+
+  const durationMatch = indexedTracks.find(
+    (candidate) =>
+      normalizeText(candidate.title) === title &&
+      hasArtistOverlap(artists, indexedArtists(candidate)) &&
+      durationCloseEnough(track.durationMs, candidate.durationMs)
+  );
+
+  if (durationMatch) {
+    return {
+      matchedBy: "duration" as const,
+      track: durationMatch
+    };
+  }
+
+  return null;
+}
+
+function normalizedSpotifyArtists(track: BackupTrack) {
+  return new Set(
+    [track.albumArtist, ...track.artists]
+      .map(normalizeText)
+      .filter((artist) => artist.length > 0)
+  );
+}
+
+function indexedArtists(track: NavidromeIndexedTrack) {
+  return new Set(
+    [track.albumArtist, track.artist, ...track.artists]
+      .map(normalizeText)
+      .filter((artist) => artist.length > 0)
+  );
+}
+
+function hasArtistOverlap(left: Set<string>, right: Set<string>) {
+  if (!left.size || !right.size) {
+    return true;
+  }
+
+  for (const artist of left) {
+    if (right.has(artist)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function durationCloseEnough(leftMs: number, rightMs?: number) {
+  return typeof rightMs === "number" && Math.abs(leftMs - rightMs) <= 3000;
+}
+
+function isTrackInExpectedFolder(
+  track: NavidromeIndexedTrack,
+  expectedFolder: string
+) {
+  return (
+    track.relativeDirectory === expectedFolder ||
+    track.relativeDirectory.startsWith(`${expectedFolder}/`)
+  );
+}
+
+async function nextAvailableRelativeTrackPath({
+  desiredRelativePath,
+  libraryPath,
+  occupiedRelativePaths,
+  originalRelativePath
+}: {
+  desiredRelativePath: string;
+  libraryPath: string;
+  occupiedRelativePaths: Set<string>;
+  originalRelativePath: string;
+}) {
+  const parsed = path.posix.parse(desiredRelativePath);
+  const originalKey = normalizeRelativePathKey(originalRelativePath);
+
+  for (let count = 0; count < 1000; count += 1) {
+    const fileName =
+      count === 0 ? parsed.base : `${parsed.name} (${count + 1})${parsed.ext}`;
+    const candidateRelativePath = path.posix.join(parsed.dir, fileName);
+    const candidateKey = normalizeRelativePathKey(candidateRelativePath);
+
+    if (candidateKey === originalKey) {
+      return candidateRelativePath;
+    }
+
+    if (
+      !occupiedRelativePaths.has(candidateKey) &&
+      !(await canAccess(absoluteLibraryPath(libraryPath, candidateRelativePath), constants.F_OK))
+    ) {
+      return candidateRelativePath;
+    }
+  }
+
+  throw new Error("Could not find an available destination filename.");
+}
+
+function toLibraryRelativePath(libraryPath: string, filePath: string) {
+  return normalizeRelativePath(path.relative(libraryPath, filePath));
+}
+
+function normalizeRelativePath(relativePath: string) {
+  return relativePath.split(path.sep).join("/");
+}
+
+function normalizeRelativePathKey(relativePath: string) {
+  return normalizeRelativePath(relativePath).toLowerCase();
+}
+
+function relativeDirectoryName(relativePath: string) {
+  const directory = path.posix.dirname(relativePath);
+
+  return directory === "." ? "" : directory;
+}
+
+function absoluteLibraryPath(libraryPath: string, relativePath: string) {
+  const targetPath = path.resolve(
+    /* turbopackIgnore: true */ libraryPath,
+    ...relativePath.split("/")
+  );
+  const resolvedRelativePath = path.relative(libraryPath, targetPath);
+
+  if (
+    resolvedRelativePath.startsWith("..") ||
+    path.isAbsolute(resolvedRelativePath)
+  ) {
+    throw new Error("Resolved Navidrome target escaped the library path.");
+  }
+
+  return targetPath;
+}
+
+async function writeNavidromeLibraryIndex(index: NavidromeLibraryIndex) {
+  const indexDirectory = await ensureNavidromeTargetDirectory([".spotifybu"]);
+
+  await writeFile(
+    path.join(/* turbopackIgnore: true */ indexDirectory, "library-index.json"),
+    `${JSON.stringify(index, null, 2)}\n`,
+    "utf8"
+  );
 }
 
 async function readAlbumFolderLog(): Promise<AlbumFolderLog> {
@@ -368,6 +1043,22 @@ function stableSlug(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+function normalizeText(value?: string) {
+  return (value ?? "")
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function normalizeIsrc(value?: string) {
+  const normalized = (value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+  return normalized || undefined;
 }
 
 async function canAccess(filePath: string, mode: number) {

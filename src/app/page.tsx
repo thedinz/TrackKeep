@@ -79,6 +79,37 @@ type FolderPlan = {
   trackIds: string[];
 };
 
+type IndexedTrack = {
+  album?: string;
+  albumArtist?: string;
+  artist?: string;
+  artists: string[];
+  durationMs?: number;
+  fileName: string;
+  isrc?: string;
+  relativeDirectory: string;
+  relativePath: string;
+  title: string;
+};
+
+type LibraryMatch = {
+  exists: boolean;
+  expectedFolder: string;
+  matchedBy?: "duration" | "isrc" | "metadata";
+  matchedTrack?: IndexedTrack;
+  needsMove: boolean;
+  recommendedRelativePath?: string;
+  trackId?: string;
+  trackPosition: number;
+};
+
+type NavidromeLibraryIndexSummary = {
+  generatedAt?: string;
+  libraryPath?: string;
+  stale: boolean;
+  trackCount: number;
+};
+
 type PlaylistSummary = {
   collaborative: boolean;
   description: string;
@@ -114,15 +145,30 @@ type PlaylistResponse = {
 
 type TracksResponse = {
   folderPlans: FolderPlan[];
+  libraryMatches: LibraryMatch[];
   playlist: PlaylistSummary;
   tracks: BackupTrack[];
 };
 
 type ResolveResponse = {
   folderPlans: FolderPlan[];
+  libraryMatches: LibraryMatch[];
   source: ResolvedSource;
   tracks: BackupTrack[];
   type: "album" | "track";
+};
+
+type LibraryIndexResponse = {
+  index: NavidromeLibraryIndexSummary;
+};
+
+type LibraryMatchesResponse = {
+  libraryMatches: LibraryMatch[];
+};
+
+type LibraryOrganizeResponse = LibraryIndexResponse & LibraryMatchesResponse & {
+  movedCount: number;
+  skippedCount: number;
 };
 
 const numberFormatter = new Intl.NumberFormat("en-US");
@@ -140,12 +186,17 @@ export default function Home() {
   const [resolvedSource, setResolvedSource] = useState<ResolvedSource | null>(null);
   const [tracks, setTracks] = useState<BackupTrack[]>([]);
   const [folderPlans, setFolderPlans] = useState<FolderPlan[]>([]);
+  const [libraryIndex, setLibraryIndex] =
+    useState<NavidromeLibraryIndexSummary | null>(null);
+  const [libraryMatches, setLibraryMatches] = useState<LibraryMatch[]>([]);
   const [query, setQuery] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [isLoadingPlaylists, setIsLoadingPlaylists] = useState(false);
   const [isLoadingTracks, setIsLoadingTracks] = useState(false);
   const [isResolvingSource, setIsResolvingSource] = useState(false);
+  const [isScanningLibrary, setIsScanningLibrary] = useState(false);
+  const [isOrganizingLibrary, setIsOrganizingLibrary] = useState(false);
   const [navidromeStatus, setNavidromeStatus] =
     useState<NavidromeLibraryStatus | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
@@ -195,6 +246,20 @@ export default function Home() {
     }
   }, []);
 
+  const loadLibraryIndex = useCallback(async () => {
+    try {
+      const response = await fetchJson<LibraryIndexResponse>(
+        "/api/navidrome/library/index"
+      );
+      setLibraryIndex(response.index);
+    } catch {
+      setLibraryIndex({
+        stale: true,
+        trackCount: 0
+      });
+    }
+  }, []);
+
   const loadAppInfo = useCallback(async () => {
     try {
       setAppInfo(await fetchJson<AppInfo>("/api/app-info"));
@@ -205,6 +270,64 @@ export default function Home() {
       });
     }
   }, []);
+
+  const refreshLibraryMatches = useCallback(async (nextTracks = tracks) => {
+    if (!nextTracks.length) {
+      setLibraryMatches([]);
+      return;
+    }
+
+    const response = await postJson<LibraryMatchesResponse>(
+      "/api/navidrome/library/matches",
+      {
+        tracks: nextTracks
+      }
+    );
+
+    setLibraryMatches(response.libraryMatches);
+  }, [tracks]);
+
+  const scanNavidromeLibrary = useCallback(async () => {
+    setIsScanningLibrary(true);
+    setRequestError(null);
+
+    try {
+      const response = await postJson<LibraryIndexResponse>(
+        "/api/navidrome/library/index",
+        {}
+      );
+      setLibraryIndex(response.index);
+      await refreshLibraryMatches();
+    } catch (error) {
+      setRequestError(errorMessage(error));
+    } finally {
+      setIsScanningLibrary(false);
+    }
+  }, [refreshLibraryMatches]);
+
+  const organizeLibraryMatches = useCallback(async () => {
+    if (!tracks.length) {
+      return;
+    }
+
+    setIsOrganizingLibrary(true);
+    setRequestError(null);
+
+    try {
+      const response = await postJson<LibraryOrganizeResponse>(
+        "/api/navidrome/library/organize",
+        {
+          tracks
+        }
+      );
+      setLibraryIndex(response.index);
+      setLibraryMatches(response.libraryMatches);
+    } catch (error) {
+      setRequestError(errorMessage(error));
+    } finally {
+      setIsOrganizingLibrary(false);
+    }
+  }, [tracks]);
 
   const resolveCatalogSource = useCallback(async () => {
     const trimmedInput = lookupInput.trim();
@@ -225,6 +348,7 @@ export default function Home() {
       setResolvedSource(response.source);
       setTracks(response.tracks);
       setFolderPlans(response.folderPlans);
+      setLibraryMatches(response.libraryMatches);
     } catch (error) {
       setRequestError(errorMessage(error));
     } finally {
@@ -238,6 +362,7 @@ export default function Home() {
     setResolvedSource(null);
     setTracks([]);
     setFolderPlans([]);
+    setLibraryMatches([]);
     setSelectedPlaylist(null);
   }, []);
 
@@ -251,9 +376,10 @@ export default function Home() {
     }
 
     void loadAppInfo();
+    void loadLibraryIndex();
     void loadSession();
     void loadNavidromeStatus();
-  }, [loadAppInfo, loadNavidromeStatus, loadSession]);
+  }, [loadAppInfo, loadLibraryIndex, loadNavidromeStatus, loadSession]);
 
   useEffect(() => {
     if (session?.authenticated && sourceKind === "playlist") {
@@ -270,6 +396,7 @@ export default function Home() {
       setSelectedPlaylist(null);
       setTracks([]);
       setFolderPlans([]);
+      setLibraryMatches([]);
       return;
     }
 
@@ -288,6 +415,7 @@ export default function Home() {
           setSelectedPlaylist(response.playlist);
           setTracks(response.tracks);
           setFolderPlans(response.folderPlans);
+          setLibraryMatches(response.libraryMatches);
         }
       } catch (error) {
         if (!cancelled) {
@@ -333,6 +461,26 @@ export default function Home() {
   const navidromeStatusLabel = navidromeStatus
     ? navidromeStatusMessage(navidromeStatus)
     : "Checking library target";
+  const libraryMatchesByPosition = useMemo(
+    () =>
+      new Map(
+        libraryMatches.map((match) => [match.trackPosition, match] as const)
+      ),
+    [libraryMatches]
+  );
+  const indexedTrackCount = libraryMatches.filter((match) => match.exists).length;
+  const moveNeededCount = libraryMatches.filter((match) => match.needsMove).length;
+  const canOrganizeLibrary =
+    navidromeReady && tracks.length > 0 && moveNeededCount > 0;
+  const libraryIndexLabel = libraryIndex
+    ? libraryIndex.trackCount > 0
+      ? `${numberFormatter.format(libraryIndex.trackCount)} indexed${
+          libraryIndex.generatedAt
+            ? ` - scanned ${formatShortDate(libraryIndex.generatedAt)}`
+            : ""
+        }${libraryIndex.stale ? " - rescan needed" : ""}`
+      : "No library scan yet"
+    : "Checking index";
   const playlistSource = selectedPlaylist
     ? ({
         externalUrl: selectedPlaylist.externalUrl,
@@ -631,6 +779,22 @@ export default function Home() {
                   <FileText size={18} />
                   CSV
                 </a>
+                <button
+                  className={`command secondary ${
+                    canOrganizeLibrary ? "" : "disabled"
+                  }`}
+                  disabled={!canOrganizeLibrary || isOrganizingLibrary}
+                  onClick={() => void organizeLibraryMatches()}
+                  title="Move matched files into Artist - Album folders"
+                  type="button"
+                >
+                  {isOrganizingLibrary ? (
+                    <Loader2 className="spin" size={18} />
+                  ) : (
+                    <HardDrive size={18} />
+                  )}
+                  Organize
+                </button>
               </div>
             </div>
 
@@ -657,6 +821,12 @@ export default function Home() {
                 <span>
                   <span className="stat-label">Folder Rule</span>
                   <span className="stat-value">Artist - Album</span>
+                </span>
+                <span>
+                  <span className="stat-label">Already Indexed</span>
+                  <span className="stat-value">
+                    {numberFormatter.format(indexedTrackCount)}
+                  </span>
                 </span>
               </div>
 
@@ -691,23 +861,34 @@ export default function Home() {
                     <span>#</span>
                     <span>Track</span>
                     <span className="track-cell">Album</span>
+                    <span className="track-cell">Library</span>
                     <span className="track-cell">Time</span>
                   </div>
-                  {tracks.map((track) => (
-                    <div className="track-row" key={`${track.position}-${track.id}`}>
-                      <span className="track-cell">{track.position}</span>
-                      <span>
-                        <span className="track-title">{track.name}</span>
-                        <span className="track-subtitle">
-                          {track.artists.join(", ") || "Unknown artist"}
+                  {tracks.map((track) => {
+                    const libraryMatch = libraryMatchesByPosition.get(track.position);
+
+                    return (
+                      <div
+                        className="track-row"
+                        key={`${track.position}-${track.id}`}
+                      >
+                        <span className="track-cell">{track.position}</span>
+                        <span>
+                          <span className="track-title">{track.name}</span>
+                          <span className="track-subtitle">
+                            {track.artists.join(", ") || "Unknown artist"}
+                          </span>
                         </span>
-                      </span>
-                      <span className="track-cell">{track.album || "Unknown"}</span>
-                      <span className="track-cell">
-                        {formatDuration(track.durationMs)}
-                      </span>
-                    </div>
-                  ))}
+                        <span className="track-cell">{track.album || "Unknown"}</span>
+                        <span className="track-cell library-cell">
+                          {renderLibraryMatch(libraryMatch, libraryIndex)}
+                        </span>
+                        <span className="track-cell">
+                          {formatDuration(track.durationMs)}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="empty-state">
@@ -754,6 +935,31 @@ export default function Home() {
                   <h3>Navidrome library</h3>
                   <p>{navidromeStatusLabel}</p>
                 </span>
+              </div>
+              <div className="provider-row with-action">
+                <span
+                  className={`provider-icon ${
+                    libraryIndex?.trackCount ? "green" : "teal"
+                  }`}
+                >
+                  <HardDrive size={18} />
+                </span>
+                <span>
+                  <h3>Library index</h3>
+                  <p>{libraryIndexLabel}</p>
+                </span>
+                <button
+                  className="icon-command compact"
+                  disabled={!navidromeReady || isScanningLibrary}
+                  onClick={() => void scanNavidromeLibrary()}
+                  title="Scan Navidrome library"
+                  type="button"
+                >
+                  <RefreshCw
+                    className={isScanningLibrary ? "spin" : undefined}
+                    size={18}
+                  />
+                </button>
               </div>
               <div className="provider-row">
                 <span className="provider-icon amber">
@@ -857,6 +1063,28 @@ async function fetchJson<T>(url: string) {
   return body as T;
 }
 
+async function postJson<T>(url: string, body: unknown) {
+  const response = await fetch(url, {
+    body: JSON.stringify(body),
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    method: "POST"
+  });
+  const responseBody = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      typeof responseBody.error === "string"
+        ? responseBody.error
+        : "Request failed."
+    );
+  }
+
+  return responseBody as T;
+}
+
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong.";
 }
@@ -867,6 +1095,58 @@ function formatDuration(durationMs: number) {
   const seconds = totalSeconds % 60;
 
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function renderLibraryMatch(
+  match: LibraryMatch | undefined,
+  libraryIndex: NavidromeLibraryIndexSummary | null
+) {
+  if (libraryIndex?.stale) {
+    return <span className="track-status stale">Stale</span>;
+  }
+
+  if (!libraryIndex?.trackCount) {
+    return <span className="track-status unindexed">Unindexed</span>;
+  }
+
+  if (!match || !match.exists) {
+    return <span className="track-status missing">Missing</span>;
+  }
+
+  if (match.needsMove) {
+    return (
+      <span className="track-status-stack">
+        <span className="track-status move">Move</span>
+        <span className="track-note">
+          {match.recommendedRelativePath ?? match.expectedFolder}
+        </span>
+      </span>
+    );
+  }
+
+  return (
+    <span className="track-status-stack">
+      <span className="track-status exists">Exists</span>
+      <span className="track-note">
+        {match.matchedTrack?.relativePath ?? match.matchedBy ?? "Indexed"}
+      </span>
+    </span>
+  );
+}
+
+function formatShortDate(value: string) {
+  const parsedDate = new Date(value);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    month: "short"
+  }).format(parsedDate);
 }
 
 function navidromeStatusMessage(status: NavidromeLibraryStatus) {

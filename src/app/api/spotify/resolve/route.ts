@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { planNavidromeAlbumFolders } from "@/lib/navidrome";
+import { matchNavidromeTracks, planNavidromeAlbumFolders } from "@/lib/navidrome";
 import { getSpotifySession, withSessionCookie } from "@/lib/server-session";
 import {
   getAlbum,
@@ -39,11 +39,15 @@ export async function GET(request: NextRequest) {
 
     if (type === "track") {
       const track = await getTrack(session.token, id);
-      const folderPlans = await planNavidromeAlbumFolders([track]);
+      const [folderPlans, libraryMatches] = await Promise.all([
+        planNavidromeAlbumFolders([track]),
+        matchNavidromeTracks([track])
+      ]);
 
       return withSessionCookie(
         NextResponse.json({
           folderPlans,
+          libraryMatches,
           source: {
             id: track.id,
             imageUrl: track.albumImageUrl,
@@ -65,11 +69,15 @@ export async function GET(request: NextRequest) {
       getAlbum(session.token, id),
       getAlbumTracks(session.token, id)
     ]);
-    const folderPlans = await planNavidromeAlbumFolders(tracks);
+    const [folderPlans, libraryMatches] = await Promise.all([
+      planNavidromeAlbumFolders(tracks),
+      matchNavidromeTracks(tracks)
+    ]);
 
     return withSessionCookie(
       NextResponse.json({
         folderPlans,
+        libraryMatches,
         source: {
           externalUrl: album.externalUrl,
           id: album.id,

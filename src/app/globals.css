@@ -204,6 +204,7 @@ button {
 }
 
 .command.disabled,
+.command:disabled,
 .icon-command:disabled {
   cursor: not-allowed;
   opacity: 0.5;
@@ -585,7 +586,7 @@ button {
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 14px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   margin: 0 -16px 16px;
   padding: 14px 16px;
 }
@@ -662,7 +663,7 @@ button {
   border-top: 1px solid var(--line);
   display: grid;
   gap: 12px;
-  grid-template-columns: 42px minmax(180px, 2fr) minmax(130px, 1fr) 86px;
+  grid-template-columns: 42px minmax(180px, 2fr) minmax(130px, 1fr) minmax(130px, 0.9fr) 76px;
   min-height: 52px;
   padding: 8px 12px;
 }
@@ -692,6 +693,66 @@ button {
 .track-subtitle,
 .track-cell {
   color: var(--muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-cell {
+  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.track-status-stack {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  width: 100%;
+}
+
+.track-status {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 5px 8px;
+  width: max-content;
+}
+
+.track-status.exists {
+  background: rgba(37, 230, 109, 0.12);
+  border-color: rgba(37, 230, 109, 0.42);
+  color: var(--spotify-bright);
+}
+
+.track-status.missing,
+.track-status.unindexed {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+}
+
+.track-status.move {
+  background: rgba(243, 184, 75, 0.12);
+  border-color: rgba(243, 184, 75, 0.5);
+  color: #ffe5a6;
+}
+
+.track-status.stale {
+  background: rgba(255, 122, 92, 0.12);
+  border-color: rgba(255, 122, 92, 0.5);
+  color: #ffc4b5;
+}
+
+.track-note {
+  color: var(--muted);
+  display: block;
+  font-size: 0.72rem;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -734,6 +795,16 @@ button {
   grid-template-columns: 34px minmax(0, 1fr);
   min-height: 64px;
   padding: 10px;
+}
+
+.provider-row.with-action {
+  grid-template-columns: 34px minmax(0, 1fr) 40px;
+}
+
+.icon-command.compact {
+  aspect-ratio: 1;
+  min-height: 38px;
+  padding: 0;
 }
 
 .provider-icon {
@@ -870,7 +941,7 @@ button {
   }
 
   .track-row {
-    grid-template-columns: 34px minmax(0, 1fr) 74px;
+    grid-template-columns: 34px minmax(0, 1fr) minmax(86px, 0.8fr) 58px;
   }
 
   .track-row .track-cell:nth-child(3),

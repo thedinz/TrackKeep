@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { planNavidromeAlbumFolders } from "@/lib/navidrome";
+import { matchNavidromeTracks, planNavidromeAlbumFolders } from "@/lib/navidrome";
 import { getSpotifySession, withSessionCookie } from "@/lib/server-session";
 import { getPlaylist, getPlaylistTracks } from "@/lib/spotify";
 
@@ -22,10 +22,13 @@ export async function GET(_request: Request, context: RouteContext) {
     getPlaylist(session.token, playlistId),
     getPlaylistTracks(session.token, playlistId)
   ]);
-  const folderPlans = await planNavidromeAlbumFolders(tracks);
+  const [folderPlans, libraryMatches] = await Promise.all([
+    planNavidromeAlbumFolders(tracks),
+    matchNavidromeTracks(tracks)
+  ]);
 
   return withSessionCookie(
-    NextResponse.json({ folderPlans, playlist, tracks }),
+    NextResponse.json({ folderPlans, libraryMatches, playlist, tracks }),
     session
   );
 }
