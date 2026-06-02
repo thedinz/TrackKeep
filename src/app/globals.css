@@ -278,6 +278,11 @@ button {
   color: #b9ffd0;
 }
 
+.alert.inline {
+  margin: 0;
+  max-width: none;
+}
+
 .auth-shell {
   align-items: center;
   background:

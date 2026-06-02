@@ -12,7 +12,7 @@ services:
       GIT_BRANCH: ${GIT_BRANCH:-main}
       NAVIDROME_LIBRARY_PATH: /music
       NAVIDROME_URL: ${NAVIDROME_URL:-http://host.docker.internal:4533}
-      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://127.0.0.1:3000}
       SPOTIFYBU_APP_SECRET: ${SPOTIFYBU_APP_SECRET:?Set SPOTIFYBU_APP_SECRET in .env before starting SpotifyBU}
       SPOTIFYBU_CONFIG_DIR: /config
       SPOTIFYBU_SECURE_COOKIES: ${SPOTIFYBU_SECURE_COOKIES:-false}

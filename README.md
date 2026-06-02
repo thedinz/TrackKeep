@@ -62,7 +62,7 @@ services:
       GIT_BRANCH: main
       NAVIDROME_LIBRARY_PATH: /music
       NAVIDROME_URL: http://host.docker.internal:4533
-      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://127.0.0.1:3000
       SPOTIFYBU_APP_SECRET: change-this-to-a-long-random-value
       SPOTIFYBU_CONFIG_DIR: /config
       SPOTIFY_CLIENT_ID: your-spotify-client-id
@@ -83,7 +83,7 @@ docker compose up -d
 Open:
 
 ```text
-http://localhost:3000
+http://127.0.0.1:3000
 ```
 
 The default SpotifyBU web login is:
@@ -128,26 +128,37 @@ The container runs as UID/GID `1000`. On Linux hosts, make sure the mapped Navid
 
 ## Reverse Proxy
 
-SpotifyBU can run either directly over HTTP or behind an HTTPS reverse proxy.
+SpotifyBU can run directly over HTTP for the local web UI, but Spotify OAuth
+redirects now require HTTPS unless the redirect URI uses a loopback IP literal
+such as `127.0.0.1` or `[::1]`. A normal Unraid/LAN URL such as
+`http://192.168.1.50:3000` can load SpotifyBU in your browser, but it should not
+be used as the Spotify redirect URI.
 
-For a direct Unraid/LAN install, these values are fine:
-
-```text
-NEXT_PUBLIC_APP_URL=http://<server-ip>:3000
-SPOTIFYBU_SECURE_COOKIES=false
-```
-
-For an HTTPS reverse proxy, set:
+For a normal Unraid/LAN install, use an HTTPS URL for SpotifyBU:
 
 ```text
 NEXT_PUBLIC_APP_URL=https://spotifybu.example.com
 SPOTIFYBU_SECURE_COOKIES=true
 ```
 
+The HTTPS endpoint does not have to expose SpotifyBU broadly to the internet.
+It only has to be reachable by the browser doing the Spotify login. Common
+options are an internal HTTPS reverse proxy with local DNS, a reverse proxy with
+DNS-validated certificates, or a private tunnel/VPN hostname that your browser
+can resolve.
+
+For local development on the same machine as the browser, use a loopback IP
+literal rather than `localhost`:
+
+```text
+NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000
+SPOTIFYBU_SECURE_COOKIES=false
+```
+
 Then add this Spotify redirect URI:
 
 ```text
-https://spotifybu.example.com/api/auth/callback
+<NEXT_PUBLIC_APP_URL>/api/auth/callback
 ```
 
 SpotifyBU also honors standard `X-Forwarded-Host` and `X-Forwarded-Proto` headers when `NEXT_PUBLIC_APP_URL` is not set, but setting `NEXT_PUBLIC_APP_URL` is recommended for reverse-proxy installs because Spotify OAuth redirect URIs must be exact.
@@ -164,16 +175,17 @@ Your proxy should forward the original host and scheme. For most proxies, that m
 4. Add this redirect URI to the Spotify app:
 
    ```text
-   http://localhost:3000/api/auth/callback
-   ```
-
-   If `NEXT_PUBLIC_APP_URL` is different, use:
-
-   ```text
    <NEXT_PUBLIC_APP_URL>/api/auth/callback
    ```
 
+   For same-machine local development, this is commonly:
+
+   ```text
+   http://127.0.0.1:3000/api/auth/callback
+   ```
+
 Spotify's official PKCE flow docs are here: https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow
+Spotify's redirect URI requirements are here: https://developer.spotify.com/documentation/web-api/concepts/redirect_uri
 
 If Spotify shows `redirect_uri: Not matching configuration`, compare the
 SpotifyBU connect-screen redirect URI with the Spotify app's redirect URI list.
@@ -181,12 +193,12 @@ They must match exactly, including `http` versus `https`, hostname or IP address
 port, path, and the absence of a trailing slash. For example, if SpotifyBU shows:
 
 ```text
-http://192.168.1.50:3000/api/auth/callback
+https://spotifybu.example.com/api/auth/callback
 ```
 
 that exact value must be added to the Spotify app. A value such as
-`http://localhost:3000/api/auth/callback`,
-`http://tower.local:3000/api/auth/callback`, or
+`http://127.0.0.1:3000/api/auth/callback`,
+`https://tower.local:3000/api/auth/callback`, or
 `https://192.168.1.50:3000/api/auth/callback` is different to Spotify.
 
 ## Navidrome Setup
@@ -235,7 +247,7 @@ Set at least:
 
 ```text
 SPOTIFY_CLIENT_ID=
-NEXT_PUBLIC_APP_URL=http://localhost:3000
+NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000
 NAVIDROME_LIBRARY_PATH=/path/to/navidrome/music
 SPOTIFYBU_APP_SECRET=change-this-to-a-long-random-value
 ```
@@ -243,7 +255,7 @@ SPOTIFYBU_APP_SECRET=change-this-to-a-long-random-value
 Then open:
 
 ```text
-http://localhost:3000
+http://127.0.0.1:3000
 ```
 
 ## Building The Image Locally
@@ -253,7 +265,7 @@ To build from source instead of using GHCR:
 ```bash
 docker build -t spotifybu:local .
 docker run --rm -p 3000:3000 \
-  -e NEXT_PUBLIC_APP_URL=http://localhost:3000 \
+  -e NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000 \
   -e SPOTIFYBU_APP_SECRET=change-this-to-a-long-random-value \
   -e SPOTIFY_CLIENT_ID=your-spotify-client-id \
   -e NAVIDROME_LIBRARY_PATH=/music \
