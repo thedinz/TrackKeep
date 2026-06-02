@@ -84,6 +84,12 @@ type NavidromeServerStatus = {
     | "error";
 };
 
+type NavidromeIndexSkip = {
+  kind: "directory" | "file";
+  reason: string;
+  relativePath: string;
+};
+
 type SourceKind = "album" | "playlist" | "track";
 
 type ResolvedSource = {
@@ -137,6 +143,8 @@ type NavidromeLibraryIndexSummary = {
   generatedAt?: string;
   libraryPath?: string;
   navidromeScan?: NavidromeServerStatus;
+  skippedCount?: number;
+  skippedExamples?: NavidromeIndexSkip[];
   stale: boolean;
   trackCount: number;
 };
@@ -838,12 +846,14 @@ export default function Home() {
     refreshLibraryMatches
   ]);
   const libraryIndexLabel = libraryIndex
-    ? libraryIndex.trackCount > 0
-      ? `${numberFormatter.format(libraryIndex.trackCount)} indexed${
+    ? libraryIndex.generatedAt
+      ? `${numberFormatter.format(libraryIndex.trackCount)} indexed - scanned ${formatShortDate(
           libraryIndex.generatedAt
-            ? ` - scanned ${formatShortDate(libraryIndex.generatedAt)}`
+        )}${libraryIndex.stale ? " - rescan needed" : ""}${
+          libraryIndex.skippedCount
+            ? ` - ${numberFormatter.format(libraryIndex.skippedCount)} skipped`
             : ""
-        }${libraryIndex.stale ? " - rescan needed" : ""}`
+        }`
       : "No library scan yet"
     : "Checking index";
   const playlistSource = selectedPlaylist
@@ -1360,6 +1370,14 @@ export default function Home() {
                   {libraryIndex?.navidromeScan ? (
                     <p>{libraryIndex.navidromeScan.message}</p>
                   ) : null}
+                  {libraryIndex?.skippedExamples?.length ? (
+                    <p>
+                      Skipped first:{" "}
+                      {libraryIndex.skippedExamples
+                        .map((skip) => `${skip.relativePath} (${skip.reason})`)
+                        .join("; ")}
+                    </p>
+                  ) : null}
                 </span>
                 <button
                   className="icon-command compact"
@@ -1381,8 +1399,9 @@ export default function Home() {
                 <span>
                   <h3>External media providers</h3>
                   <p>
-                    Missing tracks can be staged after source review and
-                    authorization. Bulk jobs can trigger provider blocking.
+                    No provider account connection is needed here. Paste reviewed
+                    source URLs below and confirm you are allowed to download them.
+                    Bulk jobs can trigger provider blocking.
                   </p>
                 </span>
               </div>
@@ -1980,7 +1999,7 @@ function providerStatusLabel(status: ProviderStatus) {
     return "Planned";
   }
 
-  return "Authorization required";
+  return "User-confirmed";
 }
 
 function providerRiskLabel(risk: ProviderRiskLevel) {
