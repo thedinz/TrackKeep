@@ -41,6 +41,10 @@ ghcr.io/thedinz/spotifybu:dev
 Use `dev` while testing changes. After changes are tested and approved, they are
 promoted to `main`, which publishes the stable `latest` image.
 
+Dev builds use prerelease versions such as `1.1.0-dev.0`. When a dev build is
+approved for promotion, bump to the matching stable version such as `1.1.0`,
+merge to `main`, and tag the release.
+
 The stable image is:
 
 ```text
