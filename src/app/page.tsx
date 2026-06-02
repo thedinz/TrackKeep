@@ -2,6 +2,7 @@
 
 import {
   CheckCircle2,
+  Clock3,
   Download,
   FileJson,
   FileText,
@@ -17,6 +18,12 @@ import {
   ShieldCheck
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  SOURCE_PROVIDER_CATALOG,
+  type ProviderRiskLevel,
+  type ProviderStatus,
+  type SourceProviderCatalogEntry
+} from "@/lib/providers/types";
 
 type UserProfile = {
   displayName: string;
@@ -171,7 +178,41 @@ type LibraryOrganizeResponse = LibraryIndexResponse & LibraryMatchesResponse & {
   skippedCount: number;
 };
 
+type ProviderDownloadResponse = {
+  download: {
+    bytesWritten?: number;
+    destinationPath: string;
+    format: string;
+    providerId: string;
+    quality: string;
+    provenancePath?: string;
+    relativePath?: string;
+    sourceUrl: string;
+  };
+};
+
+type BulkDownloadProgress = {
+  completedCount: number;
+  failedCount: number;
+  phase: string;
+  totalCount: number;
+  trackLabel?: string;
+};
+
 const numberFormatter = new Intl.NumberFormat("en-US");
+const downloadEnabledProviderIds = new Set([
+  "jiosaavn",
+  "piped",
+  "youtube",
+  "youtube-music"
+]);
+const mediaSourceProviders: readonly SourceProviderCatalogEntry[] =
+  SOURCE_PROVIDER_CATALOG.filter(
+    (provider) => provider.id !== "navidrome-library"
+  );
+const downloadableProviders = mediaSourceProviders.filter((provider) =>
+  downloadEnabledProviderIds.has(provider.id)
+);
 
 export default function Home() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
@@ -197,9 +238,30 @@ export default function Home() {
   const [isResolvingSource, setIsResolvingSource] = useState(false);
   const [isScanningLibrary, setIsScanningLibrary] = useState(false);
   const [isOrganizingLibrary, setIsOrganizingLibrary] = useState(false);
+  const [isDownloadingProvider, setIsDownloadingProvider] = useState(false);
+  const [isDownloadingBulkProvider, setIsDownloadingBulkProvider] =
+    useState(false);
   const [navidromeStatus, setNavidromeStatus] =
     useState<NavidromeLibraryStatus | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
+  const [downloadTrackPosition, setDownloadTrackPosition] = useState("");
+  const [downloadProviderId, setDownloadProviderId] = useState("youtube-music");
+  const [downloadFormat, setDownloadFormat] = useState("mp3");
+  const [downloadQuality, setDownloadQuality] = useState("320");
+  const [downloadSourceUrl, setDownloadSourceUrl] = useState("");
+  const [downloadRightsConfirmed, setDownloadRightsConfirmed] = useState(false);
+  const [downloadBulkRiskAccepted, setDownloadBulkRiskAccepted] = useState(false);
+  const [providerDownloadMessage, setProviderDownloadMessage] =
+    useState<string | null>(null);
+  const [bulkQueueText, setBulkQueueText] = useState("");
+  const [bulkChunkSize, setBulkChunkSize] = useState("10");
+  const [bulkTrackDelaySeconds, setBulkTrackDelaySeconds] = useState("20");
+  const [bulkChunkPauseSeconds, setBulkChunkPauseSeconds] = useState("120");
+  const [bulkDownloadMessage, setBulkDownloadMessage] = useState<string | null>(
+    null
+  );
+  const [bulkDownloadProgress, setBulkDownloadProgress] =
+    useState<BulkDownloadProgress | null>(null);
 
   const loadSession = useCallback(async () => {
     setIsLoadingSession(true);
@@ -328,6 +390,61 @@ export default function Home() {
       setIsOrganizingLibrary(false);
     }
   }, [tracks]);
+
+  const downloadVerifiedSource = useCallback(async () => {
+    const selectedTrack = tracks.find(
+      (track) => String(track.position) === downloadTrackPosition
+    );
+
+    if (!selectedTrack) {
+      setRequestError("Choose a track before downloading from a provider.");
+      return;
+    }
+
+    setIsDownloadingProvider(true);
+    setProviderDownloadMessage(null);
+    setRequestError(null);
+
+    try {
+      const response = await postJson<ProviderDownloadResponse>(
+        "/api/providers/download",
+        {
+          bulkRiskAccepted: downloadBulkRiskAccepted,
+          format: downloadFormat,
+          providerId: downloadProviderId,
+          quality: downloadQuality,
+          rightsConfirmed: downloadRightsConfirmed,
+          selectedReason: "User reviewed and selected provider source URL",
+          sourceUrl: downloadSourceUrl,
+          track: selectedTrack
+        }
+      );
+      const location =
+        response.download.relativePath ?? response.download.destinationPath;
+      setProviderDownloadMessage(`Downloaded ${selectedTrack.name} to ${location}`);
+      setDownloadSourceUrl("");
+      const indexResponse = await postJson<LibraryIndexResponse>(
+        "/api/navidrome/library/index",
+        {}
+      );
+      setLibraryIndex(indexResponse.index);
+      await refreshLibraryMatches();
+    } catch (error) {
+      setRequestError(errorMessage(error));
+    } finally {
+      setIsDownloadingProvider(false);
+    }
+  }, [
+    downloadBulkRiskAccepted,
+    downloadFormat,
+    downloadProviderId,
+    downloadQuality,
+    downloadRightsConfirmed,
+    downloadSourceUrl,
+    downloadTrackPosition,
+    refreshLibraryMatches,
+    tracks
+  ]);
 
   const resolveCatalogSource = useCallback(async () => {
     const trimmedInput = lookupInput.trim();
@@ -468,10 +585,208 @@ export default function Home() {
       ),
     [libraryMatches]
   );
+  const hasUsableLibraryIndex = Boolean(libraryIndex && !libraryIndex.stale);
   const indexedTrackCount = libraryMatches.filter((match) => match.exists).length;
   const moveNeededCount = libraryMatches.filter((match) => match.needsMove).length;
+  const missingBackupTracks = useMemo(
+    () =>
+      hasUsableLibraryIndex
+        ? tracks.filter((track) => {
+            const match = libraryMatchesByPosition.get(track.position);
+
+            return !match?.exists;
+          })
+        : tracks,
+    [hasUsableLibraryIndex, libraryMatchesByPosition, tracks]
+  );
+  const missingBackupCount = hasUsableLibraryIndex
+    ? missingBackupTracks.length
+    : 0;
+  const backupCoverageLabel = tracks.length
+    ? hasUsableLibraryIndex
+      ? `${Math.round((indexedTrackCount / tracks.length) * 100)}%`
+      : "Scan"
+    : "0%";
+  const downloadTrackOptions = missingBackupTracks;
+  useEffect(() => {
+    const nextDownloadTrackPosition = downloadTrackOptions[0]
+      ? String(downloadTrackOptions[0].position)
+      : "";
+
+    if (
+      downloadTrackPosition &&
+      downloadTrackOptions.some(
+        (track) => String(track.position) === downloadTrackPosition
+      )
+    ) {
+      return;
+    }
+
+    if (downloadTrackPosition === nextDownloadTrackPosition) {
+      return;
+    }
+
+    setDownloadTrackPosition(nextDownloadTrackPosition);
+    setDownloadSourceUrl("");
+    setDownloadRightsConfirmed(false);
+    setDownloadBulkRiskAccepted(false);
+    setProviderDownloadMessage(null);
+  }, [downloadTrackOptions, downloadTrackPosition]);
   const canOrganizeLibrary =
     navidromeReady && tracks.length > 0 && moveNeededCount > 0;
+  const selectedDownloadProvider =
+    downloadableProviders.find((provider) => provider.id === downloadProviderId) ??
+    downloadableProviders[0];
+  const selectedDownloadTrack =
+    downloadTrackOptions.find(
+      (track) => String(track.position) === downloadTrackPosition
+    ) ??
+    downloadTrackOptions[0] ??
+    null;
+  const canDownloadProvider =
+    Boolean(
+      navidromeReady &&
+        selectedDownloadTrack &&
+        downloadSourceUrl.trim() &&
+        downloadRightsConfirmed &&
+        downloadBulkRiskAccepted
+    ) &&
+    !isDownloadingProvider &&
+    !isDownloadingBulkProvider;
+  const parsedBulkQueue = useMemo(
+    () =>
+      parseBulkDownloadQueue(
+        bulkQueueText,
+        downloadTrackOptions,
+        downloadProviderId
+      ),
+    [bulkQueueText, downloadProviderId, downloadTrackOptions]
+  );
+  const canDownloadBulkProvider =
+    Boolean(
+      navidromeReady &&
+        parsedBulkQueue.items.length &&
+        !parsedBulkQueue.error &&
+        downloadRightsConfirmed &&
+        downloadBulkRiskAccepted &&
+        !isDownloadingProvider &&
+        !isDownloadingBulkProvider
+    );
+  const downloadBulkQueue = useCallback(async () => {
+    if (parsedBulkQueue.error) {
+      setRequestError(parsedBulkQueue.error);
+      return;
+    }
+
+    if (!parsedBulkQueue.items.length) {
+      setRequestError("Add reviewed provider URLs to the bulk queue first.");
+      return;
+    }
+
+    setIsDownloadingBulkProvider(true);
+    setBulkDownloadMessage(null);
+    setBulkDownloadProgress({
+      completedCount: 0,
+      failedCount: 0,
+      phase: "Preparing",
+      totalCount: parsedBulkQueue.items.length
+    });
+    setProviderDownloadMessage(null);
+    setRequestError(null);
+
+    const chunkSize = boundedInteger(bulkChunkSize, 10, 1, 50);
+    const chunkPauseMs = secondsToMilliseconds(bulkChunkPauseSeconds);
+    const delayMs = secondsToMilliseconds(bulkTrackDelaySeconds);
+    let completedCount = 0;
+    let failedCount = 0;
+    const failedTrackLabels: string[] = [];
+
+    try {
+      for (const [index, item] of parsedBulkQueue.items.entries()) {
+        const trackLabel = `${item.track.position}. ${item.track.name}`;
+
+        setBulkDownloadProgress({
+          completedCount,
+          failedCount,
+          phase: "Downloading",
+          totalCount: parsedBulkQueue.items.length,
+          trackLabel
+        });
+
+        try {
+          await postJson<ProviderDownloadResponse>("/api/providers/download", {
+            bulkRiskAccepted: downloadBulkRiskAccepted,
+            format: downloadFormat,
+            providerId: item.providerId,
+            quality: downloadQuality,
+            rightsConfirmed: downloadRightsConfirmed,
+            selectedReason: item.selectedReason,
+            sourceUrl: item.sourceUrl,
+            track: item.track
+          });
+          completedCount += 1;
+        } catch (error) {
+          failedCount += 1;
+          failedTrackLabels.push(`${trackLabel}: ${errorMessage(error)}`);
+        }
+
+        const isLastItem = index === parsedBulkQueue.items.length - 1;
+
+        if (!isLastItem) {
+          const isChunkBoundary = (index + 1) % chunkSize === 0;
+          const waitMs = isChunkBoundary ? chunkPauseMs : delayMs;
+
+          setBulkDownloadProgress({
+            completedCount,
+            failedCount,
+            phase: isChunkBoundary ? "Chunk pause" : "Waiting",
+            totalCount: parsedBulkQueue.items.length,
+            trackLabel
+          });
+
+          if (waitMs > 0) {
+            await wait(waitMs);
+          }
+        }
+      }
+
+      setBulkDownloadProgress({
+        completedCount,
+        failedCount,
+        phase: "Complete",
+        totalCount: parsedBulkQueue.items.length
+      });
+      setBulkDownloadMessage(
+        `Backed up ${completedCount} of ${parsedBulkQueue.items.length} queued tracks${
+          failedCount
+            ? `; ${failedCount} need review${
+                failedTrackLabels[0] ? ` (${failedTrackLabels[0]})` : ""
+              }`
+            : ""
+        }.`
+      );
+      const indexResponse = await postJson<LibraryIndexResponse>(
+        "/api/navidrome/library/index",
+        {}
+      );
+      setLibraryIndex(indexResponse.index);
+      await refreshLibraryMatches();
+    } catch (error) {
+      setRequestError(errorMessage(error));
+    } finally {
+      setIsDownloadingBulkProvider(false);
+    }
+  }, [
+    bulkChunkPauseSeconds,
+    bulkChunkSize,
+    bulkTrackDelaySeconds,
+    downloadBulkRiskAccepted,
+    downloadFormat,
+    downloadQuality,
+    downloadRightsConfirmed,
+    parsedBulkQueue,
+    refreshLibraryMatches
+  ]);
   const libraryIndexLabel = libraryIndex
     ? libraryIndex.trackCount > 0
       ? `${numberFormatter.format(libraryIndex.trackCount)} indexed${
@@ -496,6 +811,13 @@ export default function Home() {
   const canExportPlaylist = sourceKind === "playlist" && Boolean(selectedPlaylistId);
   const selectedTracksLabel =
     sourceKind === "playlist" ? "Selected Tracks" : "Resolved Tracks";
+  const bulkProgressFinished = bulkDownloadProgress
+    ? bulkDownloadProgress.completedCount + bulkDownloadProgress.failedCount
+    : 0;
+  const bulkProgressPercent =
+    bulkDownloadProgress && bulkDownloadProgress.totalCount
+      ? Math.round((bulkProgressFinished / bulkDownloadProgress.totalCount) * 100)
+      : 0;
 
   return (
     <main className="app-shell">
@@ -801,14 +1123,11 @@ export default function Home() {
             <div className="detail-body">
               <div className="summary-strip">
                 <span>
-                  <span className="stat-label">
-                    {sourceKind === "playlist" ? "Library Tracks" : "Source Tracks"}
-                  </span>
+                  <span className="stat-label">Spotify Source</span>
                   <span className="stat-value">
                     {numberFormatter.format(
-                      sourceKind === "playlist"
-                        ? totalTracks
-                        : activeSource?.tracksTotal ?? 0
+                      activeSource?.tracksTotal ??
+                        (sourceKind === "playlist" ? totalTracks : 0)
                     )}
                   </span>
                 </span>
@@ -819,13 +1138,21 @@ export default function Home() {
                   </span>
                 </span>
                 <span>
-                  <span className="stat-label">Folder Rule</span>
-                  <span className="stat-value">Artist - Album</span>
+                  <span className="stat-label">Backup Coverage</span>
+                  <span className="stat-value">{backupCoverageLabel}</span>
                 </span>
                 <span>
-                  <span className="stat-label">Already Indexed</span>
+                  <span className="stat-label">Backed Up</span>
                   <span className="stat-value">
                     {numberFormatter.format(indexedTrackCount)}
+                  </span>
+                </span>
+                <span>
+                  <span className="stat-label">Missing Backup</span>
+                  <span className="stat-value">
+                    {hasUsableLibraryIndex
+                      ? numberFormatter.format(missingBackupCount)
+                      : "Scan"}
                   </span>
                 </span>
               </div>
@@ -861,7 +1188,7 @@ export default function Home() {
                     <span>#</span>
                     <span>Track</span>
                     <span className="track-cell">Album</span>
-                    <span className="track-cell">Library</span>
+                    <span className="track-cell">Backup</span>
                     <span className="track-cell">Time</span>
                   </div>
                   {tracks.map((track) => {
@@ -905,7 +1232,7 @@ export default function Home() {
                 <HardDrive size={20} />
                 <div>
                   <h2>Backup Sources</h2>
-                  <p className="muted">Provider readiness</p>
+                  <p className="muted">Spotify to Navidrome backup path</p>
                 </div>
               </div>
             </div>
@@ -916,7 +1243,7 @@ export default function Home() {
                 </span>
                 <span>
                   <h3>Spotify metadata</h3>
-                  <p>Connected through Web API scopes</p>
+                  <p>Reads playlists, albums, songs, and export manifests</p>
                 </span>
               </div>
               <div className="provider-row">
@@ -961,14 +1288,363 @@ export default function Home() {
                   />
                 </button>
               </div>
-              <div className="provider-row">
+              <div className="provider-warning">
                 <span className="provider-icon amber">
                   <ShieldCheck size={18} />
                 </span>
                 <span>
-                  <h3>SpotDL-style sources</h3>
-                  <p>Provider matching, then authorized Navidrome staging</p>
+                  <h3>External media providers</h3>
+                  <p>
+                    Missing tracks can be staged after source review and
+                    authorization. Bulk jobs can trigger provider blocking.
+                  </p>
                 </span>
+              </div>
+              <div className="provider-list">
+                {mediaSourceProviders.map((provider) => (
+                  <div
+                    className="provider-row provider-row-stacked"
+                    key={provider.id}
+                  >
+                    <span
+                      className={`provider-icon ${providerStatusTone(
+                        provider.status
+                      )}`}
+                    >
+                      {provider.status === "planned" ? (
+                        <Clock3 size={18} />
+                      ) : provider.status === "active" ? (
+                        <CheckCircle2 size={18} />
+                      ) : (
+                        <ShieldCheck size={18} />
+                      )}
+                    </span>
+                    <span>
+                      <span className="provider-heading">
+                        <h3>{provider.name}</h3>
+                        <span className="provider-badges">
+                          <span className={`provider-badge ${provider.status}`}>
+                            {providerStatusLabel(provider.status)}
+                          </span>
+                          <span
+                            className={`provider-badge risk-${provider.risk}`}
+                          >
+                            {providerRiskLabel(provider.risk)}
+                          </span>
+                        </span>
+                      </span>
+                      <p>{provider.description}</p>
+                      <p className="provider-note">{provider.bulkWarning}</p>
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="provider-download">
+                <div>
+                  <h3>Back up missing track</h3>
+                  <p>
+                    Choose a Spotify track that is not backed up, paste the
+                    reviewed source URL, then stage it into Navidrome.
+                  </p>
+                </div>
+                <label className="provider-field">
+                  <span>Missing Spotify track</span>
+                  <select
+                    disabled={
+                      !downloadTrackOptions.length ||
+                      isDownloadingProvider ||
+                      isDownloadingBulkProvider
+                    }
+                    onChange={(event) => {
+                      setDownloadTrackPosition(event.target.value);
+                      setDownloadSourceUrl("");
+                      setDownloadRightsConfirmed(false);
+                      setDownloadBulkRiskAccepted(false);
+                      setProviderDownloadMessage(null);
+                    }}
+                    value={downloadTrackPosition}
+                  >
+                    {downloadTrackOptions.length ? (
+                      downloadTrackOptions.map((track) => (
+                        <option
+                          key={`${track.position}-${track.id ?? track.name}`}
+                          value={String(track.position)}
+                        >
+                          {track.position}. {track.name}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">
+                        {tracks.length
+                          ? "No missing backup tracks"
+                          : "Resolve Spotify tracks first"}
+                      </option>
+                    )}
+                  </select>
+                </label>
+                <label className="provider-field">
+                  <span>Provider</span>
+                  <select
+                    disabled={isDownloadingProvider || isDownloadingBulkProvider}
+                    onChange={(event) => {
+                      setDownloadProviderId(event.target.value);
+                      setDownloadSourceUrl("");
+                      setDownloadRightsConfirmed(false);
+                      setDownloadBulkRiskAccepted(false);
+                      setProviderDownloadMessage(null);
+                      setBulkDownloadMessage(null);
+                      setBulkDownloadProgress(null);
+                    }}
+                    value={selectedDownloadProvider?.id ?? downloadProviderId}
+                  >
+                    {downloadableProviders.map((provider) => (
+                      <option key={provider.id} value={provider.id}>
+                        {provider.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="provider-throttle-grid">
+                  <label className="provider-field">
+                    <span>Format</span>
+                    <select
+                      disabled={isDownloadingProvider || isDownloadingBulkProvider}
+                      onChange={(event) => {
+                        setDownloadFormat(event.target.value);
+                        setDownloadRightsConfirmed(false);
+                        setDownloadBulkRiskAccepted(false);
+                        setProviderDownloadMessage(null);
+                        setBulkDownloadMessage(null);
+                        setBulkDownloadProgress(null);
+                      }}
+                      value={downloadFormat}
+                    >
+                      <option value="mp3">MP3</option>
+                      <option value="flac">FLAC</option>
+                    </select>
+                  </label>
+                  <label className="provider-field">
+                    <span>Quality</span>
+                    <select
+                      disabled={isDownloadingProvider || isDownloadingBulkProvider}
+                      onChange={(event) => {
+                        setDownloadQuality(event.target.value);
+                        setDownloadRightsConfirmed(false);
+                        setDownloadBulkRiskAccepted(false);
+                        setProviderDownloadMessage(null);
+                        setBulkDownloadMessage(null);
+                        setBulkDownloadProgress(null);
+                      }}
+                      value={downloadQuality}
+                    >
+                      <option value="128">128 kbps</option>
+                      <option value="320">320 kbps</option>
+                    </select>
+                  </label>
+                </div>
+                <label className="provider-field">
+                  <span>Verified source URL</span>
+                  <input
+                    disabled={isDownloadingProvider || isDownloadingBulkProvider}
+                    onChange={(event) => {
+                      setDownloadSourceUrl(event.target.value);
+                      setDownloadRightsConfirmed(false);
+                      setDownloadBulkRiskAccepted(false);
+                      setProviderDownloadMessage(null);
+                    }}
+                    placeholder={providerUrlPlaceholder(downloadProviderId)}
+                    value={downloadSourceUrl}
+                  />
+                </label>
+                <label className="provider-check">
+                  <input
+                    checked={downloadRightsConfirmed}
+                    disabled={isDownloadingProvider || isDownloadingBulkProvider}
+                    onChange={(event) =>
+                      setDownloadRightsConfirmed(event.target.checked)
+                    }
+                    type="checkbox"
+                  />
+                  <span>I am authorized to download this selected source.</span>
+                </label>
+                <label className="provider-check">
+                  <input
+                    checked={downloadBulkRiskAccepted}
+                    disabled={isDownloadingProvider || isDownloadingBulkProvider}
+                    onChange={(event) =>
+                      setDownloadBulkRiskAccepted(event.target.checked)
+                    }
+                    type="checkbox"
+                  />
+                  <span>I understand provider throttling and blocking risk.</span>
+                </label>
+                <button
+                  className={`command secondary ${
+                    canDownloadProvider ? "" : "disabled"
+                  }`}
+                  disabled={!canDownloadProvider}
+                  onClick={() => void downloadVerifiedSource()}
+                  title="Download reviewed provider source"
+                  type="button"
+                >
+                  {isDownloadingProvider ? (
+                    <Loader2 className="spin" size={18} />
+                  ) : (
+                    <Download size={18} />
+                  )}
+                  Download
+                </button>
+                {isDownloadingProvider ? (
+                  <div
+                    aria-live="polite"
+                    className="download-progress"
+                    role="status"
+                  >
+                    <div className="download-progress-meta">
+                      <span>Downloading</span>
+                      <span>
+                        {downloadFormat.toUpperCase()} {downloadQuality}
+                      </span>
+                    </div>
+                    <div
+                      aria-label="Provider download in progress"
+                      className="download-progress-bar"
+                      role="progressbar"
+                    >
+                      <span className="download-progress-fill indeterminate" />
+                    </div>
+                    <p className="download-progress-note">
+                      {selectedDownloadTrack
+                        ? `${selectedDownloadTrack.position}. ${selectedDownloadTrack.name}`
+                        : "Preparing source"}
+                    </p>
+                  </div>
+                ) : null}
+                {providerDownloadMessage ? (
+                  <p className="provider-success">{providerDownloadMessage}</p>
+                ) : null}
+                <div className="provider-divider" />
+                <div>
+                  <h3>Back up playlist queue</h3>
+                  <p>
+                    Queue reviewed source URLs for many missing tracks at once.
+                    Each line uses: track position | provider | URL.
+                  </p>
+                </div>
+                <label className="provider-field">
+                  <span>Bulk queue</span>
+                  <textarea
+                    disabled={isDownloadingBulkProvider}
+                    onChange={(event) => {
+                      setBulkQueueText(event.target.value);
+                      setBulkDownloadMessage(null);
+                      setBulkDownloadProgress(null);
+                    }}
+                    placeholder={`12 | youtube-music | https://music.youtube.com/watch?v=...\n13 | youtube | https://www.youtube.com/watch?v=...\n14 | https://www.jiosaavn.com/song/...`}
+                    value={bulkQueueText}
+                  />
+                </label>
+                {parsedBulkQueue.error ? (
+                  <p className="provider-error">{parsedBulkQueue.error}</p>
+                ) : parsedBulkQueue.items.length ? (
+                  <p className="provider-queue-note">
+                    {numberFormatter.format(parsedBulkQueue.items.length)} queued
+                    missing tracks
+                  </p>
+                ) : null}
+                <div className="provider-throttle-grid">
+                  <label className="provider-field">
+                    <span>Chunk tracks</span>
+                    <input
+                      disabled={isDownloadingBulkProvider}
+                      min="1"
+                      onChange={(event) => {
+                        setBulkChunkSize(event.target.value);
+                        setBulkDownloadProgress(null);
+                      }}
+                      type="number"
+                      value={bulkChunkSize}
+                    />
+                  </label>
+                  <label className="provider-field">
+                    <span>Track waits</span>
+                    <input
+                      disabled={isDownloadingBulkProvider}
+                      min="1"
+                      onChange={(event) => {
+                        setBulkTrackDelaySeconds(event.target.value);
+                        setBulkDownloadProgress(null);
+                      }}
+                      type="number"
+                      value={bulkTrackDelaySeconds}
+                    />
+                  </label>
+                  <label className="provider-field">
+                    <span>Chunk pauses</span>
+                    <input
+                      disabled={isDownloadingBulkProvider}
+                      min="5"
+                      onChange={(event) => {
+                        setBulkChunkPauseSeconds(event.target.value);
+                        setBulkDownloadProgress(null);
+                      }}
+                      type="number"
+                      value={bulkChunkPauseSeconds}
+                    />
+                  </label>
+                </div>
+                <button
+                  className={`command secondary ${
+                    canDownloadBulkProvider ? "" : "disabled"
+                  }`}
+                  disabled={!canDownloadBulkProvider}
+                  onClick={() => void downloadBulkQueue()}
+                  title="Run throttled playlist backup queue"
+                  type="button"
+                >
+                  {isDownloadingBulkProvider ? (
+                    <Loader2 className="spin" size={18} />
+                  ) : (
+                    <Download size={18} />
+                  )}
+                  Run Queue
+                </button>
+                {bulkDownloadProgress ? (
+                  <div
+                    aria-live="polite"
+                    className="download-progress"
+                    role="status"
+                  >
+                    <div className="download-progress-meta">
+                      <span>{bulkDownloadProgress.phase}</span>
+                      <span>
+                        {`${bulkProgressFinished}/${bulkDownloadProgress.totalCount} (${bulkProgressPercent}%)`}
+                      </span>
+                    </div>
+                    <div
+                      aria-label="Bulk download progress"
+                      aria-valuemax={bulkDownloadProgress.totalCount}
+                      aria-valuemin={0}
+                      aria-valuenow={bulkProgressFinished}
+                      className="download-progress-bar"
+                      role="progressbar"
+                    >
+                      <span
+                        className="download-progress-fill"
+                        style={{ width: `${bulkProgressPercent}%` }}
+                      />
+                    </div>
+                    <p className="download-progress-note">
+                      {bulkDownloadProgress.trackLabel ??
+                        (bulkDownloadProgress.failedCount
+                          ? `${bulkDownloadProgress.failedCount} need review`
+                          : "Queue complete")}
+                    </p>
+                  </div>
+                ) : null}
+                {bulkDownloadMessage ? (
+                  <p className="provider-success">{bulkDownloadMessage}</p>
+                ) : null}
               </div>
               {navidromeStatus?.libraryPath ? (
                 <div className="path-readout">
@@ -985,7 +1661,7 @@ export default function Home() {
             <p className="eyebrow">Connection</p>
             <h2>Connect Spotify</h2>
             <p className="muted">
-              Playlist metadata exports are available after account approval.
+              Start by loading the Spotify library you want to preserve locally.
             </p>
             <div className="connect-actions">
               <a
@@ -1017,23 +1693,23 @@ export default function Home() {
               <div className="panel-title">
                 <ShieldCheck size={20} />
                 <div>
-                  <h2>Backup Surface</h2>
-                  <p className="muted">Metadata first, media rights respected</p>
+                <h2>Backup Pipeline</h2>
+                <p className="muted">Spotify source to Navidrome-ready files</p>
                 </div>
               </div>
             </div>
             <div className="signal-grid">
               <div className="signal ready">
-                <h3>Playlist reads</h3>
-                <p className="muted">Private and collaborative scopes</p>
+                <h3>Spotify source</h3>
+                <p className="muted">Playlists, songs, albums, and metadata exports</p>
               </div>
               <div className="signal locked">
-                <h3>Navidrome target</h3>
+                <h3>Local backup target</h3>
                 <p className="muted">{navidromeStatusLabel}</p>
               </div>
               <div className="signal waiting">
-                <h3>Media providers</h3>
-                <p className="muted">SpotDL-style matching with explicit rights</p>
+                <h3>Missing track sourcing</h3>
+                <p className="muted">YouTube Music, YouTube, Piped, JioSaavn</p>
               </div>
             </div>
           </div>
@@ -1101,24 +1777,24 @@ function renderLibraryMatch(
   match: LibraryMatch | undefined,
   libraryIndex: NavidromeLibraryIndexSummary | null
 ) {
-  if (libraryIndex?.stale) {
-    return <span className="track-status stale">Stale</span>;
+  if (!libraryIndex) {
+    return <span className="track-status unindexed">No scan</span>;
   }
 
-  if (!libraryIndex?.trackCount) {
-    return <span className="track-status unindexed">Unindexed</span>;
+  if (libraryIndex.stale) {
+    return <span className="track-status stale">Scan needed</span>;
   }
 
   if (!match || !match.exists) {
-    return <span className="track-status missing">Missing</span>;
+    return <span className="track-status missing">Not backed up</span>;
   }
 
   if (match.needsMove) {
     return (
       <span className="track-status-stack">
-        <span className="track-status move">Move</span>
+        <span className="track-status move">Backed up</span>
         <span className="track-note">
-          {match.recommendedRelativePath ?? match.expectedFolder}
+          Organize into {match.recommendedRelativePath ?? match.expectedFolder}
         </span>
       </span>
     );
@@ -1126,7 +1802,7 @@ function renderLibraryMatch(
 
   return (
     <span className="track-status-stack">
-      <span className="track-status exists">Exists</span>
+      <span className="track-status exists">Backed up</span>
       <span className="track-note">
         {match.matchedTrack?.relativePath ?? match.matchedBy ?? "Indexed"}
       </span>
@@ -1183,4 +1859,179 @@ function sourceKindLabel(sourceKind: SourceKind) {
   }
 
   return "User playlist";
+}
+
+function providerStatusTone(status: ProviderStatus) {
+  if (status === "active") {
+    return "green";
+  }
+
+  if (status === "planned") {
+    return "teal";
+  }
+
+  return "amber";
+}
+
+function providerStatusLabel(status: ProviderStatus) {
+  if (status === "active") {
+    return "Active";
+  }
+
+  if (status === "planned") {
+    return "Planned";
+  }
+
+  return "Authorization required";
+}
+
+function providerRiskLabel(risk: ProviderRiskLevel) {
+  if (risk === "low") {
+    return "Low risk";
+  }
+
+  if (risk === "medium") {
+    return "Medium risk";
+  }
+
+  return "High risk";
+}
+
+function providerUrlPlaceholder(providerId: string) {
+  if (providerId === "youtube-music") {
+    return "https://music.youtube.com/watch?v=...";
+  }
+
+  if (providerId === "youtube") {
+    return "https://www.youtube.com/watch?v=...";
+  }
+
+  if (providerId === "piped") {
+    return "https://piped.video/watch?v=...";
+  }
+
+  if (providerId === "jiosaavn") {
+    return "https://www.jiosaavn.com/song/...";
+  }
+
+  return "https://...";
+}
+
+function parseBulkDownloadQueue(
+  value: string,
+  missingTracks: BackupTrack[],
+  defaultProviderId: string
+) {
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const items: Array<{
+    providerId: string;
+    selectedReason: string;
+    sourceUrl: string;
+    track: BackupTrack;
+  }> = [];
+
+  for (const [index, line] of lines.entries()) {
+    const parts = line
+      .split("|")
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (parts.length < 2 || parts.length > 3) {
+      return {
+        error:
+          "Bulk queue lines must be: track position | provider | URL, or track position | URL.",
+        items
+      };
+    }
+
+    const [positionValue, providerOrUrl, maybeUrl] = parts;
+    const track = missingTracks.find(
+      (candidate) => String(candidate.position) === positionValue
+    );
+
+    if (!track) {
+      return {
+        error: `Line ${index + 1}: track ${positionValue} is not missing from this backup source.`,
+        items
+      };
+    }
+
+    const providerId = normalizeProviderId(maybeUrl ? providerOrUrl : defaultProviderId);
+
+    if (!providerId) {
+      return {
+        error: `Line ${index + 1}: choose YouTube Music, YouTube, Piped, or JioSaavn.`,
+        items
+      };
+    }
+
+    const sourceUrl = maybeUrl ?? providerOrUrl;
+
+    if (!sourceUrl.startsWith("https://")) {
+      return {
+        error: `Line ${index + 1}: source URL must start with https://.`,
+        items
+      };
+    }
+
+    items.push({
+      providerId,
+      selectedReason: "User queued reviewed provider source URL for bulk backup",
+      sourceUrl,
+      track
+    });
+  }
+
+  return {
+    items
+  };
+}
+
+function normalizeProviderId(value: string) {
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, "-");
+  const aliases = new Map([
+    ["jiosaavn", "jiosaavn"],
+    ["jio-saavn", "jiosaavn"],
+    ["piped", "piped"],
+    ["youtube", "youtube"],
+    ["yt", "youtube"],
+    ["youtube-music", "youtube-music"],
+    ["yt-music", "youtube-music"],
+    ["ytmusic", "youtube-music"]
+  ]);
+  const providerId = aliases.get(normalized);
+
+  return providerId && downloadEnabledProviderIds.has(providerId)
+    ? providerId
+    : null;
+}
+
+function secondsToMilliseconds(value: string) {
+  const parsed = Number(value);
+
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 1000) : 0;
+}
+
+function boundedInteger(
+  value: string,
+  fallback: number,
+  minimum: number,
+  maximum: number
+) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(maximum, Math.max(minimum, Math.round(parsed)));
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, milliseconds);
+  });
 }

@@ -1,15 +1,21 @@
 # Source Provider Notes
 
+SpotifyBU's source-provider layer exists to build a local backup of a Spotify
+library. Navidrome matching is a dedupe and coverage check, not the main value:
+it answers "is this Spotify track already backed up locally?" so the app can
+focus sourcing work on missing tracks.
+
 SpotifyBU's source layer should follow the same broad shape as spotDL while keeping provider behavior explicit and auditable:
 
 1. Read Spotify playlist metadata.
-2. Build a search query from artist, title, album, duration, and ISRC when available.
-3. Ask one or more source providers for candidates.
-4. Score candidates by title, artist, duration, album, explicit flag, ISRC, and provider confidence.
-5. Download only from sources the user is authorized to use.
-6. Write the final audio file into `NAVIDROME_LIBRARY_PATH`.
-7. Record the album folder mapping in `.spotifybu/album-folders.json`.
-8. Tag the file and let Navidrome scan it.
+2. Match against the mounted Navidrome library to skip tracks already backed up.
+3. Build a source query for missing tracks from artist, title, album, duration, and ISRC when available.
+4. Ask one or more source providers for candidates.
+5. Score candidates by title, artist, duration, album, explicit flag, ISRC, and provider confidence.
+6. Download only from sources the user is authorized to use.
+7. Write the final audio file into `NAVIDROME_LIBRARY_PATH`.
+8. Record the album folder mapping in `.spotifybu/album-folders.json`.
+9. Tag the file and let Navidrome scan it.
 
 ## spotDL Reference
 
@@ -37,6 +43,35 @@ Useful references:
 - Download workers must record successful writes with `recordNavidromeAlbumFolders` so later tracks from the same album reuse the same `Artist - Album` folder.
 - Providers should preserve provenance in a sidecar or database record: source name, source URL, candidate score, selected reason, and user confirmation.
 - Provider downloads should run as background jobs with retry, cancellation, and a dry-run preview.
+- External providers must show a rights confirmation and a bulk-download warning before the first download job.
+- Bulk jobs should use conservative rate limits and should make cancellation available at track and playlist scope.
+- The current implemented external download path accepts reviewed source URLs for one selected Spotify track or a queue of missing Spotify tracks, then runs `yt-dlp --no-playlist` per item.
+- Downloads support MP3 or FLAC output and 128 kbps or 320 kbps quality targets.
+- Bulk queues run sequentially with configurable wait between tracks, chunk size, and chunk pause to reduce provider blocking risk.
+- Provider work stages temporary files under `.spotifybu/tmp/provider-downloads` inside the mounted Navidrome library, then moves completed files into final album folders.
+- If a download, conversion, or move fails, stale staging files are cleaned after 10 minutes of provider-download idleness so unfinished media does not accumulate in the container filesystem.
+- Piped URLs are validated against configured Piped hosts and converted to a canonical YouTube video URL for `yt-dlp`; the original Piped URL remains in provenance.
+- JioSaavn downloads require a single-song URL.
+
+## Provider Catalog
+
+The provider catalog lives in `src/lib/providers/types.ts` and is exposed by `/api/providers`.
+
+| Provider | Status | Authorization model | Notes |
+| --- | --- | --- | --- |
+| Navidrome library | Active | Local files | Matches Spotify metadata against existing mounted audio files. |
+| YouTube Music | Requires authorization | External tool | Verified single-track `music.youtube.com/watch` downloads through `yt-dlp`. |
+| YouTube | Requires authorization | External tool | Verified single-track YouTube downloads through `yt-dlp`. |
+| Piped | Requires authorization | External tool | Verified Piped watch/stream URLs are translated to canonical YouTube video URLs for download. |
+| JioSaavn | Requires authorization | External tool | Verified JioSaavn song downloads through `yt-dlp`. |
+| SoundCloud | Planned | External tool | Future candidate matching and authorized staging. |
+| Bandcamp | Planned | External tool | Should be limited to purchases, free downloads, or explicit permission. |
+
+## Bulk Download Risks
+
+SpotifyBU should explain that large playlist jobs can trigger throttling, captchas, temporary service blocks, provider account action, regional failures, or service-term issues. The app should not treat this warning as a substitute for authorization; it should be a preflight confirmation alongside provider configuration, dry-run candidate review, rate limits, retry controls, cancellation, and provenance logging.
+
+The current routes intentionally block provider playlists with `--no-playlist` and UI copy. Playlist-scale backups are represented as queues of reviewed single-track source URLs, processed one item at a time with configurable throttling and partial-failure reporting. Future candidate search should fill that queue automatically for user review before the batch starts.
 
 ## First Provider Candidates
 
@@ -49,7 +84,8 @@ Useful references:
    - Copy or hardlink into the Navidrome library structure.
 
 3. External tool adapter
-   - Wrap a tool such as spotDL or `yt-dlp` only when the user has configured a source account and confirmed they have rights to download the selected media.
+   - Wrap a tool such as spotDL or `yt-dlp` only when the user has configured a source account or provider path and confirmed they have rights to download the selected media.
+   - Start with YouTube Music, YouTube, Piped, and JioSaavn as explicit provider targets.
    - Keep command arguments generated by SpotifyBU and constrain output to the Navidrome staging path.
 
 4. Licensed/royalty-free catalog provider

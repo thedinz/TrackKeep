@@ -6,6 +6,10 @@ export type ProviderAuthorization =
   | "licensed_catalog"
   | "external_tool";
 
+export type ProviderRiskLevel = "low" | "medium" | "high";
+
+export type ProviderStatus = "active" | "planned" | "requires_authorization";
+
 export type ProviderCapability =
   | "search"
   | "match"
@@ -61,30 +65,103 @@ export type SourceProvider = {
   ): Promise<ProviderDownloadResult>;
 };
 
-export const SPOTDL_STYLE_PROVIDER_CANDIDATES = [
+export type SourceProviderCatalogEntry = {
+  authorization: ProviderAuthorization;
+  bulkWarning: string;
+  capabilities: readonly ProviderCapability[];
+  description: string;
+  id: string;
+  name: string;
+  risk: ProviderRiskLevel;
+  status: ProviderStatus;
+};
+
+export const SOURCE_PROVIDER_CATALOG = [
+  {
+    authorization: "local_files",
+    bulkWarning: "No network service involved; matching is limited to mounted files.",
+    capabilities: ["match", "tag", "provenance"],
+    description:
+      "Matches Spotify metadata against audio files already present in the mounted Navidrome library.",
+    id: "navidrome-library",
+    name: "Navidrome library",
+    risk: "low",
+    status: "active"
+  },
   {
     authorization: "external_tool",
+    bulkWarning:
+      "Large playlist jobs can trigger throttling, captchas, or temporary blocks from YouTube Music.",
+    capabilities: ["search", "download", "tag", "provenance"],
+    description:
+      "SpotDL-style matching against YouTube Music candidates through a constrained external downloader.",
     id: "youtube-music",
-    name: "YouTube Music"
+    name: "YouTube Music",
+    risk: "high",
+    status: "requires_authorization"
   },
   {
     authorization: "external_tool",
+    bulkWarning:
+      "Large playlist jobs can trigger throttling, captchas, or temporary blocks from YouTube.",
+    capabilities: ["search", "download", "tag", "provenance"],
+    description:
+      "SpotDL-style matching against YouTube candidates through a constrained external downloader.",
     id: "youtube",
-    name: "YouTube"
+    name: "YouTube",
+    risk: "high",
+    status: "requires_authorization"
   },
   {
     authorization: "external_tool",
-    id: "soundcloud",
-    name: "SoundCloud"
-  },
-  {
-    authorization: "external_tool",
-    id: "bandcamp",
-    name: "Bandcamp"
-  },
-  {
-    authorization: "external_tool",
+    bulkWarning:
+      "Piped instances proxy YouTube traffic and may rate-limit, fail, or block high-volume jobs.",
+    capabilities: ["search", "download", "tag", "provenance"],
+    description:
+      "Alternative YouTube frontend/provider path for candidate lookup and authorized staging.",
     id: "piped",
-    name: "Piped"
+    name: "Piped",
+    risk: "high",
+    status: "requires_authorization"
+  },
+  {
+    authorization: "external_tool",
+    bulkWarning:
+      "JioSaavn access patterns and regional availability vary; bulk jobs may be blocked or violate service terms.",
+    capabilities: ["search", "download", "tag", "provenance"],
+    description:
+      "JioSaavn matching path for tracks the user is authorized to download or has licensed access to.",
+    id: "jiosaavn",
+    name: "JioSaavn",
+    risk: "high",
+    status: "requires_authorization"
+  },
+  {
+    authorization: "external_tool",
+    bulkWarning:
+      "Large playlist jobs can trigger throttling or temporary blocks from the provider.",
+    capabilities: ["search", "download", "tag", "provenance"],
+    description:
+      "SpotDL-style matching against SoundCloud candidates through a constrained external downloader.",
+    id: "soundcloud",
+    name: "SoundCloud",
+    risk: "medium",
+    status: "planned"
+  },
+  {
+    authorization: "external_tool",
+    bulkWarning:
+      "Bandcamp downloads should be limited to purchases, free downloads, or content with explicit permission.",
+    capabilities: ["search", "download", "tag", "provenance"],
+    description:
+      "Provider path for purchased, free, or otherwise authorized Bandcamp downloads.",
+    id: "bandcamp",
+    name: "Bandcamp",
+    risk: "medium",
+    status: "planned"
   }
-] as const;
+] as const satisfies readonly SourceProviderCatalogEntry[];
+
+export const SPOTDL_STYLE_PROVIDER_CANDIDATES = SOURCE_PROVIDER_CATALOG.filter(
+  (provider) => provider.authorization === "external_tool"
+);
