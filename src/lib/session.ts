@@ -1,17 +1,17 @@
 import { createHash, randomBytes } from "crypto";
 import { cookies } from "next/headers";
 import type { NextResponse } from "next/server";
+import { shouldUseSecureCookies } from "./cookies";
 import type { SpotifyTokenSet } from "./spotify";
 
 export const SESSION_COOKIE = "spotifybu_session";
 export const OAUTH_STATE_COOKIE = "spotifybu_oauth_state";
 export const PKCE_VERIFIER_COOKIE = "spotifybu_pkce_verifier";
 
-const secureCookie = process.env.NODE_ENV === "production";
 const baseCookieOptions = {
   httpOnly: true,
   sameSite: "lax" as const,
-  secure: secureCookie,
+  secure: shouldUseSecureCookies(),
   path: "/"
 };
 

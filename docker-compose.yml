@@ -15,6 +15,7 @@ services:
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
       SPOTIFYBU_APP_SECRET: ${SPOTIFYBU_APP_SECRET:?Set SPOTIFYBU_APP_SECRET in .env before starting SpotifyBU}
       SPOTIFYBU_CONFIG_DIR: /config
+      SPOTIFYBU_SECURE_COOKIES: ${SPOTIFYBU_SECURE_COOKIES:-false}
       SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
     volumes:
       - spotifybu_config:/config

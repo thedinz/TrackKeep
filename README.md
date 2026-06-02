@@ -104,6 +104,7 @@ Set these values before starting the app:
 | `SPOTIFYBU_PORT` | No | Host port for the web UI. Defaults to `3000`. |
 | `NEXT_PUBLIC_APP_URL` | Yes | Public URL for SpotifyBU. Must match the Spotify redirect base URL. |
 | `SPOTIFYBU_APP_SECRET` | Yes | Long random value used to sign SpotifyBU login sessions. |
+| `SPOTIFYBU_SECURE_COOKIES` | No | Set `true` for HTTPS reverse-proxy installs. Defaults to `false` in the Docker example for Unraid-style HTTP installs. |
 | `NAVIDROME_MUSIC_PATH` | Yes | Host path to the music folder Navidrome scans. |
 | `SPOTIFY_CLIENT_ID` | Yes | Spotify app Client ID. |
 | `NAVIDROME_URL` | No | Navidrome URL as seen by the container. Defaults to `http://host.docker.internal:4533`. |

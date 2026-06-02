@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "fs/promises";
 import { cookies } from "next/headers";
 import type { NextResponse } from "next/server";
 import path from "path";
+import { shouldUseSecureCookies } from "./cookies";
 
 export const APP_AUTH_COOKIE = "spotifybu_app_session";
 
@@ -46,7 +47,7 @@ export type AppAuthStatus = {
 const cookieOptions = {
   httpOnly: true,
   sameSite: "lax" as const,
-  secure: process.env.NODE_ENV === "production",
+  secure: shouldUseSecureCookies(),
   path: "/"
 };
 
