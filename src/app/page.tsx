@@ -46,6 +46,7 @@ type AppInfo = {
 type SpotifyAuthConfigResponse = {
   appBaseUrl: string;
   redirectUri: string;
+  redirectUriWarning?: string | null;
   spotifyClientConfigured: boolean;
 };
 
@@ -914,6 +915,9 @@ export default function Home() {
             {spotifyAuthConfig?.redirectUri
               ? `. Spotify must allow exactly: ${spotifyAuthConfig.redirectUri}`
               : ""}
+            {spotifyAuthConfig?.redirectUriWarning
+              ? ` ${spotifyAuthConfig.redirectUriWarning}`
+              : ""}
           </span>
         </div>
       ) : null}
@@ -1697,6 +1701,12 @@ export default function Home() {
               <div className="path-readout">
                 <span className="stat-label">Spotify redirect URI</span>
                 <span>{spotifyAuthConfig.redirectUri}</span>
+              </div>
+            ) : null}
+            {spotifyAuthConfig?.redirectUriWarning ? (
+              <div className="alert inline">
+                <ShieldCheck size={18} />
+                <span>{spotifyAuthConfig.redirectUriWarning}</span>
               </div>
             ) : null}
             <div className="connect-actions">
