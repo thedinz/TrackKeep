@@ -1,6 +1,6 @@
 import { execFile } from "child_process";
 import { createHash, randomBytes } from "crypto";
-import { constants } from "fs";
+import { constants, type Dirent } from "fs";
 import { access, mkdir, readdir, readFile, rename, stat, writeFile } from "fs/promises";
 import path from "path";
 import { promisify } from "util";
@@ -97,9 +97,26 @@ export type NavidromeIndexedTrack = {
   trackNumber?: number;
 };
 
+export type NavidromeIndexSkip = {
+  kind: "directory" | "file";
+  reason: string;
+  relativePath: string;
+};
+
+type NavidromeIndexAudioResult =
+  | {
+      ok: true;
+      track: NavidromeIndexedTrack;
+    }
+  | {
+      ok: false;
+      skip: NavidromeIndexSkip;
+    };
+
 export type NavidromeLibraryIndex = {
   generatedAt: string;
   libraryPath: string;
+  skipped?: NavidromeIndexSkip[];
   tracks: NavidromeIndexedTrack[];
   version: 1;
 };
@@ -108,6 +125,8 @@ export type NavidromeLibraryIndexSummary = {
   generatedAt?: string;
   libraryPath?: string;
   navidromeScan?: NavidromeServerScanResult;
+  skippedCount?: number;
+  skippedExamples?: NavidromeIndexSkip[];
   stale: boolean;
   trackCount: number;
 };
@@ -516,14 +535,47 @@ export async function scanNavidromeLibraryIndex() {
     throw new Error(status.message);
   }
 
-  const audioFilePaths = await findAudioFiles(status.libraryPath);
-  const tracks = await mapWithConcurrency(audioFilePaths, 4, (filePath) =>
-    indexAudioFile(status.libraryPath, filePath)
+  const { audioFilePaths, skipped } = await findAudioFiles(status.libraryPath);
+  const indexedResults = await mapWithConcurrency<string, NavidromeIndexAudioResult>(
+    audioFilePaths,
+    4,
+    async (filePath) => {
+      try {
+        return {
+          ok: true,
+          track: await indexAudioFile(status.libraryPath, filePath)
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          skip: skippedIndexEntry(
+            status.libraryPath,
+            filePath,
+            "file",
+            errorMessage(error)
+          )
+        };
+      }
+    }
+  );
+  const tracks = indexedResults.flatMap((result) =>
+    result.ok ? [result.track] : []
+  );
+  const indexSkipped = [
+    ...skipped,
+    ...indexedResults.flatMap((result) =>
+      result.ok ? [] : [result.skip]
+    )
+  ];
+
+  indexSkipped.sort((a, b) =>
+    `${a.kind}:${a.relativePath}`.localeCompare(`${b.kind}:${b.relativePath}`)
   );
 
   const index = {
     generatedAt: new Date().toISOString(),
     libraryPath: status.libraryPath,
+    skipped: indexSkipped,
     tracks,
     version: 1
   } satisfies NavidromeLibraryIndex;
@@ -671,6 +723,8 @@ function summarizeNavidromeLibraryIndex(
   return {
     generatedAt: index.generatedAt,
     libraryPath,
+    skippedCount: index.skipped?.length,
+    skippedExamples: index.skipped?.slice(0, 3),
     stale: index.libraryPath !== libraryPath,
     trackCount: index.tracks.length
   } satisfies NavidromeLibraryIndexSummary;
@@ -782,12 +836,22 @@ function errorMessage(error: unknown) {
 }
 
 async function findAudioFiles(libraryPath: string) {
-  const files: string[] = [];
+  const audioFilePaths: string[] = [];
+  const skipped: NavidromeIndexSkip[] = [];
 
   async function walk(directory: string) {
-    const entries = await readdir(directory, {
-      withFileTypes: true
-    });
+    let entries: Dirent[];
+
+    try {
+      entries = await readdir(directory, {
+        withFileTypes: true
+      });
+    } catch (error) {
+      skipped.push(
+        skippedIndexEntry(libraryPath, directory, "directory", errorMessage(error))
+      );
+      return;
+    }
 
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       const entryPath = path.join(/* turbopackIgnore: true */ directory, entry.name);
@@ -805,14 +869,38 @@ async function findAudioFiles(libraryPath: string) {
         entry.isFile() &&
         audioFileExtensions.has(path.extname(entry.name).toLowerCase())
       ) {
-        files.push(entryPath);
+        audioFilePaths.push(entryPath);
       }
     }
   }
 
   await walk(libraryPath);
 
-  return files;
+  return {
+    audioFilePaths,
+    skipped
+  };
+}
+
+function skippedIndexEntry(
+  libraryPath: string,
+  filePath: string,
+  kind: NavidromeIndexSkip["kind"],
+  reason: string
+) {
+  return {
+    kind,
+    reason,
+    relativePath: safeLibraryRelativePath(libraryPath, filePath)
+  } satisfies NavidromeIndexSkip;
+}
+
+function safeLibraryRelativePath(libraryPath: string, filePath: string) {
+  try {
+    return toLibraryRelativePath(libraryPath, filePath);
+  } catch {
+    return path.basename(filePath);
+  }
 }
 
 async function mapWithConcurrency<T, R>(

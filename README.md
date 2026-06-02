@@ -244,6 +244,17 @@ The Navidrome API credentials are regular Navidrome user credentials. SpotifyBU
 generates the Subsonic token/salt request parameters at request time; it does not
 need a separate Navidrome API key.
 
+If Library Index fails, check the mounted folder first:
+
+- `NAVIDROME_MUSIC_PATH` must be the host music folder Navidrome scans, not the
+  Navidrome appdata/config folder.
+- Inside the SpotifyBU container, `NAVIDROME_LIBRARY_PATH` should normally be
+  `/music`.
+- The container user must be able to read the music folder and write
+  `/music/.spotifybu/library-index.json`.
+- A bad or unreadable nested file should be skipped and reported in the UI; a
+  top-level mount or permission problem still stops the scan.
+
 Navidrome docs:
 
 - https://www.navidrome.org/docs/getting-started/
