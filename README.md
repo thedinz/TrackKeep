@@ -4,9 +4,9 @@ SpotifyBU is a Docker-first web app for turning a Spotify library into a local, 
 
 The point is not to replace Navidrome search. Navidrome already tells you what is in Navidrome. SpotifyBU uses Spotify as the source-of-truth list, uses Navidrome matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
 
-Version `1.0.0` is the first packaged release. It includes the web UI, local app login, Spotify OAuth, playlist/song/album metadata reads, Navidrome library checks, folder planning, Docker packaging, and a provider-ready architecture inspired by spotDL.
+Version `1.0.0` is the first packaged release. It includes the web UI, local app login, Spotify OAuth, playlist/song/album metadata reads, Navidrome library checks, folder planning, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
-SpotifyBU can source audio from files already present in the mounted Navidrome music library and can stage reviewed, user-authorized downloads from YouTube Music, YouTube, Piped, and JioSaavn into that same library. It supports both single-track backups and throttled playlist-scale backup queues. Download-capable providers require explicit user authorization, show bulk-download risk warnings, preserve provenance, and stage files only into the configured Navidrome library.
+SpotifyBU can source audio from files already present in the mounted Navidrome music library and can search YouTube first, then JioSaavn, for missing Spotify tracks. The user reviews SpotifyBU's selected provider candidate, confirms they are authorized to download it, and the app stages the final file into the configured Navidrome library. It supports both single-track backups and throttled playlist-scale backup queues. Provider downloads show bulk-download risk warnings, preserve provenance, and stage files only into the configured Navidrome library.
 
 ## Features
 
@@ -21,9 +21,10 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - Navidrome folder planning using `Artist - Album`
 - Backup coverage counts for backed-up and missing Spotify tracks
 - Stable album-folder logging for staged download jobs
-- Source-provider catalog for YouTube Music, YouTube, Piped, JioSaavn, SoundCloud, and Bandcamp
-- Verified single-track source downloads for YouTube Music, YouTube, Piped, and JioSaavn using `yt-dlp`
-- Throttled bulk backup queues for missing Spotify tracks with per-track waits, chunk pauses, and partial-failure reporting
+- Source-provider catalog with active YouTube and JioSaavn sourcing plus planned future providers
+- Automatic provider search for missing tracks, with YouTube checked before JioSaavn
+- Reviewed single-track source downloads for YouTube and JioSaavn using `yt-dlp`
+- Throttled bulk backup queues that search, review the best candidate, and download missing Spotify tracks with per-track waits, chunk pauses, and partial-failure reporting
 - Output controls for MP3 or FLAC, with 128 kbps or 320 kbps quality targets
 - Navidrome-volume staging with idle cleanup for abandoned failed download/convert temp files
 - Docker image with Node.js, `ffmpeg`, `yt-dlp`, Python 3, and `pip`
@@ -312,16 +313,17 @@ docker run --rm -p 3000:3000 \
 - `src/lib/spotify.ts` owns Spotify API calls and export shaping.
 - `src/lib/navidrome.ts` owns Navidrome library path checks, safe target directory creation, folder planning, and album-folder logging.
 - `src/lib/providers/types.ts` defines the source-provider contract and provider catalog for matching, downloading, tagging, and provenance.
-- `src/lib/providers/download.ts` validates reviewed provider URLs, calls `yt-dlp`, stages files on the Navidrome volume, tags downloads with Spotify metadata, records provenance, and cleans abandoned staging files after idle.
+- `src/lib/providers/download.ts` searches provider candidates, validates selected provider URLs, calls `yt-dlp`, stages files on the Navidrome volume, tags downloads with Spotify metadata, records provenance, and cleans abandoned staging files after idle.
 - `src/app/api/providers/route.ts` exposes the provider catalog and provider risk/status metadata.
+- `src/app/api/providers/search/route.ts` searches YouTube first, then JioSaavn, for candidate sources.
 - `src/app/api/providers/download/route.ts` handles confirmed single-track provider download requests.
-- `src/app/api/providers/download/batch/route.ts` handles confirmed throttled backup queues for reviewed source URLs.
+- `src/app/api/providers/download/batch/route.ts` supports confirmed throttled provider download queues.
 - `src/lib/session.ts` and `src/lib/server-session.ts` own PKCE cookie and Spotify token-session handling.
 - `.github/workflows/docker-image.yml` publishes GHCR images for `main` and `v*` tags.
 
 ## Source Providers
 
-spotDL is a useful comparison point: it resolves Spotify metadata to audio candidates from providers such as YouTube Music and then downloads through `yt-dlp`. SpotifyBU keeps a similar provider-oriented shape for YouTube Music, YouTube, Piped, JioSaavn, SoundCloud, and Bandcamp. The implemented download path lets the user paste reviewed source URLs for one track or queue many missing tracks from a playlist, then processes them sequentially with configured wait between tracks and longer pauses between chunks.
+spotDL is a useful comparison point: it resolves Spotify metadata to audio candidates from providers such as YouTube Music and then downloads through `yt-dlp`. SpotifyBU keeps a similar provider-oriented shape, but the active automatic sourcing flow intentionally uses direct YouTube search first and JioSaavn second. YouTube Music, Piped, SoundCloud, and Bandcamp remain planned/future provider entries rather than active UI choices. The implemented download path searches provider candidates for a selected missing track or for every missing track in a playlist-scale queue, then processes downloads sequentially with configured wait between tracks and longer pauses between chunks.
 
 Bulk playlist sourcing can trigger provider throttling, captchas, temporary blocks, account action, or service-term issues. SpotifyBU should show those risks before starting large jobs and should use conservative rate limits, cancellation, retries, and dry-run previews.
 

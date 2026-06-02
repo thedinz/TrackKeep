@@ -91,14 +91,14 @@ export const SOURCE_PROVIDER_CATALOG = [
   {
     authorization: "external_tool",
     bulkWarning:
-      "Large playlist jobs can trigger throttling, captchas, or temporary blocks from YouTube Music.",
+      "YouTube Music is closed for reliable unauthenticated search, so SpotifyBU does not use it in the automatic backup flow yet.",
     capabilities: ["search", "download", "tag", "provenance"],
     description:
-      "SpotDL-style matching against YouTube Music candidates through a constrained external downloader.",
+      "Future candidate if a reliable user-controlled provider path is added.",
     id: "youtube-music",
     name: "YouTube Music",
     risk: "high",
-    status: "requires_authorization"
+    status: "planned"
   },
   {
     authorization: "external_tool",
@@ -115,14 +115,14 @@ export const SOURCE_PROVIDER_CATALOG = [
   {
     authorization: "external_tool",
     bulkWarning:
-      "Piped instances proxy YouTube traffic and may rate-limit, fail, or block high-volume jobs.",
+      "Piped needs a known public instance and mirrors YouTube results, so SpotifyBU uses direct YouTube search first.",
     capabilities: ["search", "download", "tag", "provenance"],
     description:
-      "Alternative YouTube frontend/provider path for candidate lookup and authorized staging.",
+      "Future alternative YouTube frontend path if a reliable instance is configured.",
     id: "piped",
     name: "Piped",
     risk: "high",
-    status: "requires_authorization"
+    status: "planned"
   },
   {
     authorization: "external_tool",

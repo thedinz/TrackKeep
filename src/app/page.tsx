@@ -223,6 +223,36 @@ type ProviderDownloadResponse = {
   };
 };
 
+type ProviderSearchCandidate = {
+  album?: string;
+  artists: string[];
+  durationMs?: number;
+  id: string;
+  providerId: string;
+  score: {
+    albumScore?: number;
+    artistScore: number;
+    durationDeltaMs?: number;
+    isrcMatch?: boolean;
+    overall: number;
+    titleScore: number;
+  };
+  title: string;
+  url?: string;
+  verified: boolean;
+};
+
+type ProviderSearchResponse = {
+  search: {
+    candidates: ProviderSearchCandidate[];
+    errors: Array<{
+      error: string;
+      providerId: string;
+    }>;
+    providerOrder: string[];
+  };
+};
+
 type BulkDownloadProgress = {
   completedCount: number;
   failedCount: number;
@@ -232,19 +262,12 @@ type BulkDownloadProgress = {
 };
 
 const numberFormatter = new Intl.NumberFormat("en-US");
-const downloadEnabledProviderIds = new Set([
-  "jiosaavn",
-  "piped",
-  "youtube",
-  "youtube-music"
-]);
+const downloadEnabledProviderIds = new Set(["jiosaavn", "youtube"]);
+const providerSearchOrder = ["youtube", "jiosaavn"] as const;
 const mediaSourceProviders: readonly SourceProviderCatalogEntry[] =
   SOURCE_PROVIDER_CATALOG.filter(
-    (provider) => provider.id !== "navidrome-library"
+    (provider) => downloadEnabledProviderIds.has(provider.id)
   );
-const downloadableProviders = mediaSourceProviders.filter((provider) =>
-  downloadEnabledProviderIds.has(provider.id)
-);
 
 export default function Home() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
@@ -272,6 +295,7 @@ export default function Home() {
   const [isResolvingSource, setIsResolvingSource] = useState(false);
   const [isScanningLibrary, setIsScanningLibrary] = useState(false);
   const [isOrganizingLibrary, setIsOrganizingLibrary] = useState(false);
+  const [isSearchingProvider, setIsSearchingProvider] = useState(false);
   const [isDownloadingProvider, setIsDownloadingProvider] = useState(false);
   const [isDownloadingBulkProvider, setIsDownloadingBulkProvider] =
     useState(false);
@@ -279,15 +303,17 @@ export default function Home() {
     useState<NavidromeLibraryStatus | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
   const [downloadTrackPosition, setDownloadTrackPosition] = useState("");
-  const [downloadProviderId, setDownloadProviderId] = useState("youtube-music");
   const [downloadFormat, setDownloadFormat] = useState("mp3");
   const [downloadQuality, setDownloadQuality] = useState("320");
-  const [downloadSourceUrl, setDownloadSourceUrl] = useState("");
+  const [providerCandidates, setProviderCandidates] = useState<
+    ProviderSearchCandidate[]
+  >([]);
+  const [selectedProviderCandidateId, setSelectedProviderCandidateId] =
+    useState("");
   const [downloadRightsConfirmed, setDownloadRightsConfirmed] = useState(false);
   const [downloadBulkRiskAccepted, setDownloadBulkRiskAccepted] = useState(false);
   const [providerDownloadMessage, setProviderDownloadMessage] =
     useState<string | null>(null);
-  const [bulkQueueText, setBulkQueueText] = useState("");
   const [bulkChunkSize, setBulkChunkSize] = useState("10");
   const [bulkTrackDelaySeconds, setBulkTrackDelaySeconds] = useState("20");
   const [bulkChunkPauseSeconds, setBulkChunkPauseSeconds] = useState("120");
@@ -441,13 +467,63 @@ export default function Home() {
     }
   }, [tracks]);
 
-  const downloadVerifiedSource = useCallback(async () => {
+  const searchSelectedProviderTrack = useCallback(async () => {
     const selectedTrack = tracks.find(
       (track) => String(track.position) === downloadTrackPosition
     );
 
     if (!selectedTrack) {
-      setRequestError("Choose a track before downloading from a provider.");
+      setRequestError("Choose a track before searching providers.");
+      return;
+    }
+
+    setIsSearchingProvider(true);
+    setProviderCandidates([]);
+    setSelectedProviderCandidateId("");
+    setProviderDownloadMessage(null);
+    setRequestError(null);
+
+    try {
+      const response = await postJson<ProviderSearchResponse>(
+        "/api/providers/search",
+        {
+          limit: 6,
+          providerIds: providerSearchOrder,
+          track: selectedTrack
+        }
+      );
+
+      setProviderCandidates(response.search.candidates);
+      setSelectedProviderCandidateId(response.search.candidates[0]?.id ?? "");
+      setProviderDownloadMessage(
+        response.search.candidates.length
+          ? `Found ${response.search.candidates.length} candidate sources.`
+          : response.search.errors.length
+            ? response.search.errors
+                .map((error) => `${providerDisplayName(error.providerId)}: ${error.error}`)
+                .join(" ")
+            : "No provider candidates found."
+      );
+    } catch (error) {
+      setRequestError(errorMessage(error));
+    } finally {
+      setIsSearchingProvider(false);
+    }
+  }, [
+    downloadTrackPosition,
+    tracks
+  ]);
+
+  const downloadSelectedProviderCandidate = useCallback(async () => {
+    const selectedTrack = tracks.find(
+      (track) => String(track.position) === downloadTrackPosition
+    );
+    const selectedCandidate = providerCandidates.find(
+      (candidate) => candidate.id === selectedProviderCandidateId
+    );
+
+    if (!selectedTrack || !selectedCandidate?.url) {
+      setRequestError("Choose a provider search result before downloading.");
       return;
     }
 
@@ -461,18 +537,19 @@ export default function Home() {
         {
           bulkRiskAccepted: downloadBulkRiskAccepted,
           format: downloadFormat,
-          providerId: downloadProviderId,
+          providerId: selectedCandidate.providerId,
           quality: downloadQuality,
           rightsConfirmed: downloadRightsConfirmed,
-          selectedReason: "User reviewed and selected provider source URL",
-          sourceUrl: downloadSourceUrl,
+          selectedReason: `User reviewed SpotifyBU provider search result (${selectedCandidate.title})`,
+          sourceUrl: selectedCandidate.url,
           track: selectedTrack
         }
       );
       const location =
         response.download.relativePath ?? response.download.destinationPath;
       setProviderDownloadMessage(`Downloaded ${selectedTrack.name} to ${location}`);
-      setDownloadSourceUrl("");
+      setProviderCandidates([]);
+      setSelectedProviderCandidateId("");
       const indexResponse = await postJson<LibraryIndexResponse>(
         "/api/navidrome/library/index",
         {}
@@ -487,12 +564,12 @@ export default function Home() {
   }, [
     downloadBulkRiskAccepted,
     downloadFormat,
-    downloadProviderId,
     downloadQuality,
     downloadRightsConfirmed,
-    downloadSourceUrl,
     downloadTrackPosition,
+    providerCandidates,
     refreshLibraryMatches,
+    selectedProviderCandidateId,
     tracks
   ]);
 
@@ -685,59 +762,47 @@ export default function Home() {
     }
 
     setDownloadTrackPosition(nextDownloadTrackPosition);
-    setDownloadSourceUrl("");
+    setProviderCandidates([]);
+    setSelectedProviderCandidateId("");
     setDownloadRightsConfirmed(false);
     setDownloadBulkRiskAccepted(false);
     setProviderDownloadMessage(null);
   }, [downloadTrackOptions, downloadTrackPosition]);
   const canOrganizeLibrary =
     navidromeReady && tracks.length > 0 && moveNeededCount > 0;
-  const selectedDownloadProvider =
-    downloadableProviders.find((provider) => provider.id === downloadProviderId) ??
-    downloadableProviders[0];
   const selectedDownloadTrack =
     downloadTrackOptions.find(
       (track) => String(track.position) === downloadTrackPosition
     ) ??
     downloadTrackOptions[0] ??
     null;
+  const selectedProviderCandidate = providerCandidates.find(
+    (candidate) => candidate.id === selectedProviderCandidateId
+  );
   const canDownloadProvider =
     Boolean(
       navidromeReady &&
         selectedDownloadTrack &&
-        downloadSourceUrl.trim() &&
+        selectedProviderCandidate?.url &&
         downloadRightsConfirmed &&
         downloadBulkRiskAccepted
     ) &&
+    !isSearchingProvider &&
     !isDownloadingProvider &&
     !isDownloadingBulkProvider;
-  const parsedBulkQueue = useMemo(
-    () =>
-      parseBulkDownloadQueue(
-        bulkQueueText,
-        downloadTrackOptions,
-        downloadProviderId
-      ),
-    [bulkQueueText, downloadProviderId, downloadTrackOptions]
-  );
   const canDownloadBulkProvider =
     Boolean(
       navidromeReady &&
-        parsedBulkQueue.items.length &&
-        !parsedBulkQueue.error &&
+        downloadTrackOptions.length &&
         downloadRightsConfirmed &&
         downloadBulkRiskAccepted &&
         !isDownloadingProvider &&
+        !isSearchingProvider &&
         !isDownloadingBulkProvider
     );
   const downloadBulkQueue = useCallback(async () => {
-    if (parsedBulkQueue.error) {
-      setRequestError(parsedBulkQueue.error);
-      return;
-    }
-
-    if (!parsedBulkQueue.items.length) {
-      setRequestError("Add reviewed provider URLs to the bulk queue first.");
+    if (!downloadTrackOptions.length) {
+      setRequestError("Resolve Spotify tracks with missing backups first.");
       return;
     }
 
@@ -747,7 +812,7 @@ export default function Home() {
       completedCount: 0,
       failedCount: 0,
       phase: "Preparing",
-      totalCount: parsedBulkQueue.items.length
+      totalCount: downloadTrackOptions.length
     });
     setProviderDownloadMessage(null);
     setRequestError(null);
@@ -760,27 +825,53 @@ export default function Home() {
     const failedTrackLabels: string[] = [];
 
     try {
-      for (const [index, item] of parsedBulkQueue.items.entries()) {
-        const trackLabel = `${item.track.position}. ${item.track.name}`;
+      for (const [index, track] of downloadTrackOptions.entries()) {
+        const trackLabel = `${track.position}. ${track.name}`;
 
         setBulkDownloadProgress({
           completedCount,
           failedCount,
-          phase: "Downloading",
-          totalCount: parsedBulkQueue.items.length,
+          phase: "Searching",
+          totalCount: downloadTrackOptions.length,
           trackLabel
         });
 
         try {
+          const searchResponse = await postJson<ProviderSearchResponse>(
+            "/api/providers/search",
+            {
+              limit: 4,
+              providerIds: providerSearchOrder,
+              track
+            }
+          );
+          const selectedCandidate = searchResponse.search.candidates.find(
+            (candidate) => candidate.url
+          );
+
+          if (!selectedCandidate?.url) {
+            throw new Error("No provider candidate found.");
+          }
+
+          setBulkDownloadProgress({
+            completedCount,
+            failedCount,
+            phase: `Downloading from ${providerDisplayName(
+              selectedCandidate.providerId
+            )}`,
+            totalCount: downloadTrackOptions.length,
+            trackLabel
+          });
+
           await postJson<ProviderDownloadResponse>("/api/providers/download", {
             bulkRiskAccepted: downloadBulkRiskAccepted,
             format: downloadFormat,
-            providerId: item.providerId,
+            providerId: selectedCandidate.providerId,
             quality: downloadQuality,
             rightsConfirmed: downloadRightsConfirmed,
-            selectedReason: item.selectedReason,
-            sourceUrl: item.sourceUrl,
-            track: item.track
+            selectedReason: `SpotifyBU automatic provider search selected ${selectedCandidate.title}`,
+            sourceUrl: selectedCandidate.url,
+            track
           });
           completedCount += 1;
         } catch (error) {
@@ -788,7 +879,7 @@ export default function Home() {
           failedTrackLabels.push(`${trackLabel}: ${errorMessage(error)}`);
         }
 
-        const isLastItem = index === parsedBulkQueue.items.length - 1;
+        const isLastItem = index === downloadTrackOptions.length - 1;
 
         if (!isLastItem) {
           const isChunkBoundary = (index + 1) % chunkSize === 0;
@@ -798,7 +889,7 @@ export default function Home() {
             completedCount,
             failedCount,
             phase: isChunkBoundary ? "Chunk pause" : "Waiting",
-            totalCount: parsedBulkQueue.items.length,
+            totalCount: downloadTrackOptions.length,
             trackLabel
           });
 
@@ -812,10 +903,10 @@ export default function Home() {
         completedCount,
         failedCount,
         phase: "Complete",
-        totalCount: parsedBulkQueue.items.length
+        totalCount: downloadTrackOptions.length
       });
       setBulkDownloadMessage(
-        `Backed up ${completedCount} of ${parsedBulkQueue.items.length} queued tracks${
+        `Backed up ${completedCount} of ${downloadTrackOptions.length} missing tracks${
           failedCount
             ? `; ${failedCount} need review${
                 failedTrackLabels[0] ? ` (${failedTrackLabels[0]})` : ""
@@ -838,11 +929,11 @@ export default function Home() {
     bulkChunkPauseSeconds,
     bulkChunkSize,
     bulkTrackDelaySeconds,
+    downloadTrackOptions,
     downloadBulkRiskAccepted,
     downloadFormat,
     downloadQuality,
     downloadRightsConfirmed,
-    parsedBulkQueue,
     refreshLibraryMatches
   ]);
   const libraryIndexLabel = libraryIndex
@@ -1399,9 +1490,9 @@ export default function Home() {
                 <span>
                   <h3>External media providers</h3>
                   <p>
-                    No provider account connection is needed here. Paste reviewed
-                    source URLs below and confirm you are allowed to download them.
-                    Bulk jobs can trigger provider blocking.
+                    No provider account connection is needed here. SpotifyBU
+                    searches YouTube first, then JioSaavn; you review the match
+                    before downloading. Bulk jobs can trigger provider blocking.
                   </p>
                 </span>
               </div>
@@ -1448,8 +1539,8 @@ export default function Home() {
                 <div>
                   <h3>Back up missing track</h3>
                   <p>
-                    Choose a Spotify track that is not backed up, paste the
-                    reviewed source URL, then stage it into Navidrome.
+                    Choose a missing Spotify track, search provider candidates,
+                    review the match, then stage it into Navidrome.
                   </p>
                 </div>
                 <label className="provider-field">
@@ -1462,7 +1553,8 @@ export default function Home() {
                     }
                     onChange={(event) => {
                       setDownloadTrackPosition(event.target.value);
-                      setDownloadSourceUrl("");
+                      setProviderCandidates([]);
+                      setSelectedProviderCandidateId("");
                       setDownloadRightsConfirmed(false);
                       setDownloadBulkRiskAccepted(false);
                       setProviderDownloadMessage(null);
@@ -1487,28 +1579,71 @@ export default function Home() {
                     )}
                   </select>
                 </label>
-                <label className="provider-field">
-                  <span>Provider</span>
-                  <select
-                    disabled={isDownloadingProvider || isDownloadingBulkProvider}
-                    onChange={(event) => {
-                      setDownloadProviderId(event.target.value);
-                      setDownloadSourceUrl("");
-                      setDownloadRightsConfirmed(false);
-                      setDownloadBulkRiskAccepted(false);
-                      setProviderDownloadMessage(null);
-                      setBulkDownloadMessage(null);
-                      setBulkDownloadProgress(null);
-                    }}
-                    value={selectedDownloadProvider?.id ?? downloadProviderId}
-                  >
-                    {downloadableProviders.map((provider) => (
-                      <option key={provider.id} value={provider.id}>
-                        {provider.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <button
+                  className="command secondary"
+                  disabled={
+                    !selectedDownloadTrack ||
+                    isSearchingProvider ||
+                    isDownloadingProvider ||
+                    isDownloadingBulkProvider
+                  }
+                  onClick={() => void searchSelectedProviderTrack()}
+                  title="Search YouTube and JioSaavn for this track"
+                  type="button"
+                >
+                  {isSearchingProvider ? (
+                    <Loader2 className="spin" size={18} />
+                  ) : (
+                    <Search size={18} />
+                  )}
+                  Find Source
+                </button>
+                {providerCandidates.length ? (
+                  <label className="provider-field">
+                    <span>Provider candidate</span>
+                    <select
+                      disabled={isDownloadingProvider || isDownloadingBulkProvider}
+                      onChange={(event) => {
+                        setSelectedProviderCandidateId(event.target.value);
+                        setDownloadRightsConfirmed(false);
+                        setDownloadBulkRiskAccepted(false);
+                        setProviderDownloadMessage(null);
+                      }}
+                      value={selectedProviderCandidateId}
+                    >
+                      {providerCandidates.map((candidate) => (
+                        <option key={candidate.id} value={candidate.id}>
+                          {providerDisplayName(candidate.providerId)} -{" "}
+                          {candidate.title} ({candidate.score.overall}%)
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                {selectedProviderCandidate ? (
+                  <div className="provider-candidate">
+                    <span className="stat-label">
+                      {providerDisplayName(selectedProviderCandidate.providerId)}
+                    </span>
+                    <strong>{selectedProviderCandidate.title}</strong>
+                    <span>
+                      {selectedProviderCandidate.artists.join(", ") ||
+                        "Unknown artist"}
+                    </span>
+                    <span>
+                      Match score {selectedProviderCandidate.score.overall}%
+                    </span>
+                    {selectedProviderCandidate.url ? (
+                      <a
+                        href={selectedProviderCandidate.url}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        Review source
+                      </a>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className="provider-throttle-grid">
                   <label className="provider-field">
                     <span>Format</span>
@@ -1547,20 +1682,6 @@ export default function Home() {
                     </select>
                   </label>
                 </div>
-                <label className="provider-field">
-                  <span>Verified source URL</span>
-                  <input
-                    disabled={isDownloadingProvider || isDownloadingBulkProvider}
-                    onChange={(event) => {
-                      setDownloadSourceUrl(event.target.value);
-                      setDownloadRightsConfirmed(false);
-                      setDownloadBulkRiskAccepted(false);
-                      setProviderDownloadMessage(null);
-                    }}
-                    placeholder={providerUrlPlaceholder(downloadProviderId)}
-                    value={downloadSourceUrl}
-                  />
-                </label>
                 <label className="provider-check">
                   <input
                     checked={downloadRightsConfirmed}
@@ -1588,8 +1709,8 @@ export default function Home() {
                     canDownloadProvider ? "" : "disabled"
                   }`}
                   disabled={!canDownloadProvider}
-                  onClick={() => void downloadVerifiedSource()}
-                  title="Download reviewed provider source"
+                  onClick={() => void downloadSelectedProviderCandidate()}
+                  title="Download selected provider candidate"
                   type="button"
                 >
                   {isDownloadingProvider ? (
@@ -1632,29 +1753,14 @@ export default function Home() {
                 <div>
                   <h3>Back up playlist queue</h3>
                   <p>
-                    Queue reviewed source URLs for many missing tracks at once.
-                    Each line uses: track position | provider | URL.
+                    Search YouTube first, then JioSaavn, for each missing track
+                    and stage the best candidate with throttled waits.
                   </p>
                 </div>
-                <label className="provider-field">
-                  <span>Bulk queue</span>
-                  <textarea
-                    disabled={isDownloadingBulkProvider}
-                    onChange={(event) => {
-                      setBulkQueueText(event.target.value);
-                      setBulkDownloadMessage(null);
-                      setBulkDownloadProgress(null);
-                    }}
-                    placeholder={`12 | youtube-music | https://music.youtube.com/watch?v=...\n13 | youtube | https://www.youtube.com/watch?v=...\n14 | https://www.jiosaavn.com/song/...`}
-                    value={bulkQueueText}
-                  />
-                </label>
-                {parsedBulkQueue.error ? (
-                  <p className="provider-error">{parsedBulkQueue.error}</p>
-                ) : parsedBulkQueue.items.length ? (
+                {downloadTrackOptions.length ? (
                   <p className="provider-queue-note">
-                    {numberFormatter.format(parsedBulkQueue.items.length)} queued
-                    missing tracks
+                    {numberFormatter.format(downloadTrackOptions.length)} missing
+                    tracks ready for automatic provider search
                   </p>
                 ) : null}
                 <div className="provider-throttle-grid">
@@ -1826,7 +1932,7 @@ export default function Home() {
               </div>
               <div className="signal waiting">
                 <h3>Missing track sourcing</h3>
-                <p className="muted">YouTube Music, YouTube, Piped, JioSaavn</p>
+                <p className="muted">YouTube first, then JioSaavn</p>
               </div>
             </div>
           </div>
@@ -2014,116 +2120,11 @@ function providerRiskLabel(risk: ProviderRiskLevel) {
   return "High risk";
 }
 
-function providerUrlPlaceholder(providerId: string) {
-  if (providerId === "youtube-music") {
-    return "https://music.youtube.com/watch?v=...";
-  }
-
-  if (providerId === "youtube") {
-    return "https://www.youtube.com/watch?v=...";
-  }
-
-  if (providerId === "piped") {
-    return "https://piped.video/watch?v=...";
-  }
-
-  if (providerId === "jiosaavn") {
-    return "https://www.jiosaavn.com/song/...";
-  }
-
-  return "https://...";
-}
-
-function parseBulkDownloadQueue(
-  value: string,
-  missingTracks: BackupTrack[],
-  defaultProviderId: string
-) {
-  const lines = value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const items: Array<{
-    providerId: string;
-    selectedReason: string;
-    sourceUrl: string;
-    track: BackupTrack;
-  }> = [];
-
-  for (const [index, line] of lines.entries()) {
-    const parts = line
-      .split("|")
-      .map((part) => part.trim())
-      .filter(Boolean);
-
-    if (parts.length < 2 || parts.length > 3) {
-      return {
-        error:
-          "Bulk queue lines must be: track position | provider | URL, or track position | URL.",
-        items
-      };
-    }
-
-    const [positionValue, providerOrUrl, maybeUrl] = parts;
-    const track = missingTracks.find(
-      (candidate) => String(candidate.position) === positionValue
-    );
-
-    if (!track) {
-      return {
-        error: `Line ${index + 1}: track ${positionValue} is not missing from this backup source.`,
-        items
-      };
-    }
-
-    const providerId = normalizeProviderId(maybeUrl ? providerOrUrl : defaultProviderId);
-
-    if (!providerId) {
-      return {
-        error: `Line ${index + 1}: choose YouTube Music, YouTube, Piped, or JioSaavn.`,
-        items
-      };
-    }
-
-    const sourceUrl = maybeUrl ?? providerOrUrl;
-
-    if (!sourceUrl.startsWith("https://")) {
-      return {
-        error: `Line ${index + 1}: source URL must start with https://.`,
-        items
-      };
-    }
-
-    items.push({
-      providerId,
-      selectedReason: "User queued reviewed provider source URL for bulk backup",
-      sourceUrl,
-      track
-    });
-  }
-
-  return {
-    items
-  };
-}
-
-function normalizeProviderId(value: string) {
-  const normalized = value.trim().toLowerCase().replace(/\s+/g, "-");
-  const aliases = new Map([
-    ["jiosaavn", "jiosaavn"],
-    ["jio-saavn", "jiosaavn"],
-    ["piped", "piped"],
-    ["youtube", "youtube"],
-    ["yt", "youtube"],
-    ["youtube-music", "youtube-music"],
-    ["yt-music", "youtube-music"],
-    ["ytmusic", "youtube-music"]
-  ]);
-  const providerId = aliases.get(normalized);
-
-  return providerId && downloadEnabledProviderIds.has(providerId)
-    ? providerId
-    : null;
+function providerDisplayName(providerId: string) {
+  return (
+    SOURCE_PROVIDER_CATALOG.find((provider) => provider.id === providerId)?.name ??
+    providerId
+  );
 }
 
 function secondsToMilliseconds(value: string) {
