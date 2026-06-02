@@ -45,13 +45,14 @@ Useful references:
 - Provider downloads should run as background jobs with retry, cancellation, and a dry-run preview.
 - External providers must show a rights confirmation and a bulk-download warning before the first download job.
 - Bulk jobs should use conservative rate limits and should make cancellation available at track and playlist scope.
-- The current implemented external download path accepts reviewed source URLs for one selected Spotify track or a queue of missing Spotify tracks, then runs `yt-dlp --no-playlist` per item.
+- The current implemented external download path searches YouTube first, then JioSaavn, for one selected Spotify track or for every missing track in a playlist-scale queue. The user still reviews the candidate and confirms download rights before a single-track download starts.
 - Downloads support MP3 or FLAC output and 128 kbps or 320 kbps quality targets.
 - Bulk queues run sequentially with configurable wait between tracks, chunk size, and chunk pause to reduce provider blocking risk.
 - Provider work stages temporary files under `.spotifybu/tmp/provider-downloads` inside the mounted Navidrome library, then moves completed files into final album folders.
 - If a download, conversion, or move fails, stale staging files are cleaned after 10 minutes of provider-download idleness so unfinished media does not accumulate in the container filesystem.
-- Piped URLs are validated against configured Piped hosts and converted to a canonical YouTube video URL for `yt-dlp`; the original Piped URL remains in provenance.
-- JioSaavn downloads require a single-song URL.
+- YouTube Music is not active in the automatic flow because it is closed for reliable unauthenticated search.
+- Piped is not active in the automatic flow because it requires a public instance endpoint and mostly mirrors YouTube results.
+- SoundCloud and Bandcamp remain planned provider entries rather than active UI choices.
 
 ## Provider Catalog
 
@@ -60,10 +61,10 @@ The provider catalog lives in `src/lib/providers/types.ts` and is exposed by `/a
 | Provider | Status | Authorization model | Notes |
 | --- | --- | --- | --- |
 | Navidrome library | Active | Local files | Matches Spotify metadata against existing mounted audio files. |
-| YouTube Music | Requires authorization | External tool | Verified single-track `music.youtube.com/watch` downloads through `yt-dlp`. |
-| YouTube | Requires authorization | External tool | Verified single-track YouTube downloads through `yt-dlp`. |
-| Piped | Requires authorization | External tool | Verified Piped watch/stream URLs are translated to canonical YouTube video URLs for download. |
-| JioSaavn | Requires authorization | External tool | Verified JioSaavn song downloads through `yt-dlp`. |
+| YouTube | User-confirmed | External tool | First active automatic search provider. Downloads reviewed single-video candidates through `yt-dlp`. |
+| JioSaavn | User-confirmed | External tool | Second active automatic search provider and fallback candidate source. Downloads reviewed song candidates through `yt-dlp`. |
+| YouTube Music | Planned | External tool | Future candidate only if a reliable user-controlled provider path is added. |
+| Piped | Planned | External tool | Future alternative YouTube frontend path if a reliable instance is configured. |
 | SoundCloud | Planned | External tool | Future candidate matching and authorized staging. |
 | Bandcamp | Planned | External tool | Should be limited to purchases, free downloads, or explicit permission. |
 
@@ -71,7 +72,7 @@ The provider catalog lives in `src/lib/providers/types.ts` and is exposed by `/a
 
 SpotifyBU should explain that large playlist jobs can trigger throttling, captchas, temporary service blocks, provider account action, regional failures, or service-term issues. The app should not treat this warning as a substitute for authorization; it should be a preflight confirmation alongside provider configuration, dry-run candidate review, rate limits, retry controls, cancellation, and provenance logging.
 
-The current routes intentionally block provider playlists with `--no-playlist` and UI copy. Playlist-scale backups are represented as queues of reviewed single-track source URLs, processed one item at a time with configurable throttling and partial-failure reporting. Future candidate search should fill that queue automatically for user review before the batch starts.
+The current routes intentionally block provider playlists with `--no-playlist` and UI copy. Playlist-scale backups are represented as missing Spotify tracks, processed one item at a time with automatic provider search, conservative throttling, and partial-failure reporting. The app checks YouTube first, then JioSaavn, and skips tracks where no candidate can be found.
 
 ## First Provider Candidates
 
@@ -84,8 +85,9 @@ The current routes intentionally block provider playlists with `--no-playlist` a
    - Copy or hardlink into the Navidrome library structure.
 
 3. External tool adapter
-   - Wrap a tool such as spotDL or `yt-dlp` only when the user has configured a source account or provider path and confirmed they have rights to download the selected media.
-   - Start with YouTube Music, YouTube, Piped, and JioSaavn as explicit provider targets.
+   - Wrap a tool such as spotDL or `yt-dlp` only when the user has confirmed they have rights to download the selected media.
+   - Start with YouTube and JioSaavn as explicit provider targets.
+   - Search YouTube first, then JioSaavn, and keep provider ranking/provenance visible to the user.
    - Keep command arguments generated by SpotifyBU and constrain output to the Navidrome staging path.
 
 4. Licensed/royalty-free catalog provider

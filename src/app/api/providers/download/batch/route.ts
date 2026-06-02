@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
   if (!body) {
     return NextResponse.json(
       {
-        error: "Send a verified provider download queue."
+        error: "Send a provider download queue."
       },
       {
         status: 400

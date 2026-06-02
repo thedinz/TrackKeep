@@ -21,12 +21,29 @@ import {
 import type { BackupTrack } from "@/lib/spotify";
 import {
   SOURCE_PROVIDER_CATALOG,
+  type CandidateScore,
+  type SourceCandidate,
   type SourceProviderCatalogEntry
 } from "./types";
 
-type DownloadProviderId = "jiosaavn" | "piped" | "youtube" | "youtube-music";
+type DownloadProviderId = "jiosaavn" | "youtube";
 type DownloadFormat = "flac" | "mp3";
 type DownloadQuality = "128" | "320";
+
+export type ProviderSearchRequest = {
+  limit?: number;
+  providerIds?: string[];
+  track: BackupTrack;
+};
+
+export type ProviderSearchResult = {
+  candidates: SourceCandidate[];
+  errors: Array<{
+    error: string;
+    providerId: DownloadProviderId;
+  }>;
+  providerOrder: DownloadProviderId[];
+};
 
 export type AuthorizedProviderDownloadRequest = {
   bulkRiskAccepted: boolean;
@@ -95,6 +112,41 @@ type ProviderDownloadLog = {
   version: 1;
 };
 
+type YtDlpSearchEntry = {
+  channel?: string;
+  duration?: number;
+  id?: string;
+  title?: string;
+  uploader?: string;
+  url?: string;
+  webpage_url?: string;
+};
+
+type YtDlpSearchResult = {
+  entries?: YtDlpSearchEntry[];
+};
+
+type JioSaavnAutocompleteResponse = {
+  songs?: {
+    data?: JioSaavnSongEntry[];
+  };
+};
+
+type JioSaavnSongEntry = {
+  duration?: string;
+  id?: string;
+  more_info?: {
+    album?: string;
+    duration?: string;
+    primary_artists?: string;
+    singers?: string;
+  };
+  perma_url?: string;
+  subtitle?: string;
+  title?: string;
+  url?: string;
+};
+
 type ProviderDownloadLogEntry = {
   album: string;
   artists: string[];
@@ -115,16 +167,58 @@ type ProviderDownloadLogEntry = {
 const execFileAsync = promisify(execFile);
 const downloadableProviderIds = new Set<DownloadProviderId>([
   "jiosaavn",
-  "piped",
-  "youtube",
-  "youtube-music"
+  "youtube"
 ]);
+const defaultProviderSearchOrder: DownloadProviderId[] = ["youtube", "jiosaavn"];
 const provenanceLogSegments = [".spotifybu", "provider-downloads.json"];
 const maxBatchItems = 500;
 const stagingRootSegments = [".spotifybu", "tmp", "provider-downloads"];
 const idleCleanupDelayMs = 10 * 60 * 1000;
 let idleCleanupTimer: ReturnType<typeof setTimeout> | null = null;
 let activeDownloadOperations = 0;
+
+export async function searchProviderCandidates(
+  request: ProviderSearchRequest
+): Promise<ProviderSearchResult> {
+  validateTrack(request.track);
+
+  const limit = clampPositiveInteger(request.limit, 5, 1, 50);
+  const providerOrder = normalizeSearchProviderOrder(request.providerIds);
+  const candidates: SourceCandidate[] = [];
+  const errors: ProviderSearchResult["errors"] = [];
+
+  for (const providerId of providerOrder) {
+    try {
+      const providerCandidates =
+        providerId === "youtube"
+          ? await searchYoutubeCandidates(request.track, limit)
+          : await searchJioSaavnCandidates(request.track, limit);
+      candidates.push(...providerCandidates);
+    } catch (error) {
+      errors.push({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Provider search failed.",
+        providerId
+      });
+    }
+  }
+
+  candidates.sort((left, right) => {
+    const providerDelta =
+      providerOrder.indexOf(left.providerId as DownloadProviderId) -
+      providerOrder.indexOf(right.providerId as DownloadProviderId);
+
+    return providerDelta || right.score.overall - left.score.overall;
+  });
+
+  return {
+    candidates: candidates.slice(0, limit * providerOrder.length),
+    errors,
+    providerOrder
+  };
+}
 
 export async function downloadAuthorizedProviderBatch(
   request: AuthorizedProviderDownloadBatchRequest
@@ -138,7 +232,7 @@ export async function downloadAuthorizedProviderBatch(
   }
 
   if (!Array.isArray(request.items) || !request.items.length) {
-    throw new Error("Add at least one reviewed source URL to the bulk queue.");
+    throw new Error("Add at least one provider download item to the bulk queue.");
   }
 
   if (request.items.length > maxBatchItems) {
@@ -167,7 +261,7 @@ export async function downloadAuthorizedProviderBatch(
         rightsConfirmed: true,
         selectedReason:
           item.selectedReason ??
-          "User queued reviewed provider source URL for bulk backup",
+          "SpotifyBU queued a reviewed provider candidate for bulk backup",
         sourceUrl: item.sourceUrl,
         track: item.track
       });
@@ -332,6 +426,273 @@ function normalizeDownloadQuality(value?: string): DownloadQuality {
   return value === "128" ? "128" : "320";
 }
 
+function normalizeSearchProviderOrder(providerIds?: string[]) {
+  const normalizedProviderIds = (providerIds?.length
+    ? providerIds
+    : defaultProviderSearchOrder
+  )
+    .map((providerId) => providerId.trim().toLowerCase())
+    .filter((providerId): providerId is DownloadProviderId =>
+      downloadableProviderIds.has(providerId as DownloadProviderId)
+    );
+  const providerOrder = normalizedProviderIds.filter(
+    (providerId, index) => normalizedProviderIds.indexOf(providerId) === index
+  );
+
+  return providerOrder.length ? providerOrder : defaultProviderSearchOrder;
+}
+
+async function searchYoutubeCandidates(
+  track: BackupTrack,
+  limit: number
+): Promise<SourceCandidate[]> {
+  const searchQuery = providerSearchQuery(track, "official audio");
+  const searchResult = await runYtDlpSearch(`ytsearch${limit}:${searchQuery}`);
+  const entries = Array.isArray(searchResult.entries) ? searchResult.entries : [];
+
+  return entries
+    .map((entry, index) => youtubeCandidateFromEntry(track, entry, index))
+    .filter((candidate): candidate is SourceCandidate => Boolean(candidate));
+}
+
+async function searchJioSaavnCandidates(
+  track: BackupTrack,
+  limit: number
+): Promise<SourceCandidate[]> {
+  const query = providerSearchQuery(track);
+  const searchUrl = new URL("https://www.jiosaavn.com/api.php");
+  searchUrl.search = new URLSearchParams({
+    __call: "autocomplete.get",
+    _format: "json",
+    _marker: "0",
+    query
+  }).toString();
+
+  const response = await fetch(searchUrl, {
+    cache: "no-store",
+    headers: {
+      "User-Agent": "SpotifyBU/1.0"
+    },
+    signal: AbortSignal.timeout(10000)
+  });
+
+  if (!response.ok) {
+    throw new Error(`JioSaavn search returned HTTP ${response.status}.`);
+  }
+
+  const body = (await response.json()) as JioSaavnAutocompleteResponse;
+  const entries = Array.isArray(body.songs?.data) ? body.songs.data : [];
+
+  return entries
+    .slice(0, limit)
+    .map((entry, index) => jioSaavnCandidateFromEntry(track, entry, index))
+    .filter((candidate): candidate is SourceCandidate => Boolean(candidate));
+}
+
+async function runYtDlpSearch(searchUrl: string) {
+  const timeoutMs = Number(process.env.SPOTIFYBU_PROVIDER_SEARCH_TIMEOUT_MS);
+  const { stdout } = await execFileAsync(
+    "yt-dlp",
+    [
+      "--dump-single-json",
+      "--flat-playlist",
+      "--skip-download",
+      "--no-warnings",
+      "--quiet",
+      searchUrl
+    ],
+    {
+      maxBuffer: 1024 * 1024 * 4,
+      timeout: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 45000
+    }
+  );
+
+  return JSON.parse(stdout.toString()) as YtDlpSearchResult;
+}
+
+function youtubeCandidateFromEntry(
+  track: BackupTrack,
+  entry: YtDlpSearchEntry,
+  index: number
+): SourceCandidate | null {
+  const videoId = extractYoutubeVideoIdFromValue(
+    String(entry.id ?? entry.url ?? entry.webpage_url ?? "")
+  );
+
+  if (!videoId || !entry.title) {
+    return null;
+  }
+
+  const title = String(entry.title);
+  const artists = [entry.channel, entry.uploader]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => stripHtmlEntities(value));
+  const durationMs =
+    typeof entry.duration === "number"
+      ? Math.round(entry.duration * 1000)
+      : undefined;
+  const score = scoreCandidate(track, {
+    artists,
+    durationMs,
+    title
+  });
+
+  return {
+    artists,
+    durationMs,
+    id: `youtube:${videoId}`,
+    providerId: "youtube",
+    score: {
+      ...score,
+      overall: Math.max(0, score.overall - index)
+    },
+    title: stripHtmlEntities(title),
+    url: `https://www.youtube.com/watch?v=${videoId}`,
+    verified: false
+  } satisfies SourceCandidate;
+}
+
+function jioSaavnCandidateFromEntry(
+  track: BackupTrack,
+  entry: JioSaavnSongEntry,
+  index: number
+): SourceCandidate | null {
+  const url = entry.perma_url || entry.url;
+
+  if (!url || !entry.title) {
+    return null;
+  }
+
+  const title = stripHtmlEntities(entry.title);
+  const artistText =
+    entry.more_info?.primary_artists ||
+    entry.more_info?.singers ||
+    entry.subtitle ||
+    "";
+  const artists = splitProviderArtists(stripHtmlEntities(artistText));
+  const durationSeconds = Number(entry.more_info?.duration ?? entry.duration);
+  const durationMs = Number.isFinite(durationSeconds)
+    ? Math.round(durationSeconds * 1000)
+    : undefined;
+  const score = scoreCandidate(track, {
+    artists,
+    durationMs,
+    title
+  });
+
+  return {
+    album: stripHtmlEntities(entry.more_info?.album ?? ""),
+    artists,
+    durationMs,
+    id: `jiosaavn:${entry.id ?? index}`,
+    providerId: "jiosaavn",
+    score: {
+      ...score,
+      overall: Math.max(0, score.overall - index)
+    },
+    title,
+    url,
+    verified: false
+  } satisfies SourceCandidate;
+}
+
+function providerSearchQuery(track: BackupTrack, suffix?: string) {
+  return [
+    track.name,
+    track.artists.slice(0, 2).join(" "),
+    suffix
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function scoreCandidate(
+  track: BackupTrack,
+  candidate: {
+    artists: string[];
+    durationMs?: number;
+    title: string;
+  }
+) {
+  const titleScore = textSimilarity(track.name, candidate.title);
+  const artistScore = Math.max(
+    ...track.artists.map((artist) =>
+      textSimilarity(artist, candidate.artists.join(" "))
+    ),
+    0
+  );
+  const durationDeltaMs =
+    typeof candidate.durationMs === "number"
+      ? Math.abs(candidate.durationMs - track.durationMs)
+      : undefined;
+  const durationScore =
+    typeof durationDeltaMs === "number"
+      ? Math.max(0, 100 - Math.round(durationDeltaMs / 1000) * 3)
+      : 50;
+  const overall = Math.round(titleScore * 0.48 + artistScore * 0.34 + durationScore * 0.18);
+
+  return {
+    artistScore,
+    durationDeltaMs,
+    overall,
+    titleScore
+  } satisfies CandidateScore;
+}
+
+function textSimilarity(left: string, right: string) {
+  const leftTokens = tokenSet(left);
+  const rightTokens = tokenSet(right);
+
+  if (!leftTokens.size || !rightTokens.size) {
+    return 0;
+  }
+
+  let intersectionCount = 0;
+
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) {
+      intersectionCount += 1;
+    }
+  }
+
+  return Math.round(
+    (intersectionCount / new Set([...leftTokens, ...rightTokens]).size) * 100
+  );
+}
+
+function tokenSet(value: string) {
+  return new Set(
+    normalizeSearchText(value)
+      .split(" ")
+      .filter((token) => token.length > 1)
+  );
+}
+
+function normalizeSearchText(value: string) {
+  return stripHtmlEntities(value)
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function splitProviderArtists(value: string) {
+  return value
+    .split(/,|&|;|\band\b/i)
+    .map((artist) => artist.trim())
+    .filter(Boolean);
+}
+
+function stripHtmlEntities(value: string) {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#039;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
 async function createDownloadStagingDirectory(libraryPath: string) {
   const stagingRoot = await ensureNavidromeTargetDirectory(stagingRootSegments);
   const stagingDirectory = path.join(
@@ -481,7 +842,7 @@ function assertDownloadProvider(value: string) {
     return value as DownloadProviderId;
   }
 
-  throw new Error("Choose YouTube Music, YouTube, Piped, or JioSaavn.");
+  throw new Error("Choose YouTube or JioSaavn.");
 }
 
 function clampPositiveInteger(
@@ -517,29 +878,16 @@ function resolveProviderSource(providerId: DownloadProviderId, input: string) {
   const sourceUrl = input.trim();
 
   if (!sourceUrl) {
-    throw new Error("Paste a provider source URL before downloading.");
+    throw new Error("Search and choose a provider candidate before downloading.");
   }
 
   const url = parseHttpsUrl(sourceUrl);
 
-  if (providerId === "youtube" || providerId === "youtube-music") {
-    assertYoutubeUrl(providerId, url);
+  if (providerId === "youtube") {
+    assertYoutubeUrl(url);
 
     return {
       downloadUrl: sourceUrl,
-      sourceUrl
-    };
-  }
-
-  if (providerId === "piped") {
-    const videoId = extractPipedVideoId(url);
-
-    if (!videoId) {
-      throw new Error("Paste a Piped watch or stream URL for a single video.");
-    }
-
-    return {
-      downloadUrl: `https://www.youtube.com/watch?v=${videoId}`,
       sourceUrl
     };
   }
@@ -558,7 +906,7 @@ function parseHttpsUrl(value: string) {
   try {
     url = new URL(value);
   } catch {
-    throw new Error("Paste a valid provider URL.");
+    throw new Error("Choose a valid provider result.");
   }
 
   if (url.protocol !== "https:") {
@@ -568,54 +916,25 @@ function parseHttpsUrl(value: string) {
   return url;
 }
 
-function assertYoutubeUrl(providerId: DownloadProviderId, url: URL) {
+function assertYoutubeUrl(url: URL) {
   const hostname = normalizedHost(url);
-  const isMusic = hostname === "music.youtube.com";
   const isYoutube =
     hostname === "youtube.com" ||
     hostname === "www.youtube.com" ||
     hostname === "m.youtube.com" ||
     hostname === "youtu.be";
 
-  if (providerId === "youtube-music" && !isMusic) {
-    throw new Error("Paste a music.youtube.com URL for YouTube Music.");
-  }
-
-  if (providerId === "youtube" && !isYoutube) {
-    throw new Error("Paste a youtube.com or youtu.be URL for YouTube.");
+  if (!isYoutube) {
+    throw new Error("Choose a youtube.com or youtu.be result for YouTube.");
   }
 
   if (hostname !== "youtu.be" && url.pathname !== "/watch") {
-    throw new Error("Paste a single YouTube watch URL, not a playlist page.");
+    throw new Error("Choose a single YouTube video, not a playlist page.");
   }
 
   if (hostname !== "youtu.be" && !url.searchParams.get("v")) {
-    throw new Error("Paste a single YouTube video URL.");
+    throw new Error("Choose a single YouTube video result.");
   }
-}
-
-function extractPipedVideoId(url: URL) {
-  const hostname = normalizedHost(url);
-
-  if (!configuredPipedHosts().has(hostname)) {
-    throw new Error(
-      "Paste a URL from a configured Piped instance or set SPOTIFYBU_PIPED_HOSTS."
-    );
-  }
-
-  const fromQuery = url.searchParams.get("v");
-
-  if (fromQuery) {
-    return sanitizeYoutubeVideoId(fromQuery);
-  }
-
-  const [, kind, id] = url.pathname.match(/^\/(watch|streams|embed)\/([^/?#]+)/) ?? [];
-
-  if (!kind || !id) {
-    return null;
-  }
-
-  return sanitizeYoutubeVideoId(id);
 }
 
 function assertJioSaavnSongUrl(url: URL) {
@@ -627,27 +946,12 @@ function assertJioSaavnSongUrl(url: URL) {
     hostname !== "saavn.com" &&
     hostname !== "www.saavn.com"
   ) {
-    throw new Error("Paste a JioSaavn song URL.");
+    throw new Error("Choose a JioSaavn song result.");
   }
 
   if (!url.pathname.includes("/song/")) {
-    throw new Error("Paste a single JioSaavn song URL, not an album or playlist.");
+    throw new Error("Choose a single JioSaavn song, not an album or playlist.");
   }
-}
-
-function configuredPipedHosts() {
-  return new Set(
-    [
-      "piped.video",
-      "piped.kavin.rocks",
-      "piped.projectsegfau.lt",
-      "piped.privacy.com.de",
-      "piped.adminforge.de",
-      ...(process.env.SPOTIFYBU_PIPED_HOSTS ?? "")
-        .split(",")
-        .map((host) => host.trim().toLowerCase())
-    ].filter(Boolean)
-  );
 }
 
 function normalizedHost(url: URL) {
@@ -658,6 +962,35 @@ function sanitizeYoutubeVideoId(value: string) {
   const match = value.match(/^[A-Za-z0-9_-]{6,20}$/);
 
   return match?.[0] ?? null;
+}
+
+function extractYoutubeVideoIdFromValue(value: string) {
+  const directId = sanitizeYoutubeVideoId(value);
+
+  if (directId) {
+    return directId;
+  }
+
+  try {
+    const url = new URL(value);
+    const hostname = normalizedHost(url);
+
+    if (hostname === "youtu.be") {
+      return sanitizeYoutubeVideoId(url.pathname.replace(/^\//, ""));
+    }
+
+    if (
+      hostname === "youtube.com" ||
+      hostname === "www.youtube.com" ||
+      hostname === "m.youtube.com"
+    ) {
+      return sanitizeYoutubeVideoId(url.searchParams.get("v") ?? "");
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 async function runYtDlp({
