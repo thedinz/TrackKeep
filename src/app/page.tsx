@@ -43,6 +43,12 @@ type AppInfo = {
   version: string;
 };
 
+type SpotifyAuthConfigResponse = {
+  appBaseUrl: string;
+  redirectUri: string;
+  spotifyClientConfigured: boolean;
+};
+
 type NavidromeLibraryStatus = {
   configured: boolean;
   exists: boolean;
@@ -217,6 +223,8 @@ const downloadableProviders = mediaSourceProviders.filter((provider) =>
 export default function Home() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [session, setSession] = useState<SessionResponse | null>(null);
+  const [spotifyAuthConfig, setSpotifyAuthConfig] =
+    useState<SpotifyAuthConfigResponse | null>(null);
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [selectedPlaylist, setSelectedPlaylist] = useState<PlaylistSummary | null>(
@@ -273,6 +281,16 @@ export default function Home() {
       setRequestError(errorMessage(error));
     } finally {
       setIsLoadingSession(false);
+    }
+  }, []);
+
+  const loadSpotifyAuthConfig = useCallback(async () => {
+    try {
+      setSpotifyAuthConfig(
+        await fetchJson<SpotifyAuthConfigResponse>("/api/spotify/auth-config")
+      );
+    } catch {
+      setSpotifyAuthConfig(null);
     }
   }, []);
 
@@ -493,10 +511,17 @@ export default function Home() {
     }
 
     void loadAppInfo();
+    void loadSpotifyAuthConfig();
     void loadLibraryIndex();
     void loadSession();
     void loadNavidromeStatus();
-  }, [loadAppInfo, loadLibraryIndex, loadNavidromeStatus, loadSession]);
+  }, [
+    loadAppInfo,
+    loadLibraryIndex,
+    loadNavidromeStatus,
+    loadSession,
+    loadSpotifyAuthConfig
+  ]);
 
   useEffect(() => {
     if (session?.authenticated && sourceKind === "playlist") {
@@ -884,7 +909,12 @@ export default function Home() {
       {authError ? (
         <div className="alert danger">
           <ShieldCheck size={18} />
-          <span>{authError}</span>
+          <span>
+            {authError}
+            {spotifyAuthConfig?.redirectUri
+              ? `. Spotify must allow exactly: ${spotifyAuthConfig.redirectUri}`
+              : ""}
+          </span>
         </div>
       ) : null}
 
@@ -1663,6 +1693,12 @@ export default function Home() {
             <p className="muted">
               Start by loading the Spotify library you want to preserve locally.
             </p>
+            {spotifyAuthConfig?.redirectUri ? (
+              <div className="path-readout">
+                <span className="stat-label">Spotify redirect URI</span>
+                <span>{spotifyAuthConfig.redirectUri}</span>
+              </div>
+            ) : null}
             <div className="connect-actions">
               <a
                 className={`command green ${

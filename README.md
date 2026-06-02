@@ -175,6 +175,20 @@ Your proxy should forward the original host and scheme. For most proxies, that m
 
 Spotify's official PKCE flow docs are here: https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow
 
+If Spotify shows `redirect_uri: Not matching configuration`, compare the
+SpotifyBU connect-screen redirect URI with the Spotify app's redirect URI list.
+They must match exactly, including `http` versus `https`, hostname or IP address,
+port, path, and the absence of a trailing slash. For example, if SpotifyBU shows:
+
+```text
+http://192.168.1.50:3000/api/auth/callback
+```
+
+that exact value must be added to the Spotify app. A value such as
+`http://localhost:3000/api/auth/callback`,
+`http://tower.local:3000/api/auth/callback`, or
+`https://192.168.1.50:3000/api/auth/callback` is different to Spotify.
+
 ## Navidrome Setup
 
 SpotifyBU is meant to work beside Navidrome. Mount the same host music folder into SpotifyBU that Navidrome scans.
