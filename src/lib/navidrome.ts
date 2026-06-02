@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import { createHash, randomBytes } from "crypto";
 import { constants } from "fs";
 import { access, mkdir, readdir, readFile, rename, stat, writeFile } from "fs/promises";
 import path from "path";
@@ -14,6 +15,26 @@ export type NavidromeLibraryState =
   | "ready"
   | "error";
 
+export type NavidromeServerState =
+  | "not_configured"
+  | "ready"
+  | "scan_requested"
+  | "auth_failed"
+  | "error";
+
+export type NavidromeServerStatus = {
+  configured: boolean;
+  message: string;
+  navidromeUrl: string;
+  scanCount?: number;
+  scanning?: boolean;
+  state: NavidromeServerState;
+};
+
+export type NavidromeServerScanResult = NavidromeServerStatus & {
+  requested: boolean;
+};
+
 export type NavidromeLibraryStatus = {
   configured: boolean;
   exists: boolean;
@@ -21,6 +42,7 @@ export type NavidromeLibraryStatus = {
   message: string;
   navidromeUrl?: string;
   readable: boolean;
+  server: NavidromeServerStatus;
   state: NavidromeLibraryState;
   writable: boolean;
 };
@@ -85,6 +107,7 @@ export type NavidromeLibraryIndex = {
 export type NavidromeLibraryIndexSummary = {
   generatedAt?: string;
   libraryPath?: string;
+  navidromeScan?: NavidromeServerScanResult;
   stale: boolean;
   trackCount: number;
 };
@@ -136,9 +159,27 @@ export function getNavidromeUrl() {
   return process.env.NAVIDROME_URL?.trim() || "http://localhost:4533";
 }
 
+function getNavidromeApiCredentials() {
+  const username =
+    process.env.NAVIDROME_USERNAME?.trim() ||
+    process.env.NAVIDROME_USER?.trim() ||
+    "";
+  const password = process.env.NAVIDROME_PASSWORD ?? "";
+
+  if (!username || !password) {
+    return null;
+  }
+
+  return {
+    password,
+    username
+  };
+}
+
 export async function getNavidromeLibraryStatus() {
   const libraryPath = getNavidromeLibraryPath();
   const navidromeUrl = getNavidromeUrl();
+  const server = await getNavidromeServerStatus();
 
   if (!libraryPath) {
     return {
@@ -147,6 +188,7 @@ export async function getNavidromeLibraryStatus() {
       message: "Set NAVIDROME_LIBRARY_PATH to the music folder Navidrome scans.",
       navidromeUrl,
       readable: false,
+      server,
       state: "not_configured",
       writable: false
     } satisfies NavidromeLibraryStatus;
@@ -163,6 +205,7 @@ export async function getNavidromeLibraryStatus() {
         message: "NAVIDROME_LIBRARY_PATH exists but is not a directory.",
         navidromeUrl,
         readable: false,
+        server,
         state: "not_directory",
         writable: false
       } satisfies NavidromeLibraryStatus;
@@ -179,6 +222,7 @@ export async function getNavidromeLibraryStatus() {
         message: "SpotifyBU cannot read the configured Navidrome library path.",
         navidromeUrl,
         readable,
+        server,
         state: "not_readable",
         writable
       } satisfies NavidromeLibraryStatus;
@@ -192,6 +236,7 @@ export async function getNavidromeLibraryStatus() {
         message: "SpotifyBU cannot write into the Navidrome library path.",
         navidromeUrl,
         readable,
+        server,
         state: "not_writable",
         writable
       } satisfies NavidromeLibraryStatus;
@@ -204,6 +249,7 @@ export async function getNavidromeLibraryStatus() {
       message: "Ready to stage authorized audio files for Navidrome scanning.",
       navidromeUrl,
       readable,
+      server,
       state: "ready",
       writable
     } satisfies NavidromeLibraryStatus;
@@ -216,6 +262,7 @@ export async function getNavidromeLibraryStatus() {
         message: "NAVIDROME_LIBRARY_PATH does not exist on this server.",
         navidromeUrl,
         readable: false,
+        server,
         state: "missing",
         writable: false
       } satisfies NavidromeLibraryStatus;
@@ -228,9 +275,93 @@ export async function getNavidromeLibraryStatus() {
       message: "SpotifyBU could not inspect the Navidrome library path.",
       navidromeUrl,
       readable: false,
+      server,
       state: "error",
       writable: false
     } satisfies NavidromeLibraryStatus;
+  }
+}
+
+export async function getNavidromeServerStatus(): Promise<NavidromeServerStatus> {
+  const navidromeUrl = getNavidromeUrl();
+
+  if (!getNavidromeApiCredentials()) {
+    return {
+      configured: false,
+      message:
+        "Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD to let SpotifyBU ask Navidrome to rescan.",
+      navidromeUrl,
+      state: "not_configured"
+    };
+  }
+
+  try {
+    await navidromeApiRequest("ping");
+    const scanStatusResponse = await navidromeApiRequest("getScanStatus").catch(
+      () => null
+    );
+    const scanStatus = readNavidromeScanStatus(scanStatusResponse);
+
+    return {
+      configured: true,
+      message: scanStatus?.scanning
+        ? "Connected to Navidrome API; server scan is running."
+        : "Connected to Navidrome API.",
+      navidromeUrl,
+      scanCount: scanStatus?.count,
+      scanning: scanStatus?.scanning,
+      state: "ready"
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      message: errorMessage(error),
+      navidromeUrl,
+      state: isNavidromeAuthError(error) ? "auth_failed" : "error"
+    };
+  }
+}
+
+async function requestNavidromeServerScan(): Promise<NavidromeServerScanResult> {
+  const navidromeUrl = getNavidromeUrl();
+
+  if (!getNavidromeApiCredentials()) {
+    return {
+      configured: false,
+      message:
+        "SpotifyBU indexed the mounted library. Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD to also request a Navidrome server scan.",
+      navidromeUrl,
+      requested: false,
+      state: "not_configured"
+    };
+  }
+
+  try {
+    await navidromeApiRequest("startScan");
+    const scanStatusResponse = await navidromeApiRequest("getScanStatus").catch(
+      () => null
+    );
+    const scanStatus = readNavidromeScanStatus(scanStatusResponse);
+
+    return {
+      configured: true,
+      message: "SpotifyBU indexed the mounted library and requested a Navidrome server scan.",
+      navidromeUrl,
+      requested: true,
+      scanCount: scanStatus?.count,
+      scanning: scanStatus?.scanning,
+      state: "scan_requested"
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      message: `SpotifyBU indexed the mounted library, but could not request a Navidrome server scan: ${errorMessage(
+        error
+      )}`,
+      navidromeUrl,
+      requested: false,
+      state: isNavidromeAuthError(error) ? "auth_failed" : "error"
+    };
   }
 }
 
@@ -398,8 +529,12 @@ export async function scanNavidromeLibraryIndex() {
   } satisfies NavidromeLibraryIndex;
 
   await writeNavidromeLibraryIndex(index);
+  const navidromeScan = await requestNavidromeServerScan();
 
-  return summarizeNavidromeLibraryIndex(index, status.libraryPath);
+  return {
+    ...summarizeNavidromeLibraryIndex(index, status.libraryPath),
+    navidromeScan
+  } satisfies NavidromeLibraryIndexSummary;
 }
 
 export async function matchNavidromeTracks(tracks: BackupTrack[]) {
@@ -539,6 +674,111 @@ function summarizeNavidromeLibraryIndex(
     stale: index.libraryPath !== libraryPath,
     trackCount: index.tracks.length
   } satisfies NavidromeLibraryIndexSummary;
+}
+
+const navidromeApiVersion = "1.16.1";
+const navidromeApiClient = "SpotifyBU";
+
+type NavidromeSubsonicResponse = {
+  "subsonic-response"?: {
+    error?: {
+      code?: number;
+      message?: string;
+    };
+    scanStatus?: {
+      count?: number;
+      scanning?: boolean;
+    };
+    status?: string;
+  };
+};
+
+class NavidromeApiError extends Error {
+  code?: number;
+
+  constructor(message: string, code?: number) {
+    super(message);
+    this.code = code;
+  }
+}
+
+async function navidromeApiRequest(
+  endpoint: string,
+  extraParams: Record<string, string> = {}
+) {
+  const credentials = getNavidromeApiCredentials();
+
+  if (!credentials) {
+    throw new Error("Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD.");
+  }
+
+  const salt = randomBytes(8).toString("hex");
+  const token = createHash("md5")
+    .update(`${credentials.password}${salt}`)
+    .digest("hex");
+  const apiUrl = new URL(
+    `${getNavidromeUrl().replace(/\/+$/, "")}/rest/${endpoint}.view`
+  );
+  const params = new URLSearchParams({
+    c: navidromeApiClient,
+    f: "json",
+    s: salt,
+    t: token,
+    u: credentials.username,
+    v: navidromeApiVersion,
+    ...extraParams
+  });
+
+  apiUrl.search = params.toString();
+
+  const response = await fetch(apiUrl, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(5000)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Navidrome API returned HTTP ${response.status}.`);
+  }
+
+  const body = (await response.json()) as NavidromeSubsonicResponse;
+  const subsonicResponse = body["subsonic-response"];
+
+  if (!subsonicResponse) {
+    throw new Error("Navidrome API response was not a Subsonic response.");
+  }
+
+  if (subsonicResponse.status !== "ok") {
+    throw new NavidromeApiError(
+      subsonicResponse.error?.message ?? "Navidrome API request failed.",
+      subsonicResponse.error?.code
+    );
+  }
+
+  return subsonicResponse;
+}
+
+function readNavidromeScanStatus(
+  response: Awaited<ReturnType<typeof navidromeApiRequest>> | null
+) {
+  if (!response?.scanStatus) {
+    return null;
+  }
+
+  return {
+    count:
+      typeof response.scanStatus.count === "number"
+        ? response.scanStatus.count
+        : undefined,
+    scanning: Boolean(response.scanStatus.scanning)
+  };
+}
+
+function isNavidromeAuthError(error: unknown) {
+  return error instanceof NavidromeApiError && error.code === 40;
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Unknown error.";
 }
 
 async function findAudioFiles(libraryPath: string) {

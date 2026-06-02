@@ -57,6 +57,7 @@ type NavidromeLibraryStatus = {
   message: string;
   navidromeUrl?: string;
   readable: boolean;
+  server: NavidromeServerStatus;
   state:
     | "not_configured"
     | "missing"
@@ -66,6 +67,21 @@ type NavidromeLibraryStatus = {
     | "ready"
     | "error";
   writable: boolean;
+};
+
+type NavidromeServerStatus = {
+  configured: boolean;
+  message: string;
+  navidromeUrl: string;
+  requested?: boolean;
+  scanCount?: number;
+  scanning?: boolean;
+  state:
+    | "not_configured"
+    | "ready"
+    | "scan_requested"
+    | "auth_failed"
+    | "error";
 };
 
 type SourceKind = "album" | "playlist" | "track";
@@ -120,6 +136,7 @@ type LibraryMatch = {
 type NavidromeLibraryIndexSummary = {
   generatedAt?: string;
   libraryPath?: string;
+  navidromeScan?: NavidromeServerStatus;
   stale: boolean;
   trackCount: number;
 };
@@ -321,6 +338,12 @@ export default function Home() {
         exists: false,
         message: "SpotifyBU could not check the Navidrome library target.",
         readable: false,
+        server: {
+          configured: false,
+          message: "SpotifyBU could not check the Navidrome server API.",
+          navidromeUrl: "",
+          state: "error"
+        },
         state: "error",
         writable: false
       });
@@ -604,6 +627,7 @@ export default function Home() {
   const navidromeStatusLabel = navidromeStatus
     ? navidromeStatusMessage(navidromeStatus)
     : "Checking library target";
+  const navidromeServerStatusLabel = navidromeStatus?.server.message;
   const libraryMatchesByPosition = useMemo(
     () =>
       new Map(
@@ -1297,6 +1321,31 @@ export default function Home() {
                   <p>{navidromeStatusLabel}</p>
                 </span>
               </div>
+              {navidromeServerStatusLabel ? (
+                <div className="provider-row">
+                  <span
+                    className={`provider-icon ${
+                      navidromeStatus?.server.state === "ready" ||
+                      navidromeStatus?.server.state === "scan_requested"
+                        ? "green"
+                        : navidromeStatus?.server.state === "not_configured"
+                          ? "teal"
+                          : "amber"
+                    }`}
+                  >
+                    {navidromeStatus?.server.state === "ready" ||
+                    navidromeStatus?.server.state === "scan_requested" ? (
+                      <CheckCircle2 size={18} />
+                    ) : (
+                      <HardDrive size={18} />
+                    )}
+                  </span>
+                  <span>
+                    <h3>Navidrome server</h3>
+                    <p>{navidromeServerStatusLabel}</p>
+                  </span>
+                </div>
+              ) : null}
               <div className="provider-row with-action">
                 <span
                   className={`provider-icon ${
@@ -1308,6 +1357,9 @@ export default function Home() {
                 <span>
                   <h3>Library index</h3>
                   <p>{libraryIndexLabel}</p>
+                  {libraryIndex?.navidromeScan ? (
+                    <p>{libraryIndex.navidromeScan.message}</p>
+                  ) : null}
                 </span>
                 <button
                   className="icon-command compact"

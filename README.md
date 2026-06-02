@@ -62,6 +62,8 @@ services:
       GIT_BRANCH: main
       NAVIDROME_LIBRARY_PATH: /music
       NAVIDROME_URL: http://host.docker.internal:4533
+      NAVIDROME_USERNAME: your-navidrome-username
+      NAVIDROME_PASSWORD: your-navidrome-password
       NEXT_PUBLIC_APP_URL: http://127.0.0.1:3000
       SPOTIFYBU_APP_SECRET: change-this-to-a-long-random-value
       SPOTIFYBU_CONFIG_DIR: /config
@@ -116,6 +118,8 @@ Set these values before starting the app:
 | `NAVIDROME_MUSIC_PATH` | Yes | Host path to the music folder Navidrome scans. |
 | `SPOTIFY_CLIENT_ID` | Yes | Spotify app Client ID. SpotifyBU uses Authorization Code with PKCE, so it does not use or ask for the Spotify Client Secret. |
 | `NAVIDROME_URL` | No | Navidrome URL as seen by the container. Defaults to `http://host.docker.internal:4533`. |
+| `NAVIDROME_USERNAME` | No | Navidrome username. Optional, but required if SpotifyBU should ping Navidrome and request a server-side scan after staging files. |
+| `NAVIDROME_PASSWORD` | No | Navidrome password for `NAVIDROME_USERNAME`. Optional, but required with `NAVIDROME_USERNAME` for Navidrome API scan requests. |
 
 Inside the container:
 
@@ -228,10 +232,23 @@ Finished files are moved into their final `Artist - Album` folder before the res
 
 Navidrome still needs read access to the same host folder and a scan/watch configuration that sees new files.
 
+SpotifyBU's Library Index scan reads the mounted music folder directly. It does
+not need a Navidrome username or password for that local index. If
+`NAVIDROME_USERNAME` and `NAVIDROME_PASSWORD` are set, SpotifyBU also uses
+Navidrome's Subsonic API to ping the server and request a Navidrome-side library
+scan after SpotifyBU indexes or stages files. Without those credentials,
+SpotifyBU can still write files into `/music`, but Navidrome will pick them up
+only through its own startup/watch/scheduled scan behavior.
+
+The Navidrome API credentials are regular Navidrome user credentials. SpotifyBU
+generates the Subsonic token/salt request parameters at request time; it does not
+need a separate Navidrome API key.
+
 Navidrome docs:
 
 - https://www.navidrome.org/docs/getting-started/
 - https://www.navidrome.org/docs/usage/features/multi-library/
+- https://www.navidrome.org/docs/developers/subsonic-api/
 
 ## Local Development
 
@@ -250,6 +267,8 @@ SPOTIFY_CLIENT_ID=
 NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000
 NAVIDROME_LIBRARY_PATH=/path/to/navidrome/music
 SPOTIFYBU_APP_SECRET=change-this-to-a-long-random-value
+NAVIDROME_USERNAME=
+NAVIDROME_PASSWORD=
 ```
 
 Then open:
@@ -269,6 +288,8 @@ docker run --rm -p 3000:3000 \
   -e SPOTIFYBU_APP_SECRET=change-this-to-a-long-random-value \
   -e SPOTIFY_CLIENT_ID=your-spotify-client-id \
   -e NAVIDROME_LIBRARY_PATH=/music \
+  -e NAVIDROME_USERNAME=your-navidrome-username \
+  -e NAVIDROME_PASSWORD=your-navidrome-password \
   -v spotifybu_config:/config \
   -v /path/to/navidrome/music:/music \
   spotifybu:local
