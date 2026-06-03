@@ -2216,11 +2216,13 @@ async function waitForProviderDownload(
     return response.download;
   }
 
-  let job = response.job;
+  const initialJob = response.job;
 
-  if (!job) {
+  if (!initialJob) {
     throw new Error("Provider download did not return a job.");
   }
+
+  let job: ProviderDownloadJob = initialJob;
 
   onStatus?.(job);
 
