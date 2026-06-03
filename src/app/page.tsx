@@ -206,7 +206,9 @@ type LibraryMatchesResponse = {
 };
 
 type LibraryOrganizeResponse = LibraryIndexResponse & LibraryMatchesResponse & {
+  attemptedCount: number;
   movedCount: number;
+  remainingMoveCount: number;
   skippedCount: number;
 };
 
@@ -292,6 +294,7 @@ type BulkDownloadProgress = {
 };
 
 const numberFormatter = new Intl.NumberFormat("en-US");
+const libraryOrganizeBatchSize = 10;
 const downloadEnabledProviderIds = new Set(["jiosaavn", "youtube"]);
 const providerSearchOrder = ["youtube", "jiosaavn"] as const;
 const providerDownloadPollIntervalMs = 2500;
@@ -327,6 +330,8 @@ export default function Home() {
   const [isResolvingSource, setIsResolvingSource] = useState(false);
   const [isScanningLibrary, setIsScanningLibrary] = useState(false);
   const [isOrganizingLibrary, setIsOrganizingLibrary] = useState(false);
+  const [libraryOrganizeProgress, setLibraryOrganizeProgress] =
+    useState<string | null>(null);
   const [isSearchingProvider, setIsSearchingProvider] = useState(false);
   const [isDownloadingProvider, setIsDownloadingProvider] = useState(false);
   const [isDownloadingBulkProvider, setIsDownloadingBulkProvider] =
@@ -356,6 +361,8 @@ export default function Home() {
   );
   const [bulkDownloadProgress, setBulkDownloadProgress] =
     useState<BulkDownloadProgress | null>(null);
+  const [libraryOrganizeMessage, setLibraryOrganizeMessage] =
+    useState<string | null>(null);
 
   const loadSession = useCallback(async () => {
     setIsLoadingSession(true);
@@ -538,23 +545,74 @@ export default function Home() {
     }
 
     setIsOrganizingLibrary(true);
+    setLibraryOrganizeMessage(null);
+    setLibraryOrganizeProgress(null);
     setRequestError(null);
 
     try {
-      const response = await postJson<LibraryOrganizeResponse>(
-        "/api/navidrome/library/organize",
-        {
-          tracks
+      const attemptedTrackPositions = new Set<number>();
+      let latestLibraryMatches = libraryMatches;
+      let totalMovedCount = 0;
+      let totalSkippedCount = 0;
+      const initialMoveCount = latestLibraryMatches.filter(
+        (match) => match.needsMove
+      ).length;
+
+      while (true) {
+        const batchTrackPositions = latestLibraryMatches
+          .filter(
+            (match) =>
+              match.needsMove && !attemptedTrackPositions.has(match.trackPosition)
+          )
+          .slice(0, libraryOrganizeBatchSize)
+          .map((match) => match.trackPosition);
+
+        if (!batchTrackPositions.length) {
+          break;
         }
-      );
-      setLibraryIndex(response.index);
-      setLibraryMatches(response.libraryMatches);
+
+        for (const trackPosition of batchTrackPositions) {
+          attemptedTrackPositions.add(trackPosition);
+        }
+
+        setLibraryOrganizeProgress(
+          `${numberFormatter.format(
+            Math.min(attemptedTrackPositions.size, initialMoveCount)
+          )}/${numberFormatter.format(initialMoveCount)}`
+        );
+
+        const response = await postJson<LibraryOrganizeResponse>(
+          "/api/navidrome/library/organize",
+          {
+            maxMoves: libraryOrganizeBatchSize,
+            trackPositions: batchTrackPositions,
+            tracks
+          }
+        );
+
+        totalMovedCount += response.movedCount;
+        totalSkippedCount += response.skippedCount;
+        latestLibraryMatches = response.libraryMatches;
+        setLibraryIndex(response.index);
+        setLibraryMatches(response.libraryMatches);
+      }
+
+      if (totalMovedCount || totalSkippedCount) {
+        setLibraryOrganizeMessage(
+          `Organized ${numberFormatter.format(totalMovedCount)} files${
+            totalSkippedCount
+              ? `; ${numberFormatter.format(totalSkippedCount)} could not be moved`
+              : ""
+          }.`
+        );
+      }
     } catch (error) {
       setRequestError(errorMessage(error));
     } finally {
       setIsOrganizingLibrary(false);
+      setLibraryOrganizeProgress(null);
     }
-  }, [tracks]);
+  }, [libraryMatches, tracks]);
 
   const searchSelectedProviderTrack = useCallback(async () => {
     const selectedTrack = tracks.find(
@@ -713,6 +771,7 @@ export default function Home() {
 
   const changeSourceKind = useCallback((nextSourceKind: SourceKind) => {
     setSourceKind(nextSourceKind);
+    setLibraryOrganizeMessage(null);
     setRequestError(null);
     setResolvedSource(null);
     setTracks([]);
@@ -766,6 +825,7 @@ export default function Home() {
 
     async function loadTracks() {
       setIsLoadingTracks(true);
+      setLibraryOrganizeMessage(null);
       setRequestError(null);
 
       try {
@@ -1227,6 +1287,13 @@ export default function Home() {
         </div>
       ) : null}
 
+      {libraryOrganizeMessage ? (
+        <div className="alert success">
+          <CheckCircle2 size={18} />
+          <span>{libraryOrganizeMessage}</span>
+        </div>
+      ) : null}
+
       {session?.spotifyClientConfigured === false ? (
         <div className="alert">
           <ShieldCheck size={18} />
@@ -1447,7 +1514,11 @@ export default function Home() {
                   ) : (
                     <HardDrive size={18} />
                   )}
-                  Organize
+                  {isOrganizingLibrary
+                    ? `Organizing ${
+                        libraryOrganizeProgress ?? ""
+                      }`.trim()
+                    : "Organize"}
                 </button>
               </div>
             </div>

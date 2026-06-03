@@ -143,14 +143,17 @@ export type NavidromeTrackMatch = {
 };
 
 export type NavidromeTrackOrganizationResult = {
+  attemptedCount: number;
   libraryMatches: NavidromeTrackMatch[];
   movedCount: number;
+  remainingMoveCount: number;
   skippedCount: number;
   summary: NavidromeLibraryIndexSummary;
 };
 
 const albumFolderLogSegments = [".spotifybu", "album-folders.json"];
 const libraryIndexSegments = [".spotifybu", "library-index.json"];
+const defaultOrganizeMoveLimit = 15;
 const audioFileExtensions = new Set([
   ".aac",
   ".aiff",
@@ -641,7 +644,13 @@ export async function matchNavidromeTracks(tracks: BackupTrack[]) {
   );
 }
 
-export async function organizeNavidromeMatchedTracks(tracks: BackupTrack[]) {
+export async function organizeNavidromeMatchedTracks(
+  tracks: BackupTrack[],
+  options: {
+    maxMoves?: number;
+    trackPositions?: number[];
+  } = {}
+) {
   const libraryPath = getNavidromeLibraryPath();
 
   if (!libraryPath) {
@@ -659,16 +668,26 @@ export async function organizeNavidromeMatchedTracks(tracks: BackupTrack[]) {
   }
 
   const matches = matchNavidromeTracksWithIndex(tracks, index);
+  const trackPositionFilter = normalizeTrackPositionFilter(options.trackPositions);
+  const maxMoves = normalizeOrganizeMoveLimit(options.maxMoves);
+  const moveCandidates = matches.filter(
+    (match) =>
+      match.matchedTrack &&
+      match.needsMove &&
+      match.recommendedRelativePath &&
+      (!trackPositionFilter || trackPositionFilter.has(match.trackPosition))
+  );
+  const batchCandidates = moveCandidates.slice(0, maxMoves);
   const occupiedRelativePaths = new Set(
     index.tracks.map((track) => normalizeRelativePathKey(track.relativePath))
   );
   let movedCount = 0;
   let skippedCount = 0;
 
-  for (const match of matches) {
+  for (const match of batchCandidates) {
     const matchedTrack = match.matchedTrack;
 
-    if (!matchedTrack || !match.needsMove || !match.recommendedRelativePath) {
+    if (!matchedTrack || !match.recommendedRelativePath) {
       continue;
     }
 
@@ -701,10 +720,13 @@ export async function organizeNavidromeMatchedTracks(tracks: BackupTrack[]) {
   } satisfies NavidromeLibraryIndex;
 
   await writeNavidromeLibraryIndex(updatedIndex);
+  const libraryMatches = matchNavidromeTracksWithIndex(tracks, updatedIndex);
 
   return {
-    libraryMatches: matchNavidromeTracksWithIndex(tracks, updatedIndex),
+    attemptedCount: batchCandidates.length,
+    libraryMatches,
     movedCount,
+    remainingMoveCount: libraryMatches.filter((match) => match.needsMove).length,
     skippedCount,
     summary: summarizeNavidromeLibraryIndex(updatedIndex, libraryPath)
   } satisfies NavidromeTrackOrganizationResult;
@@ -1132,21 +1154,11 @@ function matchNavidromeTracksWithIndex(
   index: NavidromeLibraryIndex | null
 ) {
   const indexedTracks = index?.tracks ?? [];
-  const isrcMatches = new Map<string, NavidromeIndexedTrack[]>();
-
-  for (const indexedTrack of indexedTracks) {
-    if (!indexedTrack.isrc) {
-      continue;
-    }
-
-    const matches = isrcMatches.get(indexedTrack.isrc) ?? [];
-    matches.push(indexedTrack);
-    isrcMatches.set(indexedTrack.isrc, matches);
-  }
+  const lookup = buildNavidromeTrackLookup(indexedTracks);
 
   return tracks.map((track) => {
     const expectedFolder = buildAlbumFolderName(track);
-    const match = findIndexedTrackMatch(track, indexedTracks, isrcMatches);
+    const match = findIndexedTrackMatch(track, lookup);
 
     if (!match) {
       return {
@@ -1177,8 +1189,7 @@ function matchNavidromeTracksWithIndex(
 
 function findIndexedTrackMatch(
   track: BackupTrack,
-  indexedTracks: NavidromeIndexedTrack[],
-  isrcMatches: Map<string, NavidromeIndexedTrack[]>
+  lookup: NavidromeTrackLookup
 ) {
   const trackIsrc = normalizeIsrc(track.isrc);
   const title = normalizeText(track.name);
@@ -1186,47 +1197,135 @@ function findIndexedTrackMatch(
   const artists = normalizedSpotifyArtists(track);
 
   if (trackIsrc) {
-    const match = isrcMatches
+    const match = lookup.isrcMatches
       .get(trackIsrc)
-      ?.find((candidate) => hasArtistOverlap(artists, indexedArtists(candidate)));
+      ?.find((candidate) => hasArtistOverlap(artists, candidate.artistKeys));
 
     if (match) {
       return {
         matchedBy: "isrc" as const,
-        track: match
+        track: match.track
       };
     }
   }
 
-  const metadataMatch = indexedTracks.find(
-    (candidate) =>
-      normalizeText(candidate.title) === title &&
-      normalizeText(candidate.album) === album &&
-      hasArtistOverlap(artists, indexedArtists(candidate))
-  );
+  const metadataMatch = lookup.metadataMatches
+    .get(navidromeMatchLookupKey(title, album))
+    ?.find((candidate) => hasArtistOverlap(artists, candidate.artistKeys));
 
   if (metadataMatch) {
     return {
       matchedBy: "metadata" as const,
-      track: metadataMatch
+      track: metadataMatch.track
     };
   }
 
-  const durationMatch = indexedTracks.find(
-    (candidate) =>
-      normalizeText(candidate.title) === title &&
-      hasArtistOverlap(artists, indexedArtists(candidate)) &&
-      durationCloseEnough(track.durationMs, candidate.durationMs)
-  );
+  const durationMatch = lookup.titleMatches
+    .get(title)
+    ?.find(
+      (candidate) =>
+        hasArtistOverlap(artists, candidate.artistKeys) &&
+        durationCloseEnough(track.durationMs, candidate.track.durationMs)
+    );
 
   if (durationMatch) {
     return {
       matchedBy: "duration" as const,
-      track: durationMatch
+      track: durationMatch.track
     };
   }
 
   return null;
+}
+
+type NavidromeTrackLookup = {
+  isrcMatches: Map<string, NavidromeTrackLookupEntry[]>;
+  metadataMatches: Map<string, NavidromeTrackLookupEntry[]>;
+  titleMatches: Map<string, NavidromeTrackLookupEntry[]>;
+};
+
+type NavidromeTrackLookupEntry = {
+  albumKey: string;
+  artistKeys: Set<string>;
+  isrcKey?: string;
+  titleKey: string;
+  track: NavidromeIndexedTrack;
+};
+
+function buildNavidromeTrackLookup(
+  indexedTracks: NavidromeIndexedTrack[]
+): NavidromeTrackLookup {
+  const lookup = {
+    isrcMatches: new Map<string, NavidromeTrackLookupEntry[]>(),
+    metadataMatches: new Map<string, NavidromeTrackLookupEntry[]>(),
+    titleMatches: new Map<string, NavidromeTrackLookupEntry[]>()
+  } satisfies NavidromeTrackLookup;
+
+  for (const track of indexedTracks) {
+    const entry = {
+      albumKey: normalizeText(track.album),
+      artistKeys: indexedArtists(track),
+      isrcKey: normalizeIsrc(track.isrc),
+      titleKey: normalizeText(track.title),
+      track
+    } satisfies NavidromeTrackLookupEntry;
+
+    if (entry.isrcKey) {
+      appendNavidromeLookupEntry(lookup.isrcMatches, entry.isrcKey, entry);
+    }
+
+    appendNavidromeLookupEntry(
+      lookup.metadataMatches,
+      navidromeMatchLookupKey(entry.titleKey, entry.albumKey),
+      entry
+    );
+
+    if (entry.titleKey) {
+      appendNavidromeLookupEntry(lookup.titleMatches, entry.titleKey, entry);
+    }
+  }
+
+  return lookup;
+}
+
+function appendNavidromeLookupEntry(
+  map: Map<string, NavidromeTrackLookupEntry[]>,
+  key: string,
+  entry: NavidromeTrackLookupEntry
+) {
+  const entries = map.get(key);
+
+  if (entries) {
+    entries.push(entry);
+    return;
+  }
+
+  map.set(key, [entry]);
+}
+
+function navidromeMatchLookupKey(title: string, album: string) {
+  return `${title}\u0000${album}`;
+}
+
+function normalizeOrganizeMoveLimit(value?: number) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return defaultOrganizeMoveLimit;
+  }
+
+  return Math.max(1, Math.min(50, Math.floor(value)));
+}
+
+function normalizeTrackPositionFilter(trackPositions?: number[]) {
+  if (!trackPositions) {
+    return null;
+  }
+
+  return new Set(
+    trackPositions.filter(
+      (trackPosition) =>
+        Number.isInteger(trackPosition) && trackPosition > 0
+    )
+  );
 }
 
 function normalizedSpotifyArtists(track: BackupTrack) {
