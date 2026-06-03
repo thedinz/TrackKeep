@@ -212,6 +212,22 @@ type LibraryOrganizeResponse = LibraryIndexResponse & LibraryMatchesResponse & {
   skippedCount: number;
 };
 
+type NavidromePlaylistSyncResponse = {
+  navidromePlaylist: {
+    matchedCount: number;
+    name: string;
+    playlistId?: string;
+    skipped: Array<{
+      reason: string;
+      trackName: string;
+      trackPosition: number;
+    }>;
+    skippedCount: number;
+    songCount: number;
+    updated: boolean;
+  };
+};
+
 type ProviderDownloadPayload = {
   bytesWritten?: number;
   diagnosticId?: string;
@@ -332,6 +348,8 @@ export default function Home() {
   const [isOrganizingLibrary, setIsOrganizingLibrary] = useState(false);
   const [libraryOrganizeProgress, setLibraryOrganizeProgress] =
     useState<string | null>(null);
+  const [isCreatingNavidromePlaylist, setIsCreatingNavidromePlaylist] =
+    useState(false);
   const [isSearchingProvider, setIsSearchingProvider] = useState(false);
   const [isDownloadingProvider, setIsDownloadingProvider] = useState(false);
   const [isDownloadingBulkProvider, setIsDownloadingBulkProvider] =
@@ -353,15 +371,14 @@ export default function Home() {
     useState<string | null>(null);
   const [providerDownloadStatusLabel, setProviderDownloadStatusLabel] =
     useState<string | null>(null);
-  const [bulkChunkSize, setBulkChunkSize] = useState("10");
-  const [bulkTrackDelaySeconds, setBulkTrackDelaySeconds] = useState("20");
-  const [bulkChunkPauseSeconds, setBulkChunkPauseSeconds] = useState("120");
   const [bulkDownloadMessage, setBulkDownloadMessage] = useState<string | null>(
     null
   );
   const [bulkDownloadProgress, setBulkDownloadProgress] =
     useState<BulkDownloadProgress | null>(null);
   const [libraryOrganizeMessage, setLibraryOrganizeMessage] =
+    useState<string | null>(null);
+  const [navidromePlaylistMessage, setNavidromePlaylistMessage] =
     useState<string | null>(null);
 
   const loadSession = useCallback(async () => {
@@ -614,6 +631,38 @@ export default function Home() {
     }
   }, [libraryMatches, tracks]);
 
+  const createNavidromePlaylist = useCallback(async () => {
+    if (!selectedPlaylistId) {
+      return;
+    }
+
+    setIsCreatingNavidromePlaylist(true);
+    setNavidromePlaylistMessage(null);
+    setRequestError(null);
+
+    try {
+      const response = await postJson<NavidromePlaylistSyncResponse>(
+        `/api/spotify/playlists/${selectedPlaylistId}/navidrome`,
+        {}
+      );
+      const result = response.navidromePlaylist;
+      const action = result.updated ? "Updated" : "Created";
+      const skipped = result.skippedCount
+        ? ` ${numberFormatter.format(result.skippedCount)} unmatched tracks were skipped.`
+        : "";
+
+      setNavidromePlaylistMessage(
+        `${action} Navidrome playlist "${result.name}" with ${numberFormatter.format(
+          result.songCount
+        )} tracks.${skipped}`
+      );
+    } catch (error) {
+      setRequestError(errorMessage(error));
+    } finally {
+      setIsCreatingNavidromePlaylist(false);
+    }
+  }, [selectedPlaylistId]);
+
   const searchSelectedProviderTrack = useCallback(async () => {
     const selectedTrack = tracks.find(
       (track) => String(track.position) === downloadTrackPosition
@@ -772,6 +821,7 @@ export default function Home() {
   const changeSourceKind = useCallback((nextSourceKind: SourceKind) => {
     setSourceKind(nextSourceKind);
     setLibraryOrganizeMessage(null);
+    setNavidromePlaylistMessage(null);
     setRequestError(null);
     setResolvedSource(null);
     setTracks([]);
@@ -826,6 +876,7 @@ export default function Home() {
     async function loadTracks() {
       setIsLoadingTracks(true);
       setLibraryOrganizeMessage(null);
+      setNavidromePlaylistMessage(null);
       setRequestError(null);
 
       try {
@@ -880,6 +931,9 @@ export default function Home() {
   const isConnected = Boolean(session?.authenticated);
   const userInitial = session?.user?.displayName?.charAt(0).toUpperCase() ?? "S";
   const navidromeReady = navidromeStatus?.state === "ready";
+  const navidromeApiReady =
+    navidromeStatus?.server.state === "ready" ||
+    navidromeStatus?.server.state === "scan_requested";
   const navidromeStatusLabel = navidromeStatus
     ? navidromeStatusMessage(navidromeStatus)
     : "Checking library target";
@@ -941,6 +995,13 @@ export default function Home() {
   }, [downloadTrackOptions, downloadTrackPosition]);
   const canOrganizeLibrary =
     navidromeReady && tracks.length > 0 && moveNeededCount > 0;
+  const canCreateNavidromePlaylist =
+    sourceKind === "playlist" &&
+    Boolean(selectedPlaylistId) &&
+    tracks.length > 0 &&
+    navidromeApiReady &&
+    !isLoadingTracks &&
+    !isCreatingNavidromePlaylist;
   const selectedDownloadTrack =
     downloadTrackOptions.find(
       (track) => String(track.position) === downloadTrackPosition
@@ -965,8 +1026,6 @@ export default function Home() {
     Boolean(
       navidromeReady &&
         downloadTrackOptions.length &&
-        downloadRightsConfirmed &&
-        downloadBulkRiskAccepted &&
         !isDownloadingProvider &&
         !isSearchingProvider &&
         !isDownloadingBulkProvider
@@ -988,15 +1047,12 @@ export default function Home() {
     setProviderDownloadMessage(null);
     setRequestError(null);
 
-    const chunkSize = boundedInteger(bulkChunkSize, 10, 1, 50);
-    const chunkPauseMs = secondsToMilliseconds(bulkChunkPauseSeconds);
-    const delayMs = secondsToMilliseconds(bulkTrackDelaySeconds);
     let completedCount = 0;
     let failedCount = 0;
     const failedTrackLabels: string[] = [];
 
     try {
-      for (const [index, track] of downloadTrackOptions.entries()) {
+      for (const track of downloadTrackOptions) {
         const trackLabel = `${track.position}. ${track.name}`;
 
         setBulkDownloadProgress({
@@ -1016,112 +1072,72 @@ export default function Home() {
               track
             }
           );
-          const candidateQueue = searchResponse.search.candidates.filter(
-            (candidate) => candidate.url
+          const candidate = bestProviderCandidate(
+            searchResponse.search.candidates
           );
 
-          if (!candidateQueue.length) {
+          if (!candidate?.url) {
             throw new Error("No provider candidate found.");
           }
-
-          const candidateErrors: string[] = [];
-          let downloaded = false;
-
-          for (const candidate of candidateQueue) {
-            if (!candidate.url) {
-              continue;
-            }
-
-            setBulkDownloadProgress({
-              completedCount,
-              failedCount,
-              phase: `Downloading from ${providerDisplayName(
-                candidate.providerId
-              )}`,
-              totalCount: downloadTrackOptions.length,
-              trackLabel
-            });
-
-            try {
-              const downloadResponse = await postJson<ProviderDownloadResponse>(
-                "/api/providers/download",
-                {
-                  bulkRiskAccepted: downloadBulkRiskAccepted,
-                  format: downloadFormat,
-                  providerId: candidate.providerId,
-                  quality: downloadQuality,
-                  rightsConfirmed: downloadRightsConfirmed,
-                  selectedReason: `SpotifyBU automatic provider search selected ${candidate.title}`,
-                  sourceUrl: candidate.url,
-                  track
-                }
-              );
-              const download = await waitForProviderDownload(
-                downloadResponse,
-                (job) => {
-                  setBulkDownloadProgress({
-                    completedCount,
-                    failedCount,
-                    phase: `Downloading from ${providerDisplayName(
-                      candidate.providerId
-                    )} (${providerDownloadJobStatusLabel(job.status)})`,
-                    totalCount: downloadTrackOptions.length,
-                    trackLabel
-                  });
-                }
-              );
-
-              if (download.libraryIndex) {
-                setLibraryIndex(download.libraryIndex);
-              }
-
-              if (download.relativePath) {
-                markDownloadedTrackInLibrary(
-                  track,
-                  download.relativePath
-                );
-              }
-
-              completedCount += 1;
-              downloaded = true;
-              break;
-            } catch (error) {
-              candidateErrors.push(
-                `${providerDisplayName(candidate.providerId)}: ${errorMessage(
-                  error
-                )}`
-              );
-            }
-          }
-
-          if (!downloaded) {
-            throw new Error(
-              candidateErrors[0] ??
-                "No provider candidate could be downloaded."
-            );
-          }
-        } catch (error) {
-          failedCount += 1;
-          failedTrackLabels.push(`${trackLabel}: ${errorMessage(error)}`);
-        }
-
-        const isLastItem = index === downloadTrackOptions.length - 1;
-
-        if (!isLastItem) {
-          const isChunkBoundary = (index + 1) % chunkSize === 0;
-          const waitMs = isChunkBoundary ? chunkPauseMs : delayMs;
 
           setBulkDownloadProgress({
             completedCount,
             failedCount,
-            phase: isChunkBoundary ? "Chunk pause" : "Waiting",
+            phase: `Downloading from ${providerDisplayName(
+              candidate.providerId
+            )}`,
             totalCount: downloadTrackOptions.length,
             trackLabel
           });
 
-          if (waitMs > 0) {
-            await wait(waitMs);
+          const downloadResponse = await postJson<ProviderDownloadResponse>(
+            "/api/providers/download",
+            {
+              bulkRiskAccepted: true,
+              format: downloadFormat,
+              providerId: candidate.providerId,
+              quality: downloadQuality,
+              rightsConfirmed: true,
+              selectedReason: `SpotifyBU automatic bulk download selected ${candidate.title} (${candidate.score.overall}% match)`,
+              sourceUrl: candidate.url,
+              track
+            }
+          );
+          const download = await waitForProviderDownload(
+            downloadResponse,
+            (job) => {
+              setBulkDownloadProgress({
+                completedCount,
+                failedCount,
+                phase: `Downloading from ${providerDisplayName(
+                  candidate.providerId
+                )} (${providerDownloadJobStatusLabel(job.status)})`,
+                totalCount: downloadTrackOptions.length,
+                trackLabel
+              });
+            }
+          );
+
+          if (download.libraryIndex) {
+            setLibraryIndex(download.libraryIndex);
           }
+
+          if (download.relativePath) {
+            markDownloadedTrackInLibrary(track, download.relativePath);
+          }
+
+          completedCount += 1;
+        } catch (error) {
+          failedCount += 1;
+          failedTrackLabels.push(`${trackLabel}: ${errorMessage(error)}`);
+
+          setBulkDownloadProgress({
+            completedCount,
+            failedCount,
+            phase: "Continuing",
+            totalCount: downloadTrackOptions.length,
+            trackLabel
+          });
         }
       }
 
@@ -1158,14 +1174,9 @@ export default function Home() {
       setIsDownloadingBulkProvider(false);
     }
   }, [
-    bulkChunkPauseSeconds,
-    bulkChunkSize,
-    bulkTrackDelaySeconds,
     downloadTrackOptions,
-    downloadBulkRiskAccepted,
     downloadFormat,
     downloadQuality,
-    downloadRightsConfirmed,
     markDownloadedTrackInLibrary,
     refreshLibraryMatches
   ]);
@@ -1291,6 +1302,13 @@ export default function Home() {
         <div className="alert success">
           <CheckCircle2 size={18} />
           <span>{libraryOrganizeMessage}</span>
+        </div>
+      ) : null}
+
+      {navidromePlaylistMessage ? (
+        <div className="alert success">
+          <CheckCircle2 size={18} />
+          <span>{navidromePlaylistMessage}</span>
         </div>
       ) : null}
 
@@ -1468,6 +1486,28 @@ export default function Home() {
                 </div>
               </div>
               <div className="detail-actions">
+                {sourceKind === "playlist" ? (
+                  <button
+                    className={`command secondary ${
+                      canCreateNavidromePlaylist ? "" : "disabled"
+                    }`}
+                    disabled={!canCreateNavidromePlaylist}
+                    onClick={() => void createNavidromePlaylist()}
+                    title={
+                      navidromeApiReady
+                        ? "Create or update this playlist in Navidrome"
+                        : "Connect Navidrome API credentials to create playlists"
+                    }
+                    type="button"
+                  >
+                    {isCreatingNavidromePlaylist ? (
+                      <Loader2 className="spin" size={18} />
+                    ) : (
+                      <ListMusic size={18} />
+                    )}
+                    Create in Navidrome
+                  </button>
+                ) : null}
                 <a
                   className={`command secondary ${
                     canExportPlaylist ? "" : "disabled"
@@ -1608,6 +1648,44 @@ export default function Home() {
                         : "Scan library"}
                     </span>
                   </div>
+                  <div className="provider-throttle-grid compact backup-workflow-settings">
+                    <label className="provider-field">
+                      <span>Format</span>
+                      <select
+                        disabled={isDownloadingProvider || isDownloadingBulkProvider}
+                        onChange={(event) => {
+                          setDownloadFormat(event.target.value);
+                          setDownloadRightsConfirmed(false);
+                          setDownloadBulkRiskAccepted(false);
+                          setProviderDownloadMessage(null);
+                          setBulkDownloadMessage(null);
+                          setBulkDownloadProgress(null);
+                        }}
+                        value={downloadFormat}
+                      >
+                        <option value="mp3">MP3</option>
+                        <option value="flac">FLAC</option>
+                      </select>
+                    </label>
+                    <label className="provider-field">
+                      <span>Quality</span>
+                      <select
+                        disabled={isDownloadingProvider || isDownloadingBulkProvider}
+                        onChange={(event) => {
+                          setDownloadQuality(event.target.value);
+                          setDownloadRightsConfirmed(false);
+                          setDownloadBulkRiskAccepted(false);
+                          setProviderDownloadMessage(null);
+                          setBulkDownloadMessage(null);
+                          setBulkDownloadProgress(null);
+                        }}
+                        value={downloadQuality}
+                      >
+                        <option value="128">128 kbps</option>
+                        <option value="320">320 kbps</option>
+                      </select>
+                    </label>
+                  </div>
                   <div className="backup-workflow-grid">
                     <section className="backup-workflow-section">
                       <div>
@@ -1723,48 +1801,6 @@ export default function Home() {
                           ) : null}
                         </div>
                       ) : null}
-                      <div className="provider-throttle-grid compact">
-                        <label className="provider-field">
-                          <span>Format</span>
-                          <select
-                            disabled={
-                              isDownloadingProvider || isDownloadingBulkProvider
-                            }
-                            onChange={(event) => {
-                              setDownloadFormat(event.target.value);
-                              setDownloadRightsConfirmed(false);
-                              setDownloadBulkRiskAccepted(false);
-                              setProviderDownloadMessage(null);
-                              setBulkDownloadMessage(null);
-                              setBulkDownloadProgress(null);
-                            }}
-                            value={downloadFormat}
-                          >
-                            <option value="mp3">MP3</option>
-                            <option value="flac">FLAC</option>
-                          </select>
-                        </label>
-                        <label className="provider-field">
-                          <span>Quality</span>
-                          <select
-                            disabled={
-                              isDownloadingProvider || isDownloadingBulkProvider
-                            }
-                            onChange={(event) => {
-                              setDownloadQuality(event.target.value);
-                              setDownloadRightsConfirmed(false);
-                              setDownloadBulkRiskAccepted(false);
-                              setProviderDownloadMessage(null);
-                              setBulkDownloadMessage(null);
-                              setBulkDownloadProgress(null);
-                            }}
-                            value={downloadQuality}
-                          >
-                            <option value="128">128 kbps</option>
-                            <option value="320">320 kbps</option>
-                          </select>
-                        </label>
-                      </div>
                       <label className="provider-check">
                         <input
                           checked={downloadRightsConfirmed}
@@ -1846,66 +1882,25 @@ export default function Home() {
                     </section>
                     <section className="backup-workflow-section">
                       <div>
-                        <h3>Playlist queue</h3>
+                        <h3>Bulk playlist</h3>
                         <p>
-                          Search YouTube first, then JioSaavn, for each missing
-                          track and stage the best candidate with throttled waits.
+                          Automatically stage missing tracks with the highest
+                          scoring provider match.
                         </p>
                       </div>
                       {downloadTrackOptions.length ? (
                         <p className="provider-queue-note">
                           {numberFormatter.format(downloadTrackOptions.length)}{" "}
-                          missing tracks ready for automatic provider search
+                          missing tracks ready
                         </p>
                       ) : null}
-                      <div className="provider-throttle-grid">
-                        <label className="provider-field">
-                          <span>Chunk tracks</span>
-                          <input
-                            disabled={isDownloadingBulkProvider}
-                            min="1"
-                            onChange={(event) => {
-                              setBulkChunkSize(event.target.value);
-                              setBulkDownloadProgress(null);
-                            }}
-                            type="number"
-                            value={bulkChunkSize}
-                          />
-                        </label>
-                        <label className="provider-field">
-                          <span>Track waits</span>
-                          <input
-                            disabled={isDownloadingBulkProvider}
-                            min="1"
-                            onChange={(event) => {
-                              setBulkTrackDelaySeconds(event.target.value);
-                              setBulkDownloadProgress(null);
-                            }}
-                            type="number"
-                            value={bulkTrackDelaySeconds}
-                          />
-                        </label>
-                        <label className="provider-field">
-                          <span>Chunk pauses</span>
-                          <input
-                            disabled={isDownloadingBulkProvider}
-                            min="5"
-                            onChange={(event) => {
-                              setBulkChunkPauseSeconds(event.target.value);
-                              setBulkDownloadProgress(null);
-                            }}
-                            type="number"
-                            value={bulkChunkPauseSeconds}
-                          />
-                        </label>
-                      </div>
                       <button
                         className={`command secondary ${
                           canDownloadBulkProvider ? "" : "disabled"
                         }`}
                         disabled={!canDownloadBulkProvider}
                         onClick={() => void downloadBulkQueue()}
-                        title="Run throttled playlist backup queue"
+                        title="Download all missing playlist tracks"
                         type="button"
                       >
                         {isDownloadingBulkProvider ? (
@@ -1913,7 +1908,7 @@ export default function Home() {
                         ) : (
                           <Download size={18} />
                         )}
-                        Run Queue
+                        Download Missing Tracks
                       </button>
                       {bulkDownloadProgress ? (
                         <div
@@ -2588,25 +2583,25 @@ function providerDisplayName(providerId: string) {
   );
 }
 
-function secondsToMilliseconds(value: string) {
-  const parsed = Number(value);
+function bestProviderCandidate(candidates: ProviderSearchCandidate[]) {
+  return candidates
+    .filter((candidate) => candidate.url)
+    .sort((left, right) => {
+      const scoreDelta = right.score.overall - left.score.overall;
 
-  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 1000) : 0;
-}
+      if (scoreDelta) {
+        return scoreDelta;
+      }
 
-function boundedInteger(
-  value: string,
-  fallback: number,
-  minimum: number,
-  maximum: number
-) {
-  const parsed = Number(value);
-
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  return Math.min(maximum, Math.max(minimum, Math.round(parsed)));
+      return (
+        providerSearchOrder.indexOf(
+          left.providerId as (typeof providerSearchOrder)[number]
+        ) -
+        providerSearchOrder.indexOf(
+          right.providerId as (typeof providerSearchOrder)[number]
+        )
+      );
+    })[0];
 }
 
 function wait(milliseconds: number) {
