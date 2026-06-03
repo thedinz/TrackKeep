@@ -246,6 +246,7 @@ type ProviderSearchCandidate = {
 };
 
 type ProviderSearchResponse = {
+  diagnosticId?: string;
   search: {
     candidates: ProviderSearchCandidate[];
     errors: Array<{
@@ -545,7 +546,7 @@ export default function Home() {
       const response = await postJson<ProviderSearchResponse>(
         "/api/providers/search",
         {
-          limit: 6,
+          limit: 4,
           providerIds: providerSearchOrder,
           track: selectedTrack
         }

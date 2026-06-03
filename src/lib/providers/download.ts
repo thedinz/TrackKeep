@@ -211,6 +211,7 @@ const provenanceLogSegments = [".spotifybu", "provider-downloads.json"];
 const attemptLogSegments = [".spotifybu", "provider-download-attempts.json"];
 const maxAttemptLogEntries = 200;
 const maxBatchItems = 500;
+const defaultProviderSearchTimeoutMs = 20000;
 const stagingRootSegments = [".spotifybu", "tmp", "provider-downloads"];
 const idleCleanupDelayMs = 10 * 60 * 1000;
 const defaultYtDlpJsRuntime = "node";
@@ -224,26 +225,42 @@ export async function searchProviderCandidates(
 
   const limit = clampPositiveInteger(request.limit, 5, 1, 50);
   const providerOrder = normalizeSearchProviderOrder(request.providerIds);
-  const candidates: SourceCandidate[] = [];
-  const errors: ProviderSearchResult["errors"] = [];
+  const providerResults = await Promise.all(
+    providerOrder.map(async (providerId) => {
+      try {
+        const candidates =
+          providerId === "youtube"
+            ? await searchYoutubeCandidates(request.track, limit)
+            : await searchJioSaavnCandidates(request.track, limit);
 
-  for (const providerId of providerOrder) {
-    try {
-      const providerCandidates =
-        providerId === "youtube"
-          ? await searchYoutubeCandidates(request.track, limit)
-          : await searchJioSaavnCandidates(request.track, limit);
-      candidates.push(...providerCandidates);
-    } catch (error) {
-      errors.push({
-        error:
-          error instanceof Error
-            ? error.message
-            : "Provider search failed.",
-        providerId
-      });
-    }
-  }
+        return {
+          candidates,
+          providerId
+        };
+      } catch (error) {
+        return {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Provider search failed.",
+          providerId
+        };
+      }
+    })
+  );
+  const candidates: SourceCandidate[] = providerResults.flatMap((result) =>
+    "candidates" in result ? result.candidates : []
+  );
+  const errors: ProviderSearchResult["errors"] = providerResults.flatMap((result) =>
+    "error" in result
+      ? [
+          {
+            error: result.error,
+            providerId: result.providerId
+          }
+        ]
+      : []
+  );
 
   candidates.sort((left, right) => {
     const providerDelta =
@@ -636,11 +653,16 @@ async function runYtDlpSearch(searchUrl: string) {
         "--no-warnings",
         "--quiet",
         ...ytDlpJsRuntimeArgs(),
+        "--socket-timeout",
+        "8",
         searchUrl
       ],
       {
         maxBuffer: 1024 * 1024 * 4,
-        timeout: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 45000
+        timeout:
+          Number.isFinite(timeoutMs) && timeoutMs > 0
+            ? timeoutMs
+            : defaultProviderSearchTimeoutMs
       }
     ));
   } catch (error) {
@@ -1256,7 +1278,9 @@ function formatYtDlpError(
   }
 
   if (execError.code === "ETIMEDOUT") {
-    return "The provider download timed out. Try the candidate again or choose another source.";
+    return fallbackMessage.toLowerCase().includes("search")
+      ? "The provider search timed out. Try again, or use another provider result if one is available."
+      : "The provider download timed out. Try the candidate again or choose another source.";
   }
 
   return [
