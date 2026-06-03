@@ -4,7 +4,7 @@ import { constants, type Dirent } from "fs";
 import { access, mkdir, readdir, readFile, rename, stat, writeFile } from "fs/promises";
 import path from "path";
 import { promisify } from "util";
-import type { BackupTrack } from "./spotify";
+import type { BackupTrack, PlaylistSummary } from "./spotify";
 
 export type NavidromeLibraryState =
   | "not_configured"
@@ -149,6 +149,20 @@ export type NavidromeTrackOrganizationResult = {
   remainingMoveCount: number;
   skippedCount: number;
   summary: NavidromeLibraryIndexSummary;
+};
+
+export type NavidromePlaylistSyncResult = {
+  matchedCount: number;
+  name: string;
+  playlistId?: string;
+  skipped: Array<{
+    reason: string;
+    trackName: string;
+    trackPosition: number;
+  }>;
+  skippedCount: number;
+  songCount: number;
+  updated: boolean;
 };
 
 const albumFolderLogSegments = [".spotifybu", "album-folders.json"];
@@ -732,6 +746,74 @@ export async function organizeNavidromeMatchedTracks(
   } satisfies NavidromeTrackOrganizationResult;
 }
 
+export async function createOrUpdateNavidromePlaylistFromSpotify(
+  playlist: PlaylistSummary,
+  tracks: BackupTrack[]
+) {
+  if (!tracks.length) {
+    throw new Error("Load Spotify playlist tracks before creating a Navidrome playlist.");
+  }
+
+  await navidromeApiRequest("ping");
+
+  const matches = await matchNavidromeTracks(tracks);
+  const songIds: string[] = [];
+  const skipped: NavidromePlaylistSyncResult["skipped"] = [];
+
+  for (const track of tracks) {
+    const match = matches.find(
+      (candidate) => candidate.trackPosition === track.position
+    );
+
+    if (!match?.matchedTrack) {
+      skipped.push({
+        reason: "Track is not backed up in the Navidrome library.",
+        trackName: track.name,
+        trackPosition: track.position
+      });
+      continue;
+    }
+
+    const songId = await resolveNavidromeSongId(track, match.matchedTrack);
+
+    if (!songId) {
+      skipped.push({
+        reason: "Matched file was not found through the Navidrome API. Scan Navidrome and try again.",
+        trackName: track.name,
+        trackPosition: track.position
+      });
+      continue;
+    }
+
+    songIds.push(songId);
+  }
+
+  if (!songIds.length) {
+    throw new Error(
+      "No backed-up tracks could be resolved to Navidrome songs. Scan SpotifyBU and Navidrome first."
+    );
+  }
+
+  const name = navidromePlaylistName(playlist);
+  const existingPlaylist = await findNavidromePlaylistByName(name);
+  const playlistResponse = await navidromeApiRequest("createPlaylist", {
+    name,
+    ...(existingPlaylist?.id ? { playlistId: existingPlaylist.id } : {}),
+    songId: songIds
+  });
+  const createdPlaylist = playlistResponse.playlist;
+
+  return {
+    matchedCount: songIds.length,
+    name: createdPlaylist?.name ?? name,
+    playlistId: createdPlaylist?.id ?? existingPlaylist?.id,
+    skipped,
+    skippedCount: skipped.length,
+    songCount: createdPlaylist?.songCount ?? songIds.length,
+    updated: Boolean(existingPlaylist?.id)
+  } satisfies NavidromePlaylistSyncResult;
+}
+
 function sanitizePathSegment(segment: string) {
   return (
     segment
@@ -794,6 +876,146 @@ function summarizeNavidromeLibraryIndex(
   } satisfies NavidromeLibraryIndexSummary;
 }
 
+async function findNavidromePlaylistByName(name: string) {
+  const response = await navidromeApiRequest("getPlaylists");
+  const playlists = arrayFrom(response.playlists?.playlist);
+  const nameKey = normalizeText(name);
+
+  return playlists.find((playlist) => normalizeText(playlist.name) === nameKey);
+}
+
+async function resolveNavidromeSongId(
+  track: BackupTrack,
+  matchedTrack: NavidromeIndexedTrack
+) {
+  const queries = Array.from(
+    new Set(
+      [
+        [track.name, track.artists[0]].filter(Boolean).join(" "),
+        [matchedTrack.title, matchedTrack.artist].filter(Boolean).join(" "),
+        track.name,
+        matchedTrack.title
+      ]
+        .map((query) => query.trim())
+        .filter(Boolean)
+    )
+  );
+  const candidates = new Map<string, NavidromeApiSong>();
+
+  for (const query of queries) {
+    const response = await navidromeApiRequest("search3", {
+      albumCount: "0",
+      artistCount: "0",
+      query,
+      songCount: "25"
+    });
+
+    for (const song of arrayFrom(response.searchResult3?.song)) {
+      if (song.id) {
+        candidates.set(song.id, song);
+      }
+    }
+  }
+
+  let bestMatch: { score: number; song: NavidromeApiSong } | null = null;
+
+  for (const song of candidates.values()) {
+    const score = scoreNavidromeSongCandidate(track, matchedTrack, song);
+
+    if (!bestMatch || score > bestMatch.score) {
+      bestMatch = {
+        score,
+        song
+      };
+    }
+  }
+
+  return bestMatch && bestMatch.score >= 60 ? bestMatch.song.id : null;
+}
+
+function scoreNavidromeSongCandidate(
+  track: BackupTrack,
+  matchedTrack: NavidromeIndexedTrack,
+  song: NavidromeApiSong
+) {
+  if (!song.id) {
+    return 0;
+  }
+
+  const songPath = normalizeRelativePathKey(song.path ?? "");
+  const matchedPath = normalizeRelativePathKey(matchedTrack.relativePath);
+  const songTitle = normalizeText(song.title);
+  const trackTitle = normalizeText(track.name);
+  const matchedTitle = normalizeText(matchedTrack.title);
+  let score = 0;
+
+  if (songPath && songPath === matchedPath) {
+    score += 100;
+  } else if (
+    song.path &&
+    normalizeText(path.posix.basename(song.path)) ===
+      normalizeText(path.posix.basename(matchedTrack.relativePath))
+  ) {
+    score += 20;
+  }
+
+  if (songTitle && (songTitle === trackTitle || songTitle === matchedTitle)) {
+    score += 45;
+  } else if (
+    songTitle &&
+    (trackTitle.includes(songTitle) ||
+      songTitle.includes(trackTitle) ||
+      matchedTitle.includes(songTitle) ||
+      songTitle.includes(matchedTitle))
+  ) {
+    score += 25;
+  }
+
+  if (
+    hasArtistOverlap(
+      new Set(
+        [track.albumArtist, ...track.artists]
+          .flatMap(splitArtists)
+          .map(normalizeText)
+          .filter(Boolean)
+      ),
+      new Set(
+        [song.artist, matchedTrack.artist, ...matchedTrack.artists]
+          .flatMap(splitArtists)
+          .map(normalizeText)
+          .filter(Boolean)
+      )
+    )
+  ) {
+    score += 25;
+  }
+
+  if (normalizeText(song.album) === normalizeText(track.album)) {
+    score += 15;
+  }
+
+  if (
+    typeof song.duration === "number" &&
+    durationCloseEnough(track.durationMs, Math.round(song.duration * 1000))
+  ) {
+    score += 15;
+  }
+
+  return score;
+}
+
+function navidromePlaylistName(playlist: PlaylistSummary) {
+  return playlist.name.trim().slice(0, 120) || `Spotify playlist ${playlist.id}`;
+}
+
+function arrayFrom<T>(value: T[] | T | undefined) {
+  if (!value) {
+    return [];
+  }
+
+  return Array.isArray(value) ? value : [value];
+}
+
 const navidromeApiVersion = "1.16.1";
 const navidromeApiClient = "SpotifyBU";
 
@@ -803,12 +1025,34 @@ type NavidromeSubsonicResponse = {
       code?: number;
       message?: string;
     };
+    playlist?: NavidromeApiPlaylist;
+    playlists?: {
+      playlist?: NavidromeApiPlaylist[] | NavidromeApiPlaylist;
+    };
     scanStatus?: {
       count?: number;
       scanning?: boolean;
     };
+    searchResult3?: {
+      song?: NavidromeApiSong[] | NavidromeApiSong;
+    };
     status?: string;
   };
+};
+
+type NavidromeApiPlaylist = {
+  id: string;
+  name: string;
+  songCount?: number;
+};
+
+type NavidromeApiSong = {
+  album?: string;
+  artist?: string;
+  duration?: number;
+  id?: string;
+  path?: string;
+  title?: string;
 };
 
 class NavidromeApiError extends Error {
@@ -822,7 +1066,7 @@ class NavidromeApiError extends Error {
 
 async function navidromeApiRequest(
   endpoint: string,
-  extraParams: Record<string, string> = {}
+  extraParams: Record<string, string | string[]> = {}
 ) {
   const credentials = getNavidromeApiCredentials();
 
@@ -843,15 +1087,38 @@ async function navidromeApiRequest(
     s: salt,
     t: token,
     u: credentials.username,
-    v: navidromeApiVersion,
-    ...extraParams
+    v: navidromeApiVersion
   });
 
-  apiUrl.search = params.toString();
+  for (const [key, value] of Object.entries(extraParams)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        params.append(key, item);
+      }
+      continue;
+    }
+
+    params.set(key, value);
+  }
+
+  const encodedParams = params.toString();
+  const usePost = endpoint === "createPlaylist" || encodedParams.length > 1800;
+  const timeoutMs = endpoint === "createPlaylist" ? 15000 : 5000;
+
+  if (!usePost) {
+    apiUrl.search = encodedParams;
+  }
 
   const response = await fetch(apiUrl, {
+    body: usePost ? encodedParams : undefined,
     cache: "no-store",
-    signal: AbortSignal.timeout(5000)
+    headers: usePost
+      ? {
+          "Content-Type": "application/x-www-form-urlencoded"
+        }
+      : undefined,
+    method: usePost ? "POST" : "GET",
+    signal: AbortSignal.timeout(timeoutMs)
   });
 
   if (!response.ok) {
