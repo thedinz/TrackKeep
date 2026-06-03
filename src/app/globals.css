@@ -571,12 +571,36 @@ button {
   min-width: 0;
 }
 
+.playlist-title-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
 .playlist-name {
   display: block;
+  flex: 1 1 auto;
   font-weight: 850;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.playlist-backed-up-badge {
+  align-items: center;
+  background: rgba(37, 230, 109, 0.12);
+  border: 1px solid rgba(37, 230, 109, 0.38);
+  border-radius: 999px;
+  color: var(--spotify-bright);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  font-weight: 900;
+  gap: 4px;
+  line-height: 1;
+  padding: 4px 7px;
 }
 
 .playlist-count {
