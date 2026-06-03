@@ -248,19 +248,19 @@ export async function searchProviderCandidates(
       }
     })
   );
-  const candidates: SourceCandidate[] = providerResults.flatMap((result) =>
-    "candidates" in result ? result.candidates : []
-  );
-  const errors: ProviderSearchResult["errors"] = providerResults.flatMap((result) =>
-    "error" in result
-      ? [
-          {
-            error: result.error,
-            providerId: result.providerId
-          }
-        ]
-      : []
-  );
+  const candidates: SourceCandidate[] = [];
+  const errors: ProviderSearchResult["errors"] = [];
+
+  for (const result of providerResults) {
+    if ("candidates" in result) {
+      candidates.push(...result.candidates);
+    } else {
+      errors.push({
+        error: result.error,
+        providerId: result.providerId
+      });
+    }
+  }
 
   candidates.sort((left, right) => {
     const providerDelta =
