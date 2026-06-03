@@ -434,6 +434,7 @@ button {
 }
 
 .workspace-grid {
+  align-items: stretch;
   display: grid;
   gap: 16px;
   grid-template-columns: minmax(250px, 320px) minmax(0, 1fr) minmax(240px, 300px);
@@ -445,6 +446,12 @@ button {
 .detail-panel,
 .ops-panel {
   min-height: calc(100vh - 128px);
+}
+
+.library-panel {
+  align-self: stretch;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .library-tools {
@@ -519,7 +526,7 @@ button {
 .playlist-list {
   display: grid;
   gap: 10px;
-  max-height: calc(100vh - 250px);
+  min-height: 0;
   overflow: auto;
   padding: 0 14px 14px;
 }

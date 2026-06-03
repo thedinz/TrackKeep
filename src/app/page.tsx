@@ -1623,7 +1623,7 @@ export default function Home() {
                         <span className="folder-plan-count">
                           {numberFormatter.format(plan.trackCount)}{" "}
                           {plan.trackCount === 1 ? "track" : "tracks"}{" "}
-                          {plan.logged ? "logged" : "to stage"}
+                          {plan.logged ? "folder mapped" : "folder planned"}
                         </span>
                       </div>
                     ))}
