@@ -147,7 +147,9 @@ Inside the container:
 - `NAVIDROME_LIBRARY_PATH` is set to `/music`.
 - `SPOTIFYBU_CONFIG_DIR` is set to `/config`.
 
-The container runs as UID/GID `1000`. On Linux hosts, make sure the mapped Navidrome music folder is writable by that user.
+At startup, the container makes `/config` writable by UID/GID `1000`, then runs
+the app as that user. On Linux hosts, make sure the mapped Navidrome music
+folder is writable by UID/GID `1000`.
 
 ## Reverse Proxy
 

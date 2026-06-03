@@ -34,6 +34,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
     ffmpeg \
+    gosu \
     python3 \
     python3-pip \
     tini \
@@ -44,8 +45,7 @@ RUN apt-get update \
 
 COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
-
-USER node
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/spotifybu-entrypoint
 
 EXPOSE 3000
 
@@ -54,5 +54,5 @@ VOLUME ["/config", "/music"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:3000/api/app-info').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"
 
-ENTRYPOINT ["tini", "--"]
+ENTRYPOINT ["tini", "--", "spotifybu-entrypoint"]
 CMD ["node", "server.js"]
