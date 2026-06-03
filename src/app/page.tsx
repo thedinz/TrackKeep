@@ -211,8 +211,10 @@ type LibraryOrganizeResponse = LibraryIndexResponse & LibraryMatchesResponse & {
 };
 
 type ProviderDownloadResponse = {
+  diagnosticId?: string;
   download: {
     bytesWritten?: number;
+    diagnosticId?: string;
     destinationPath: string;
     format: string;
     providerId: string;
@@ -2046,15 +2048,8 @@ async function fetchJson<T>(url: string) {
   const response = await fetch(url, {
     cache: "no-store"
   });
-  const body = await response.json().catch(() => ({}));
 
-  if (!response.ok) {
-    throw new Error(
-      typeof body.error === "string" ? body.error : "Request failed."
-    );
-  }
-
-  return body as T;
+  return responseJson<T>(response);
 }
 
 async function postJson<T>(url: string, body: unknown) {
@@ -2066,17 +2061,73 @@ async function postJson<T>(url: string, body: unknown) {
     },
     method: "POST"
   });
-  const responseBody = await response.json().catch(() => ({}));
+
+  return responseJson<T>(response);
+}
+
+type ResponseBody = Record<string, unknown>;
+
+async function responseJson<T>(response: Response) {
+  const rawText = await response.text().catch(() => "");
+  const responseBody = parseResponseBody(rawText);
 
   if (!response.ok) {
-    throw new Error(
-      typeof responseBody.error === "string"
-        ? responseBody.error
-        : "Request failed."
-    );
+    throw new Error(responseErrorMessage(response, responseBody, rawText));
   }
 
   return responseBody as T;
+}
+
+function parseResponseBody(rawText: string): ResponseBody {
+  if (!rawText.trim()) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(rawText) as unknown;
+
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as ResponseBody)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function responseErrorMessage(
+  response: Response,
+  responseBody: ResponseBody,
+  rawText: string
+) {
+  const bodyError =
+    typeof responseBody.error === "string" ? responseBody.error.trim() : "";
+  const diagnosticId =
+    typeof responseBody.diagnosticId === "string"
+      ? responseBody.diagnosticId.trim()
+      : "";
+  const statusLabel = `HTTP ${response.status}${
+    response.statusText ? ` ${response.statusText}` : ""
+  }`;
+  const fallbackBody = bodyError ? "" : truncateResponseText(rawText);
+
+  return [
+    bodyError || "Request failed.",
+    `(${statusLabel})`,
+    fallbackBody ? `Response: ${fallbackBody}` : "",
+    diagnosticId && !bodyError.includes(diagnosticId)
+      ? `Diagnostic ID: ${diagnosticId}.`
+      : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function truncateResponseText(value: string) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+
+  return normalized.length > 280
+    ? `${normalized.slice(0, 277)}...`
+    : normalized;
 }
 
 function errorMessage(error: unknown) {
