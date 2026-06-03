@@ -626,6 +626,27 @@ button {
   gap: 10px;
 }
 
+.folder-plan-toggle {
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--spotify-bright);
+  display: inline-flex;
+  font-size: 0.82rem;
+  font-weight: 850;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 10px;
+  min-height: 36px;
+  padding: 0 12px;
+}
+
+.folder-plan-toggle:hover {
+  background: rgba(37, 230, 109, 0.08);
+  border-color: rgba(37, 230, 109, 0.34);
+}
+
 .folder-plan {
   align-items: center;
   background: var(--bg);
@@ -773,6 +794,20 @@ button {
   line-height: 1;
   padding: 5px 8px;
   width: max-content;
+}
+
+.track-status.actionable {
+  cursor: pointer;
+}
+
+.track-status.actionable:hover:not(:disabled) {
+  border-color: rgba(37, 230, 109, 0.42);
+  color: var(--spotify-bright);
+}
+
+.track-status.actionable:disabled {
+  cursor: wait;
+  opacity: 0.7;
 }
 
 .track-status.exists {

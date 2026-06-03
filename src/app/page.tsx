@@ -2,6 +2,8 @@
 
 import {
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Clock3,
   Download,
   FileJson,
@@ -311,6 +313,7 @@ type BulkDownloadProgress = {
 
 const numberFormatter = new Intl.NumberFormat("en-US");
 const libraryOrganizeBatchSize = 10;
+const folderPlanPreviewLimit = 5;
 const downloadEnabledProviderIds = new Set(["jiosaavn", "youtube"]);
 const providerSearchOrder = ["youtube", "jiosaavn"] as const;
 const providerDownloadPollIntervalMs = 2500;
@@ -335,6 +338,7 @@ export default function Home() {
   const [resolvedSource, setResolvedSource] = useState<ResolvedSource | null>(null);
   const [tracks, setTracks] = useState<BackupTrack[]>([]);
   const [folderPlans, setFolderPlans] = useState<FolderPlan[]>([]);
+  const [showAllFolderPlans, setShowAllFolderPlans] = useState(false);
   const [libraryIndex, setLibraryIndex] =
     useState<NavidromeLibraryIndexSummary | null>(null);
   const [libraryMatches, setLibraryMatches] = useState<LibraryMatch[]>([]);
@@ -674,16 +678,8 @@ export default function Home() {
     }
   }, [selectedPlaylistId]);
 
-  const searchSelectedProviderTrack = useCallback(async () => {
-    const selectedTrack = tracks.find(
-      (track) => String(track.position) === downloadTrackPosition
-    );
-
-    if (!selectedTrack) {
-      setRequestError("Choose a track before searching providers.");
-      return;
-    }
-
+  const searchProviderTrack = useCallback(async (track: BackupTrack) => {
+    setDownloadTrackPosition(String(track.position));
     setIsSearchingProvider(true);
     setProviderCandidates([]);
     setSelectedProviderCandidateId("");
@@ -697,7 +693,7 @@ export default function Home() {
         {
           limit: 4,
           providerIds: providerSearchOrder,
-          track: selectedTrack
+          track
         }
       );
 
@@ -717,8 +713,22 @@ export default function Home() {
     } finally {
       setIsSearchingProvider(false);
     }
+  }, []);
+
+  const searchSelectedProviderTrack = useCallback(async () => {
+    const selectedTrack = tracks.find(
+      (track) => String(track.position) === downloadTrackPosition
+    );
+
+    if (!selectedTrack) {
+      setRequestError("Choose a track before searching providers.");
+      return;
+    }
+
+    await searchProviderTrack(selectedTrack);
   }, [
     downloadTrackPosition,
+    searchProviderTrack,
     tracks
   ]);
 
@@ -838,6 +848,7 @@ export default function Home() {
     setResolvedSource(null);
     setTracks([]);
     setFolderPlans([]);
+    setShowAllFolderPlans(false);
     setLibraryMatches([]);
     setSelectedPlaylist(null);
   }, [clearBackupWorkflowState]);
@@ -852,6 +863,7 @@ export default function Home() {
         setSelectedPlaylist(null);
         setTracks([]);
         setFolderPlans([]);
+        setShowAllFolderPlans(false);
         setLibraryMatches([]);
       }
 
@@ -897,6 +909,7 @@ export default function Home() {
       setSelectedPlaylist(null);
       setTracks([]);
       setFolderPlans([]);
+      setShowAllFolderPlans(false);
       setLibraryMatches([]);
       clearBackupWorkflowState();
       return;
@@ -913,6 +926,7 @@ export default function Home() {
       setSelectedPlaylist(null);
       setTracks([]);
       setFolderPlans([]);
+      setShowAllFolderPlans(false);
       setLibraryMatches([]);
 
       try {
@@ -998,6 +1012,13 @@ export default function Home() {
   const missingBackupCount = hasUsableLibraryIndex
     ? missingBackupTracks.length
     : 0;
+  const visibleFolderPlans = showAllFolderPlans
+    ? folderPlans
+    : folderPlans.slice(0, folderPlanPreviewLimit);
+  const hiddenFolderPlanCount = Math.max(
+    0,
+    folderPlans.length - visibleFolderPlans.length
+  );
   const backupCoverageLabel = tracks.length
     ? hasUsableLibraryIndex
       ? `${Math.round((indexedTrackCount / tracks.length) * 100)}%`
@@ -1645,7 +1666,7 @@ export default function Home() {
                     </p>
                   </div>
                   <div className="folder-plan-list">
-                    {folderPlans.map((plan) => (
+                    {visibleFolderPlans.map((plan) => (
                       <div className="folder-plan" key={plan.key}>
                         <HardDrive size={18} />
                         <span>
@@ -1664,6 +1685,26 @@ export default function Home() {
                       </div>
                     ))}
                   </div>
+                  {folderPlans.length > folderPlanPreviewLimit ? (
+                    <button
+                      className="folder-plan-toggle"
+                      onClick={() =>
+                        setShowAllFolderPlans((current) => !current)
+                      }
+                      type="button"
+                    >
+                      {showAllFolderPlans ? (
+                        <ChevronUp size={16} />
+                      ) : (
+                        <ChevronDown size={16} />
+                      )}
+                      {showAllFolderPlans
+                        ? "Show fewer destinations"
+                        : `Show ${numberFormatter.format(
+                            hiddenFolderPlanCount
+                          )} more destinations`}
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -2030,7 +2071,14 @@ export default function Home() {
                             {track.album || "Unknown"}
                           </span>
                           <span className="track-cell library-cell">
-                            {renderLibraryMatch(libraryMatch, libraryIndex)}
+                            {renderLibraryMatch(
+                              libraryMatch,
+                              libraryIndex,
+                              () => void searchProviderTrack(track),
+                              isSearchingProvider ||
+                                isDownloadingProvider ||
+                                isDownloadingBulkProvider
+                            )}
                           </span>
                           <span className="track-cell">
                             {formatDuration(track.durationMs)}
@@ -2490,7 +2538,9 @@ function formatDuration(durationMs: number) {
 
 function renderLibraryMatch(
   match: LibraryMatch | undefined,
-  libraryIndex: NavidromeLibraryIndexSummary | null
+  libraryIndex: NavidromeLibraryIndexSummary | null,
+  onSearchMissing?: () => void,
+  searchDisabled = false
 ) {
   if (!libraryIndex) {
     return <span className="track-status unindexed">No scan</span>;
@@ -2501,6 +2551,20 @@ function renderLibraryMatch(
   }
 
   if (!match || !match.exists) {
+    if (onSearchMissing) {
+      return (
+        <button
+          className="track-status missing actionable"
+          disabled={searchDisabled}
+          onClick={onSearchMissing}
+          title="Search providers for this track"
+          type="button"
+        >
+          Not backed up
+        </button>
+      );
+    }
+
     return <span className="track-status missing">Not backed up</span>;
   }
 
