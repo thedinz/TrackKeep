@@ -47,6 +47,18 @@ export type ProviderSearchResult = {
   providerOrder: DownloadProviderId[];
 };
 
+type ProviderCandidateSearchOutcome =
+  | {
+      candidates: SourceCandidate[];
+      ok: true;
+      providerId: DownloadProviderId;
+    }
+  | {
+      error: string;
+      ok: false;
+      providerId: DownloadProviderId;
+    };
+
 export type AuthorizedProviderDownloadRequest = {
   bulkRiskAccepted: boolean;
   diagnosticId?: string;
@@ -225,8 +237,8 @@ export async function searchProviderCandidates(
 
   const limit = clampPositiveInteger(request.limit, 5, 1, 50);
   const providerOrder = normalizeSearchProviderOrder(request.providerIds);
-  const providerResults = await Promise.all(
-    providerOrder.map(async (providerId) => {
+  const providerResults: ProviderCandidateSearchOutcome[] = await Promise.all(
+    providerOrder.map(async (providerId): Promise<ProviderCandidateSearchOutcome> => {
       try {
         const candidates =
           providerId === "youtube"
@@ -235,6 +247,7 @@ export async function searchProviderCandidates(
 
         return {
           candidates,
+          ok: true,
           providerId
         };
       } catch (error) {
@@ -243,6 +256,7 @@ export async function searchProviderCandidates(
             error instanceof Error
               ? error.message
               : "Provider search failed.",
+          ok: false,
           providerId
         };
       }
@@ -252,7 +266,7 @@ export async function searchProviderCandidates(
   const errors: ProviderSearchResult["errors"] = [];
 
   for (const result of providerResults) {
-    if ("candidates" in result) {
+    if (result.ok) {
       candidates.push(...result.candidates);
     } else {
       errors.push({
