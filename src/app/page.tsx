@@ -163,6 +163,11 @@ type PlaylistSummary = {
   tracksTotal: number;
 };
 
+type PlaylistBackupStatus = {
+  backedUp: boolean;
+  trackCount: number;
+};
+
 type BackupTrack = {
   addedAt?: string;
   album: string;
@@ -329,6 +334,9 @@ export default function Home() {
   const [spotifyAuthConfig, setSpotifyAuthConfig] =
     useState<SpotifyAuthConfigResponse | null>(null);
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
+  const [playlistBackupStatuses, setPlaylistBackupStatuses] = useState<
+    Record<string, PlaylistBackupStatus>
+  >({});
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [selectedPlaylist, setSelectedPlaylist] = useState<PlaylistSummary | null>(
     null
@@ -916,6 +924,7 @@ export default function Home() {
     }
 
     let cancelled = false;
+    const playlistId = selectedPlaylistId;
 
     async function loadTracks() {
       setIsLoadingTracks(true);
@@ -931,7 +940,7 @@ export default function Home() {
 
       try {
         const response = await fetchJson<TracksResponse>(
-          `/api/spotify/playlists/${selectedPlaylistId}/tracks`
+          `/api/spotify/playlists/${playlistId}/tracks`
         );
 
         if (!cancelled) {
@@ -939,6 +948,13 @@ export default function Home() {
           setTracks(response.tracks);
           setFolderPlans(response.folderPlans);
           setLibraryMatches(response.libraryMatches);
+          setPlaylistBackupStatuses((current) => ({
+            ...current,
+            [playlistId]: getPlaylistBackupStatus(
+              response.tracks,
+              response.libraryMatches
+            )
+          }));
         }
       } catch (error) {
         if (!cancelled) {
@@ -957,6 +973,30 @@ export default function Home() {
       cancelled = true;
     };
   }, [clearBackupWorkflowState, selectedPlaylistId, sourceKind]);
+
+  useEffect(() => {
+    if (sourceKind !== "playlist" || !selectedPlaylistId || !tracks.length) {
+      return;
+    }
+
+    const nextStatus = getPlaylistBackupStatus(tracks, libraryMatches);
+
+    setPlaylistBackupStatuses((current) => {
+      const currentStatus = current[selectedPlaylistId];
+
+      if (
+        currentStatus?.backedUp === nextStatus.backedUp &&
+        currentStatus.trackCount === nextStatus.trackCount
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [selectedPlaylistId]: nextStatus
+      };
+    });
+  }, [libraryMatches, selectedPlaylistId, sourceKind, tracks]);
 
   const filteredPlaylists = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -1497,7 +1537,18 @@ export default function Home() {
                       )}
                     </span>
                     <span className="playlist-meta">
-                      <span className="playlist-name">{playlist.name}</span>
+                      <span className="playlist-title-row">
+                        <span className="playlist-name">{playlist.name}</span>
+                        {playlistBackupStatuses[playlist.id]?.backedUp ? (
+                          <span
+                            className="playlist-backed-up-badge"
+                            title="All tracks in this playlist are backed up"
+                          >
+                            <CheckCircle2 size={14} />
+                            Backed up
+                          </span>
+                        ) : null}
+                      </span>
                       <span className="playlist-count">
                         {numberFormatter.format(playlist.tracksTotal)} tracks
                       </span>
@@ -2534,6 +2585,22 @@ function formatDuration(durationMs: number) {
   const seconds = totalSeconds % 60;
 
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function getPlaylistBackupStatus(
+  tracks: BackupTrack[],
+  libraryMatches: LibraryMatch[]
+): PlaylistBackupStatus {
+  const matchesByPosition = new Map(
+    libraryMatches.map((match) => [match.trackPosition, match] as const)
+  );
+
+  return {
+    backedUp:
+      tracks.length > 0 &&
+      tracks.every((track) => matchesByPosition.get(track.position)?.exists),
+    trackCount: tracks.length
+  };
 }
 
 function renderLibraryMatch(
