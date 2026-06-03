@@ -217,6 +217,7 @@ type ProviderDownloadResponse = {
     diagnosticId?: string;
     destinationPath: string;
     format: string;
+    libraryIndex?: NavidromeLibraryIndexSummary;
     providerId: string;
     quality: string;
     provenancePath?: string;
@@ -427,6 +428,61 @@ export default function Home() {
     setLibraryMatches(response.libraryMatches);
   }, [tracks]);
 
+  const markDownloadedTrackInLibrary = useCallback(
+    (track: BackupTrack, relativePath: string) => {
+      const normalizedRelativePath = normalizeRelativePath(relativePath);
+      const relativeDirectory = relativeDirectoryFromPath(normalizedRelativePath);
+      const fileName = fileNameFromPath(normalizedRelativePath);
+
+      setLibraryMatches((currentMatches) => {
+        const existingMatch = currentMatches.find(
+          (match) => match.trackPosition === track.position
+        );
+        const expectedFolder =
+          existingMatch?.expectedFolder || relativeDirectory;
+        const needsMove = Boolean(
+          expectedFolder && relativeDirectory !== expectedFolder
+        );
+        const nextMatch = {
+          exists: true,
+          expectedFolder,
+          matchedBy: "metadata",
+          matchedTrack: {
+            album: track.album,
+            albumArtist: track.albumArtist,
+            artist: track.artists[0],
+            artists: track.artists,
+            durationMs: track.durationMs,
+            fileName,
+            isrc: track.isrc,
+            relativeDirectory,
+            relativePath: normalizedRelativePath,
+            title: track.name
+          },
+          needsMove,
+          recommendedRelativePath:
+            needsMove && expectedFolder
+              ? `${expectedFolder}/${fileName}`
+              : undefined,
+          trackId: track.id,
+          trackPosition: track.position
+        } satisfies LibraryMatch;
+        const nextMatches = currentMatches.some(
+          (match) => match.trackPosition === track.position
+        )
+          ? currentMatches.map((match) =>
+              match.trackPosition === track.position ? nextMatch : match
+            )
+          : [...currentMatches, nextMatch];
+
+        return nextMatches.sort(
+          (left, right) => left.trackPosition - right.trackPosition
+        );
+      });
+    },
+    []
+  );
+
   const scanNavidromeLibrary = useCallback(async () => {
     setIsScanningLibrary(true);
     setRequestError(null);
@@ -549,15 +605,29 @@ export default function Home() {
       );
       const location =
         response.download.relativePath ?? response.download.destinationPath;
-      setProviderDownloadMessage(`Downloaded ${selectedTrack.name} to ${location}`);
+      const downloadMessage = `Downloaded ${selectedTrack.name} to ${location}`;
+
+      if (response.download.libraryIndex) {
+        setLibraryIndex(response.download.libraryIndex);
+      }
+
+      if (response.download.relativePath) {
+        markDownloadedTrackInLibrary(selectedTrack, response.download.relativePath);
+      }
+
+      setProviderDownloadMessage(downloadMessage);
       setProviderCandidates([]);
       setSelectedProviderCandidateId("");
-      const indexResponse = await postJson<LibraryIndexResponse>(
-        "/api/navidrome/library/index",
-        {}
-      );
-      setLibraryIndex(indexResponse.index);
-      await refreshLibraryMatches();
+
+      try {
+        await refreshLibraryMatches();
+      } catch (error) {
+        setProviderDownloadMessage(
+          `${downloadMessage}. SpotifyBU could not refresh the match table automatically (${errorMessage(
+            error
+          )}). The file is already in the library folder; run Scan library after the server settles.`
+        );
+      }
     } catch (error) {
       setRequestError(errorMessage(error));
     } finally {
@@ -569,6 +639,7 @@ export default function Home() {
     downloadQuality,
     downloadRightsConfirmed,
     downloadTrackPosition,
+    markDownloadedTrackInLibrary,
     providerCandidates,
     refreshLibraryMatches,
     selectedProviderCandidateId,
@@ -874,7 +945,7 @@ export default function Home() {
             });
 
             try {
-              await postJson<ProviderDownloadResponse>(
+              const downloadResponse = await postJson<ProviderDownloadResponse>(
                 "/api/providers/download",
                 {
                   bulkRiskAccepted: downloadBulkRiskAccepted,
@@ -887,6 +958,18 @@ export default function Home() {
                   track
                 }
               );
+
+              if (downloadResponse.download.libraryIndex) {
+                setLibraryIndex(downloadResponse.download.libraryIndex);
+              }
+
+              if (downloadResponse.download.relativePath) {
+                markDownloadedTrackInLibrary(
+                  track,
+                  downloadResponse.download.relativePath
+                );
+              }
+
               completedCount += 1;
               downloaded = true;
               break;
@@ -936,21 +1019,27 @@ export default function Home() {
         phase: "Complete",
         totalCount: downloadTrackOptions.length
       });
-      setBulkDownloadMessage(
-        `Backed up ${completedCount} of ${downloadTrackOptions.length} missing tracks${
-          failedCount
-            ? `; ${failedCount} need review${
-                failedTrackLabels[0] ? ` (${failedTrackLabels[0]})` : ""
-              }`
-            : ""
-        }.`
-      );
-      const indexResponse = await postJson<LibraryIndexResponse>(
-        "/api/navidrome/library/index",
-        {}
-      );
-      setLibraryIndex(indexResponse.index);
-      await refreshLibraryMatches();
+      const bulkMessage = `Backed up ${completedCount} of ${
+        downloadTrackOptions.length
+      } missing tracks${
+        failedCount
+          ? `; ${failedCount} need review${
+              failedTrackLabels[0] ? ` (${failedTrackLabels[0]})` : ""
+            }`
+          : ""
+      }.`;
+
+      setBulkDownloadMessage(bulkMessage);
+
+      try {
+        await refreshLibraryMatches();
+      } catch (error) {
+        setBulkDownloadMessage(
+          `${bulkMessage} SpotifyBU could not refresh the match table automatically (${errorMessage(
+            error
+          )}). Run Scan library after the server settles.`
+        );
+      }
     } catch (error) {
       setRequestError(errorMessage(error));
     } finally {
@@ -965,6 +1054,7 @@ export default function Home() {
     downloadFormat,
     downloadQuality,
     downloadRightsConfirmed,
+    markDownloadedTrackInLibrary,
     refreshLibraryMatches
   ]);
   const libraryIndexLabel = libraryIndex
@@ -2128,6 +2218,20 @@ function truncateResponseText(value: string) {
   return normalized.length > 280
     ? `${normalized.slice(0, 277)}...`
     : normalized;
+}
+
+function normalizeRelativePath(value: string) {
+  return value.replace(/\\/g, "/").replace(/^\/+/, "");
+}
+
+function relativeDirectoryFromPath(value: string) {
+  const segments = value.split("/").filter(Boolean);
+
+  return segments.length > 1 ? segments.slice(0, -1).join("/") : "";
+}
+
+function fileNameFromPath(value: string) {
+  return value.split("/").filter(Boolean).at(-1) ?? "Downloaded track";
 }
 
 function errorMessage(error: unknown) {

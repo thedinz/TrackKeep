@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { matchNavidromeTracks } from "@/lib/navidrome";
 import type { BackupTrack } from "@/lib/spotify";
 
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+export const maxDuration = 900;
+
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
   const tracks = Array.isArray(body?.tracks)

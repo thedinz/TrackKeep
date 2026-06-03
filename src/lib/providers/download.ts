@@ -16,7 +16,9 @@ import {
   ensureNavidromeTargetDirectory,
   getNavidromeLibraryPath,
   planNavidromeAlbumFolders,
-  recordNavidromeAlbumFolders
+  recordNavidromeAlbumFolders,
+  upsertNavidromeLibraryIndexTrack,
+  type NavidromeLibraryIndexSummary
 } from "@/lib/navidrome";
 import type { BackupTrack } from "@/lib/spotify";
 import {
@@ -82,6 +84,7 @@ export type AuthorizedProviderDownloadResult = {
   diagnosticId: string;
   destinationPath: string;
   format: DownloadFormat;
+  libraryIndex?: NavidromeLibraryIndexSummary;
   providerId: DownloadProviderId;
   quality: DownloadQuality;
   provenancePath?: string;
@@ -466,6 +469,18 @@ async function downloadAuthorizedProviderTrackInner(
     stage = "tagging downloaded file";
     await tagDownloadedFile(finalPath, request.track);
 
+    let libraryIndex: NavidromeLibraryIndexSummary | undefined;
+    stage = "updating library index";
+    try {
+      libraryIndex = await upsertNavidromeLibraryIndexTrack(finalPath);
+    } catch (error) {
+      console.warn("[spotifybu.provider-download] could not update library index", {
+        diagnosticId,
+        error: errorMessage(error),
+        finalPath
+      });
+    }
+
     stage = "cleaning staging files";
     await cleanupDirectory(stagingDirectory);
     scheduleIdleTempCleanup();
@@ -505,6 +520,7 @@ async function downloadAuthorizedProviderTrackInner(
       destinationPath: finalPath,
       diagnosticId,
       format,
+      libraryIndex,
       providerId,
       quality,
       provenancePath,

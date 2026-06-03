@@ -589,6 +589,48 @@ export async function scanNavidromeLibraryIndex() {
   } satisfies NavidromeLibraryIndexSummary;
 }
 
+export async function upsertNavidromeLibraryIndexTrack(filePath: string) {
+  const libraryPath = getNavidromeLibraryPath();
+
+  if (!libraryPath) {
+    throw new Error("NAVIDROME_LIBRARY_PATH is not configured.");
+  }
+
+  const indexedTrack = await indexAudioFile(libraryPath, filePath);
+  const existingIndex = await readNavidromeLibraryIndex();
+  const reusableIndex =
+    existingIndex?.libraryPath === libraryPath ? existingIndex : null;
+  const index =
+    reusableIndex
+      ? reusableIndex
+      : ({
+          generatedAt: new Date(0).toISOString(),
+          libraryPath,
+          skipped: [],
+          tracks: [],
+          version: 1
+        } satisfies NavidromeLibraryIndex);
+  const indexedTrackKey = normalizeRelativePathKey(indexedTrack.relativePath);
+
+  index.generatedAt = new Date().toISOString();
+  index.libraryPath = libraryPath;
+  index.tracks = [
+    ...index.tracks.filter(
+      (track) => normalizeRelativePathKey(track.relativePath) !== indexedTrackKey
+    ),
+    indexedTrack
+  ].sort((left, right) =>
+    left.relativePath.localeCompare(right.relativePath)
+  );
+  index.skipped = index.skipped?.filter(
+    (entry) => normalizeRelativePathKey(entry.relativePath) !== indexedTrackKey
+  );
+
+  await writeNavidromeLibraryIndex(index);
+
+  return summarizeNavidromeLibraryIndex(index, libraryPath);
+}
+
 export async function matchNavidromeTracks(tracks: BackupTrack[]) {
   const libraryPath = getNavidromeLibraryPath();
   const index = await readNavidromeLibraryIndex();

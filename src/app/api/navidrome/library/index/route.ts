@@ -4,6 +4,10 @@ import {
   scanNavidromeLibraryIndex
 } from "@/lib/navidrome";
 
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+export const maxDuration = 900;
+
 export async function GET() {
   return NextResponse.json(
     {
