@@ -47,6 +47,7 @@ export type ProviderSearchResult = {
 
 export type AuthorizedProviderDownloadRequest = {
   bulkRiskAccepted: boolean;
+  diagnosticId?: string;
   format?: string;
   providerId: string;
   quality?: string;
@@ -78,6 +79,7 @@ export type AuthorizedProviderDownloadBatchRequest = {
 
 export type AuthorizedProviderDownloadResult = {
   bytesWritten?: number;
+  diagnosticId: string;
   destinationPath: string;
   format: DownloadFormat;
   providerId: DownloadProviderId;
@@ -110,6 +112,32 @@ type ProviderDownloadLog = {
   downloads: ProviderDownloadLogEntry[];
   updatedAt: string;
   version: 1;
+};
+
+type ProviderDownloadAttemptLog = {
+  attempts: ProviderDownloadAttemptLogEntry[];
+  updatedAt: string;
+  version: 1;
+};
+
+type ProviderDownloadAttemptStatus = "completed" | "failed" | "started";
+
+type ProviderDownloadAttemptLogEntry = {
+  bytesWritten?: number;
+  destinationPath?: string;
+  diagnosticId: string;
+  error?: string;
+  format: DownloadFormat;
+  providerId: DownloadProviderId;
+  quality: DownloadQuality;
+  relativePath?: string;
+  sourceUrl: string;
+  stage?: string;
+  status: ProviderDownloadAttemptStatus;
+  timestamp: string;
+  trackId?: string;
+  trackName: string;
+  trackPosition: number;
 };
 
 type YtDlpSearchEntry = {
@@ -177,6 +205,8 @@ const downloadableProviderIds = new Set<DownloadProviderId>([
 ]);
 const defaultProviderSearchOrder: DownloadProviderId[] = ["youtube", "jiosaavn"];
 const provenanceLogSegments = [".spotifybu", "provider-downloads.json"];
+const attemptLogSegments = [".spotifybu", "provider-download-attempts.json"];
+const maxAttemptLogEntries = 200;
 const maxBatchItems = 500;
 const stagingRootSegments = [".spotifybu", "tmp", "provider-downloads"];
 const idleCleanupDelayMs = 10 * 60 * 1000;
@@ -320,109 +350,189 @@ export async function downloadAuthorizedProviderTrack(
 async function downloadAuthorizedProviderTrackInner(
   request: AuthorizedProviderDownloadRequest
 ) {
-  const providerId = assertDownloadProvider(request.providerId);
-  const providerCatalog: readonly SourceProviderCatalogEntry[] =
-    SOURCE_PROVIDER_CATALOG;
-  const provider = providerCatalog.find(
-    (entry) => entry.id === providerId
-  );
+  const diagnosticId = request.diagnosticId ?? providerDownloadDiagnosticId();
+  let stage = "validating request";
+  let attemptBase: Omit<
+    ProviderDownloadAttemptLogEntry,
+    "error" | "status" | "timestamp"
+  > | null = null;
 
-  if (!provider?.capabilities.includes("download")) {
-    throw new Error("Choose a download-capable provider.");
+  try {
+    const providerId = assertDownloadProvider(request.providerId);
+    const providerCatalog: readonly SourceProviderCatalogEntry[] =
+      SOURCE_PROVIDER_CATALOG;
+    const provider = providerCatalog.find(
+      (entry) => entry.id === providerId
+    );
+
+    if (!provider?.capabilities.includes("download")) {
+      throw new Error("Choose a download-capable provider.");
+    }
+
+    if (!request.rightsConfirmed) {
+      throw new Error("Confirm you are authorized to download this track first.");
+    }
+
+    if (!request.bulkRiskAccepted) {
+      throw new Error("Accept the provider and bulk-download risk warning first.");
+    }
+
+    validateTrack(request.track);
+
+    const libraryPath = getNavidromeLibraryPath();
+
+    if (!libraryPath) {
+      throw new Error("NAVIDROME_LIBRARY_PATH is not configured.");
+    }
+
+    const source = resolveProviderSource(providerId, request.sourceUrl);
+    const format = normalizeDownloadFormat(request.format);
+    const quality = normalizeDownloadQuality(request.quality);
+
+    attemptBase = {
+      diagnosticId,
+      format,
+      providerId,
+      quality,
+      sourceUrl: source.sourceUrl,
+      trackId: request.track.id,
+      trackName: request.track.name,
+      trackPosition: request.track.position
+    };
+    await recordProviderDownloadAttempt({
+      ...attemptBase,
+      stage,
+      status: "started",
+      timestamp: new Date().toISOString()
+    });
+    console.info("[spotifybu.provider-download] attempt started", {
+      diagnosticId,
+      format,
+      providerId,
+      quality,
+      sourceUrl: source.sourceUrl,
+      trackName: request.track.name,
+      trackPosition: request.track.position
+    });
+
+    stage = "planning destination";
+    const [folderPlan] = await planNavidromeAlbumFolders([request.track]);
+
+    if (!folderPlan) {
+      throw new Error("Could not plan a Navidrome destination for this track.");
+    }
+
+    stage = "preparing destination";
+    await recordNavidromeAlbumFolders([request.track]);
+    const targetDirectory = await ensureNavidromeTargetDirectory([
+      folderPlan.folderName
+    ]);
+    const fileBase = buildTrackFileBase(request.track);
+    const stagingDirectory = await createDownloadStagingDirectory(libraryPath);
+    const outputTemplate = path.join(
+      /* turbopackIgnore: true */ stagingDirectory,
+      `${fileBase}.%(ext)s`
+    );
+    const beforePaths = await matchingOutputPaths(
+      stagingDirectory,
+      fileBase
+    );
+
+    stage = "running yt-dlp";
+    const stdout = await runYtDlp({
+      downloadUrl: source.downloadUrl,
+      format,
+      outputTemplate,
+      quality
+    });
+
+    stage = "locating downloaded file";
+    const stagedPath = await findDownloadedPath({
+      beforePaths,
+      format,
+      outputTemplate,
+      stdout,
+      targetDirectory: stagingDirectory
+    });
+
+    stage = "moving file to library";
+    const finalPath = await moveStagedDownloadToTarget({
+      fileBase,
+      format,
+      stagedPath,
+      targetDirectory
+    });
+
+    stage = "tagging downloaded file";
+    await tagDownloadedFile(finalPath, request.track);
+
+    stage = "cleaning staging files";
+    await cleanupDirectory(stagingDirectory);
+    scheduleIdleTempCleanup();
+
+    stage = "recording provenance";
+    const fileStats = await stat(finalPath);
+    const relativePath = toLibraryRelativePath(libraryPath, finalPath);
+    const provenancePath = await recordProviderDownload({
+      album: request.track.album,
+      artists: request.track.artists,
+      bytesWritten: fileStats.size,
+      confirmedAt: new Date().toISOString(),
+      destinationPath: finalPath,
+      downloadUrl: source.downloadUrl,
+      format,
+      providerId,
+      quality,
+      relativePath,
+      selectedReason: request.selectedReason,
+      sourceUrl: source.sourceUrl,
+      trackId: request.track.id,
+      trackName: request.track.name
+    });
+
+    await recordProviderDownloadAttempt({
+      ...attemptBase,
+      bytesWritten: fileStats.size,
+      destinationPath: finalPath,
+      relativePath,
+      stage,
+      status: "completed",
+      timestamp: new Date().toISOString()
+    });
+
+    return {
+      bytesWritten: fileStats.size,
+      destinationPath: finalPath,
+      diagnosticId,
+      format,
+      providerId,
+      quality,
+      provenancePath,
+      relativePath,
+      sourceUrl: source.sourceUrl
+    } satisfies AuthorizedProviderDownloadResult;
+  } catch (error) {
+    if (attemptBase) {
+      await recordProviderDownloadAttempt({
+        ...attemptBase,
+        error: errorMessage(error),
+        stage,
+        status: "failed",
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    console.error("[spotifybu.provider-download] attempt failed", {
+      diagnosticId,
+      error: errorMessage(error),
+      providerId: attemptBase?.providerId,
+      sourceUrl: attemptBase?.sourceUrl,
+      stage,
+      trackName: attemptBase?.trackName,
+      trackPosition: attemptBase?.trackPosition
+    });
+    throw error;
   }
-
-  if (!request.rightsConfirmed) {
-    throw new Error("Confirm you are authorized to download this track first.");
-  }
-
-  if (!request.bulkRiskAccepted) {
-    throw new Error("Accept the provider and bulk-download risk warning first.");
-  }
-
-  validateTrack(request.track);
-
-  const libraryPath = getNavidromeLibraryPath();
-
-  if (!libraryPath) {
-    throw new Error("NAVIDROME_LIBRARY_PATH is not configured.");
-  }
-
-  const source = resolveProviderSource(providerId, request.sourceUrl);
-  const format = normalizeDownloadFormat(request.format);
-  const quality = normalizeDownloadQuality(request.quality);
-  const [folderPlan] = await planNavidromeAlbumFolders([request.track]);
-
-  if (!folderPlan) {
-    throw new Error("Could not plan a Navidrome destination for this track.");
-  }
-
-  await recordNavidromeAlbumFolders([request.track]);
-  const targetDirectory = await ensureNavidromeTargetDirectory([
-    folderPlan.folderName
-  ]);
-  const fileBase = buildTrackFileBase(request.track);
-  const stagingDirectory = await createDownloadStagingDirectory(libraryPath);
-  const outputTemplate = path.join(
-    /* turbopackIgnore: true */ stagingDirectory,
-    `${fileBase}.%(ext)s`
-  );
-  const beforePaths = await matchingOutputPaths(
-    stagingDirectory,
-    fileBase
-  );
-  const stdout = await runYtDlp({
-    downloadUrl: source.downloadUrl,
-    format,
-    outputTemplate,
-    quality
-  });
-  const stagedPath = await findDownloadedPath({
-    beforePaths,
-    format,
-    outputTemplate,
-    stdout,
-    targetDirectory: stagingDirectory
-  });
-  const finalPath = await moveStagedDownloadToTarget({
-    fileBase,
-    format,
-    stagedPath,
-    targetDirectory
-  });
-
-  await tagDownloadedFile(finalPath, request.track);
-  await cleanupDirectory(stagingDirectory);
-  scheduleIdleTempCleanup();
-
-  const fileStats = await stat(finalPath);
-  const relativePath = toLibraryRelativePath(libraryPath, finalPath);
-  const provenancePath = await recordProviderDownload({
-    album: request.track.album,
-    artists: request.track.artists,
-    bytesWritten: fileStats.size,
-    confirmedAt: new Date().toISOString(),
-    destinationPath: finalPath,
-    downloadUrl: source.downloadUrl,
-    format,
-    providerId,
-    quality,
-    relativePath,
-    selectedReason: request.selectedReason,
-    sourceUrl: source.sourceUrl,
-    trackId: request.track.id,
-    trackName: request.track.name
-  });
-
-  return {
-    bytesWritten: fileStats.size,
-    destinationPath: finalPath,
-    format,
-    providerId,
-    quality,
-    provenancePath,
-    relativePath,
-    sourceUrl: source.sourceUrl
-  } satisfies AuthorizedProviderDownloadResult;
 }
 
 function normalizeDownloadFormat(value?: string): DownloadFormat {
@@ -1092,11 +1202,18 @@ function formatYtDlpError(
     .join("\n");
   const normalizedOutput = output.toLowerCase();
   const sourceHost = sourceUrl ? safeHostname(sourceUrl) : "";
-  const lastErrorLine = output
+  const diagnosticLines = output
     .split(/\r?\n/)
     .map((line) => line.trim())
+    .filter(isYtDlpDiagnosticLine);
+  const lastErrorLine = [...diagnosticLines]
     .reverse()
     .find((line) => /^error:/i.test(line) || /^warning:/i.test(line));
+  const lastDiagnosticLine = lastErrorLine ?? diagnosticLines.at(-1);
+  const exitCode =
+    execError.code && execError.code !== "ETIMEDOUT"
+      ? `yt-dlp exit code: ${execError.code}.`
+      : "";
   const youtubeExtractorFailed =
     sourceHost.includes("youtube") ||
     sourceHost.includes("youtu.be") ||
@@ -1114,7 +1231,9 @@ function formatYtDlpError(
       "YouTube did not expose a downloadable audio stream for that result.",
       "Pull or rebuild the latest SpotifyBU image so yt-dlp, yt-dlp-ejs, and the Node challenge runtime are current.",
       "If this specific video still fails, choose a JioSaavn candidate or another YouTube result.",
-      lastErrorLine ? `yt-dlp reported: ${stripYtDlpPrefix(lastErrorLine)}` : ""
+      lastDiagnosticLine
+        ? `yt-dlp reported: ${formatYtDlpDiagnosticLine(lastDiagnosticLine)}`
+        : ""
     ]
       .filter(Boolean)
       .join(" ");
@@ -1126,10 +1245,27 @@ function formatYtDlpError(
 
   return [
     fallbackMessage,
-    lastErrorLine ? `yt-dlp reported: ${stripYtDlpPrefix(lastErrorLine)}` : ""
+    exitCode,
+    lastDiagnosticLine
+      ? `yt-dlp output: ${formatYtDlpDiagnosticLine(lastDiagnosticLine)}`
+      : ""
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+function isYtDlpDiagnosticLine(line: string) {
+  return (
+    Boolean(line) &&
+    !/^\[download\]\s+\d+(?:\.\d+)?%/i.test(line) &&
+    !/^\[download\]\s+(destination|has already been downloaded)/i.test(line)
+  );
+}
+
+function formatYtDlpDiagnosticLine(line: string) {
+  const stripped = stripYtDlpPrefix(line).replace(/\s+/g, " ").trim();
+
+  return stripped.length > 360 ? `${stripped.slice(0, 357)}...` : stripped;
 }
 
 function bufferishToString(value: Buffer | string | undefined) {
@@ -1279,6 +1415,32 @@ async function recordProviderDownload(entry: ProviderDownloadLogEntry) {
   return logPath;
 }
 
+async function recordProviderDownloadAttempt(
+  entry: ProviderDownloadAttemptLogEntry
+) {
+  try {
+    const log = await readProviderDownloadAttemptLog();
+    const now = new Date().toISOString();
+
+    log.attempts.push(entry);
+    log.attempts = log.attempts.slice(-maxAttemptLogEntries);
+    log.updatedAt = now;
+
+    const logDirectory = await ensureNavidromeTargetDirectory([".spotifybu"]);
+    const logPath = path.join(
+      /* turbopackIgnore: true */ logDirectory,
+      "provider-download-attempts.json"
+    );
+
+    await writeFile(logPath, `${JSON.stringify(log, null, 2)}\n`, "utf8");
+  } catch (error) {
+    console.warn("[spotifybu.provider-download] could not write attempt log", {
+      diagnosticId: entry.diagnosticId,
+      error: errorMessage(error)
+    });
+  }
+}
+
 async function readProviderDownloadLog(): Promise<ProviderDownloadLog> {
   const libraryPath = getNavidromeLibraryPath();
 
@@ -1312,6 +1474,51 @@ function emptyProviderDownloadLog(): ProviderDownloadLog {
     updatedAt: new Date(0).toISOString(),
     version: 1
   };
+}
+
+async function readProviderDownloadAttemptLog(): Promise<ProviderDownloadAttemptLog> {
+  const libraryPath = getNavidromeLibraryPath();
+
+  if (!libraryPath) {
+    return emptyProviderDownloadAttemptLog();
+  }
+
+  try {
+    const contents = await readFile(
+      path.join(
+        /* turbopackIgnore: true */ libraryPath,
+        ...attemptLogSegments
+      ),
+      "utf8"
+    );
+    const parsed = JSON.parse(contents) as Partial<ProviderDownloadAttemptLog>;
+
+    if (parsed.version !== 1 || !Array.isArray(parsed.attempts)) {
+      return emptyProviderDownloadAttemptLog();
+    }
+
+    return parsed as ProviderDownloadAttemptLog;
+  } catch {
+    return emptyProviderDownloadAttemptLog();
+  }
+}
+
+function emptyProviderDownloadAttemptLog(): ProviderDownloadAttemptLog {
+  return {
+    attempts: [],
+    updatedAt: new Date(0).toISOString(),
+    version: 1
+  };
+}
+
+function providerDownloadDiagnosticId() {
+  return `pd-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Unknown error.";
 }
 
 function buildTrackFileBase(track: BackupTrack) {
