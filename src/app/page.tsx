@@ -381,6 +381,17 @@ export default function Home() {
   const [navidromePlaylistMessage, setNavidromePlaylistMessage] =
     useState<string | null>(null);
 
+  const clearBackupWorkflowState = useCallback(() => {
+    setBulkDownloadMessage(null);
+    setBulkDownloadProgress(null);
+    setProviderDownloadMessage(null);
+    setProviderDownloadStatusLabel(null);
+    setProviderCandidates([]);
+    setSelectedProviderCandidateId("");
+    setDownloadRightsConfirmed(false);
+    setDownloadBulkRiskAccepted(false);
+  }, []);
+
   const loadSession = useCallback(async () => {
     setIsLoadingSession(true);
     setRequestError(null);
@@ -822,13 +833,32 @@ export default function Home() {
     setSourceKind(nextSourceKind);
     setLibraryOrganizeMessage(null);
     setNavidromePlaylistMessage(null);
+    clearBackupWorkflowState();
     setRequestError(null);
     setResolvedSource(null);
     setTracks([]);
     setFolderPlans([]);
     setLibraryMatches([]);
     setSelectedPlaylist(null);
-  }, []);
+  }, [clearBackupWorkflowState]);
+
+  const selectPlaylist = useCallback(
+    (playlistId: string) => {
+      if (playlistId !== selectedPlaylistId) {
+        setLibraryOrganizeMessage(null);
+        setNavidromePlaylistMessage(null);
+        clearBackupWorkflowState();
+        setRequestError(null);
+        setSelectedPlaylist(null);
+        setTracks([]);
+        setFolderPlans([]);
+        setLibraryMatches([]);
+      }
+
+      setSelectedPlaylistId(playlistId);
+    },
+    [clearBackupWorkflowState, selectedPlaylistId]
+  );
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -868,6 +898,7 @@ export default function Home() {
       setTracks([]);
       setFolderPlans([]);
       setLibraryMatches([]);
+      clearBackupWorkflowState();
       return;
     }
 
@@ -877,7 +908,12 @@ export default function Home() {
       setIsLoadingTracks(true);
       setLibraryOrganizeMessage(null);
       setNavidromePlaylistMessage(null);
+      clearBackupWorkflowState();
       setRequestError(null);
+      setSelectedPlaylist(null);
+      setTracks([]);
+      setFolderPlans([]);
+      setLibraryMatches([]);
 
       try {
         const response = await fetchJson<TracksResponse>(
@@ -906,7 +942,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [selectedPlaylistId, sourceKind]);
+  }, [clearBackupWorkflowState, selectedPlaylistId, sourceKind]);
 
   const filteredPlaylists = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -1429,7 +1465,7 @@ export default function Home() {
                       playlist.id === selectedPlaylistId ? "active" : ""
                     }`}
                     key={playlist.id}
-                    onClick={() => setSelectedPlaylistId(playlist.id)}
+                    onClick={() => selectPlaylist(playlist.id)}
                     type="button"
                   >
                     <span className="playlist-art">

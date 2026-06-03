@@ -524,8 +524,10 @@ button {
 }
 
 .playlist-list {
+  align-content: start;
   display: grid;
   gap: 10px;
+  grid-auto-rows: minmax(74px, max-content);
   min-height: 0;
   overflow: auto;
   padding: 0 14px 14px;
