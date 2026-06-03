@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  downloadAuthorizedProviderTrack,
+  startProviderDownloadJob,
   type AuthorizedProviderDownloadRequest
 } from "@/lib/providers/download";
 
@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
   });
 
   try {
-    const result = await downloadAuthorizedProviderTrack({
+    const job = startProviderDownloadJob({
       bulkRiskAccepted: Boolean(body.bulkRiskAccepted),
       diagnosticId,
       format: String(body.format ?? ""),
@@ -45,20 +45,19 @@ export async function POST(request: NextRequest) {
       track: body.track as AuthorizedProviderDownloadRequest["track"]
     });
 
-    console.info("[spotifybu.provider-download] request completed", {
-      bytesWritten: result.bytesWritten,
-      destinationPath: result.relativePath ?? result.destinationPath,
+    console.info("[spotifybu.provider-download] request queued", {
       diagnosticId,
-      providerId: result.providerId,
-      sourceUrl: result.sourceUrl
+      jobId: job.id,
+      ...summary
     });
 
     return NextResponse.json(
       {
         diagnosticId,
-        download: result
+        job
       },
       {
+        status: 202,
         headers: {
           "Cache-Control": "no-store"
         }

@@ -210,20 +210,46 @@ type LibraryOrganizeResponse = LibraryIndexResponse & LibraryMatchesResponse & {
   skippedCount: number;
 };
 
+type ProviderDownloadPayload = {
+  bytesWritten?: number;
+  diagnosticId?: string;
+  destinationPath: string;
+  format: string;
+  libraryIndex?: NavidromeLibraryIndexSummary;
+  providerId: string;
+  quality: string;
+  provenancePath?: string;
+  relativePath?: string;
+  sourceUrl: string;
+};
+
+type ProviderDownloadJobStatus =
+  | "completed"
+  | "failed"
+  | "queued"
+  | "running";
+
+type ProviderDownloadJob = {
+  createdAt: string;
+  diagnosticId: string;
+  download?: ProviderDownloadPayload;
+  error?: string;
+  id: string;
+  request: {
+    providerId: string;
+    sourceHost: string;
+    sourceUrl: string;
+    trackName: string;
+    trackPosition?: number;
+  };
+  status: ProviderDownloadJobStatus;
+  updatedAt: string;
+};
+
 type ProviderDownloadResponse = {
   diagnosticId?: string;
-  download: {
-    bytesWritten?: number;
-    diagnosticId?: string;
-    destinationPath: string;
-    format: string;
-    libraryIndex?: NavidromeLibraryIndexSummary;
-    providerId: string;
-    quality: string;
-    provenancePath?: string;
-    relativePath?: string;
-    sourceUrl: string;
-  };
+  download?: ProviderDownloadPayload;
+  job?: ProviderDownloadJob;
 };
 
 type ProviderSearchCandidate = {
@@ -268,6 +294,8 @@ type BulkDownloadProgress = {
 const numberFormatter = new Intl.NumberFormat("en-US");
 const downloadEnabledProviderIds = new Set(["jiosaavn", "youtube"]);
 const providerSearchOrder = ["youtube", "jiosaavn"] as const;
+const providerDownloadPollIntervalMs = 2500;
+const maxProviderDownloadPollAttempts = 720;
 const mediaSourceProviders: readonly SourceProviderCatalogEntry[] =
   SOURCE_PROVIDER_CATALOG.filter(
     (provider) => downloadEnabledProviderIds.has(provider.id)
@@ -317,6 +345,8 @@ export default function Home() {
   const [downloadRightsConfirmed, setDownloadRightsConfirmed] = useState(false);
   const [downloadBulkRiskAccepted, setDownloadBulkRiskAccepted] = useState(false);
   const [providerDownloadMessage, setProviderDownloadMessage] =
+    useState<string | null>(null);
+  const [providerDownloadStatusLabel, setProviderDownloadStatusLabel] =
     useState<string | null>(null);
   const [bulkChunkSize, setBulkChunkSize] = useState("10");
   const [bulkTrackDelaySeconds, setBulkTrackDelaySeconds] = useState("20");
@@ -540,6 +570,7 @@ export default function Home() {
     setProviderCandidates([]);
     setSelectedProviderCandidateId("");
     setProviderDownloadMessage(null);
+    setProviderDownloadStatusLabel(null);
     setRequestError(null);
 
     try {
@@ -588,6 +619,7 @@ export default function Home() {
 
     setIsDownloadingProvider(true);
     setProviderDownloadMessage(null);
+    setProviderDownloadStatusLabel("Starting download job");
     setRequestError(null);
 
     try {
@@ -604,19 +636,23 @@ export default function Home() {
           track: selectedTrack
         }
       );
+      const download = await waitForProviderDownload(response, (job) => {
+        setProviderDownloadStatusLabel(providerDownloadJobLabel(job));
+      });
       const location =
-        response.download.relativePath ?? response.download.destinationPath;
+        download.relativePath ?? download.destinationPath;
       const downloadMessage = `Downloaded ${selectedTrack.name} to ${location}`;
 
-      if (response.download.libraryIndex) {
-        setLibraryIndex(response.download.libraryIndex);
+      if (download.libraryIndex) {
+        setLibraryIndex(download.libraryIndex);
       }
 
-      if (response.download.relativePath) {
-        markDownloadedTrackInLibrary(selectedTrack, response.download.relativePath);
+      if (download.relativePath) {
+        markDownloadedTrackInLibrary(selectedTrack, download.relativePath);
       }
 
       setProviderDownloadMessage(downloadMessage);
+      setProviderDownloadStatusLabel(null);
       setProviderCandidates([]);
       setSelectedProviderCandidateId("");
 
@@ -633,6 +669,7 @@ export default function Home() {
       setRequestError(errorMessage(error));
     } finally {
       setIsDownloadingProvider(false);
+      setProviderDownloadStatusLabel(null);
     }
   }, [
     downloadBulkRiskAccepted,
@@ -959,15 +996,29 @@ export default function Home() {
                   track
                 }
               );
+              const download = await waitForProviderDownload(
+                downloadResponse,
+                (job) => {
+                  setBulkDownloadProgress({
+                    completedCount,
+                    failedCount,
+                    phase: `Downloading from ${providerDisplayName(
+                      candidate.providerId
+                    )} (${providerDownloadJobStatusLabel(job.status)})`,
+                    totalCount: downloadTrackOptions.length,
+                    trackLabel
+                  });
+                }
+              );
 
-              if (downloadResponse.download.libraryIndex) {
-                setLibraryIndex(downloadResponse.download.libraryIndex);
+              if (download.libraryIndex) {
+                setLibraryIndex(download.libraryIndex);
               }
 
-              if (downloadResponse.download.relativePath) {
+              if (download.relativePath) {
                 markDownloadedTrackInLibrary(
                   track,
-                  downloadResponse.download.relativePath
+                  download.relativePath
                 );
               }
 
@@ -1709,9 +1760,10 @@ export default function Home() {
                             <span className="download-progress-fill indeterminate" />
                           </div>
                           <p className="download-progress-note">
-                            {selectedDownloadTrack
+                            {providerDownloadStatusLabel ??
+                            (selectedDownloadTrack
                               ? `${selectedDownloadTrack.position}. ${selectedDownloadTrack.name}`
-                              : "Preparing source"}
+                              : "Preparing source")}
                           </p>
                         </div>
                       ) : null}
@@ -2154,6 +2206,91 @@ async function postJson<T>(url: string, body: unknown) {
   });
 
   return responseJson<T>(response);
+}
+
+async function waitForProviderDownload(
+  response: ProviderDownloadResponse,
+  onStatus?: (job: ProviderDownloadJob) => void
+) {
+  if (response.download) {
+    return response.download;
+  }
+
+  let job = response.job;
+
+  if (!job) {
+    throw new Error("Provider download did not return a job.");
+  }
+
+  onStatus?.(job);
+
+  for (let attempt = 0; attempt < maxProviderDownloadPollAttempts; attempt += 1) {
+    if (job.status === "completed") {
+      if (job.download) {
+        return job.download;
+      }
+
+      throw new Error("Provider download completed without file details.");
+    }
+
+    if (job.status === "failed") {
+      throw new Error(providerDownloadFailureMessage(job));
+    }
+
+    await wait(providerDownloadPollIntervalMs);
+
+    const statusResponse = await fetchJson<ProviderDownloadResponse>(
+      `/api/providers/download/status/${encodeURIComponent(job.id)}`
+    );
+
+    if (statusResponse.download) {
+      return statusResponse.download;
+    }
+
+    if (!statusResponse.job) {
+      throw new Error("Provider download status response was incomplete.");
+    }
+
+    job = statusResponse.job;
+    onStatus?.(job);
+  }
+
+  throw new Error(
+    `Provider download is still running. Diagnostic ID: ${job.diagnosticId}.`
+  );
+}
+
+function providerDownloadJobLabel(job: ProviderDownloadJob) {
+  const trackLabel = job.request.trackPosition
+    ? `${job.request.trackPosition}. ${job.request.trackName}`
+    : job.request.trackName || providerDisplayName(job.request.providerId);
+
+  return `${providerDownloadJobStatusLabel(job.status)} - ${trackLabel}. Diagnostic ID: ${job.diagnosticId}`;
+}
+
+function providerDownloadJobStatusLabel(status: ProviderDownloadJobStatus) {
+  if (status === "completed") {
+    return "Finalizing";
+  }
+
+  if (status === "failed") {
+    return "Failed";
+  }
+
+  if (status === "queued") {
+    return "Queued";
+  }
+
+  return "Downloading";
+}
+
+function providerDownloadFailureMessage(job: ProviderDownloadJob) {
+  return [
+    job.error || "Provider download failed.",
+    job.diagnosticId ? `Diagnostic ID: ${job.diagnosticId}.` : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 type ResponseBody = Record<string, unknown>;

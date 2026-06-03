@@ -47,6 +47,29 @@ export type ProviderSearchResult = {
   providerOrder: DownloadProviderId[];
 };
 
+export type ProviderDownloadJobStatus =
+  | "completed"
+  | "failed"
+  | "queued"
+  | "running";
+
+export type ProviderDownloadJobSnapshot = {
+  createdAt: string;
+  diagnosticId: string;
+  download?: AuthorizedProviderDownloadResult;
+  error?: string;
+  id: string;
+  request: {
+    providerId: string;
+    sourceHost: string;
+    sourceUrl: string;
+    trackName: string;
+    trackPosition?: number;
+  };
+  status: ProviderDownloadJobStatus;
+  updatedAt: string;
+};
+
 type ProviderCandidateSearchOutcome =
   | {
       candidates: SourceCandidate[];
@@ -133,6 +156,18 @@ type ProviderDownloadAttemptLog = {
   attempts: ProviderDownloadAttemptLogEntry[];
   updatedAt: string;
   version: 1;
+};
+
+type ProviderDownloadJobRecord = {
+  createdAt: string;
+  diagnosticId: string;
+  download?: AuthorizedProviderDownloadResult;
+  error?: string;
+  id: string;
+  request: AuthorizedProviderDownloadRequest;
+  requestSummary: ProviderDownloadJobSnapshot["request"];
+  status: ProviderDownloadJobStatus;
+  updatedAt: string;
 };
 
 type ProviderDownloadAttemptStatus = "completed" | "failed" | "started";
@@ -223,10 +258,13 @@ const provenanceLogSegments = [".spotifybu", "provider-downloads.json"];
 const attemptLogSegments = [".spotifybu", "provider-download-attempts.json"];
 const maxAttemptLogEntries = 200;
 const maxBatchItems = 500;
+const maxProviderDownloadJobs = 100;
+const providerDownloadJobTtlMs = 2 * 60 * 60 * 1000;
 const defaultProviderSearchTimeoutMs = 20000;
 const stagingRootSegments = [".spotifybu", "tmp", "provider-downloads"];
 const idleCleanupDelayMs = 10 * 60 * 1000;
 const defaultYtDlpJsRuntime = "node";
+const providerDownloadJobs = new Map<string, ProviderDownloadJobRecord>();
 let idleCleanupTimer: ReturnType<typeof setTimeout> | null = null;
 let activeDownloadOperations = 0;
 
@@ -367,6 +405,42 @@ export async function downloadAuthorizedProviderBatch(
     results,
     totalCount: request.items.length
   } satisfies AuthorizedProviderDownloadBatchResult;
+}
+
+export function startProviderDownloadJob(
+  request: AuthorizedProviderDownloadRequest
+) {
+  pruneProviderDownloadJobs();
+
+  const now = new Date().toISOString();
+  const diagnosticId = request.diagnosticId ?? providerDownloadDiagnosticId();
+  const job: ProviderDownloadJobRecord = {
+    createdAt: now,
+    diagnosticId,
+    id: providerDownloadJobId(),
+    request: {
+      ...request,
+      diagnosticId
+    },
+    requestSummary: summarizeProviderDownloadJobRequest(request),
+    status: "queued",
+    updatedAt: now
+  };
+
+  providerDownloadJobs.set(job.id, job);
+  setTimeout(() => {
+    void runProviderDownloadJob(job.id);
+  }, 0);
+
+  return snapshotProviderDownloadJob(job);
+}
+
+export function getProviderDownloadJobSnapshot(jobId: string) {
+  pruneProviderDownloadJobs();
+
+  const job = providerDownloadJobs.get(jobId);
+
+  return job ? snapshotProviderDownloadJob(job) : null;
 }
 
 export async function downloadAuthorizedProviderTrack(
@@ -579,6 +653,111 @@ async function downloadAuthorizedProviderTrackInner(
       trackPosition: attemptBase?.trackPosition
     });
     throw error;
+  }
+}
+
+async function runProviderDownloadJob(jobId: string) {
+  const job = providerDownloadJobs.get(jobId);
+
+  if (!job || job.status !== "queued") {
+    return;
+  }
+
+  job.status = "running";
+  job.updatedAt = new Date().toISOString();
+  console.info("[spotifybu.provider-download] job running", {
+    diagnosticId: job.diagnosticId,
+    jobId,
+    ...job.requestSummary
+  });
+
+  try {
+    job.download = await downloadAuthorizedProviderTrack(job.request);
+    job.status = "completed";
+    job.updatedAt = new Date().toISOString();
+    console.info("[spotifybu.provider-download] job completed", {
+      bytesWritten: job.download.bytesWritten,
+      destinationPath: job.download.relativePath ?? job.download.destinationPath,
+      diagnosticId: job.diagnosticId,
+      jobId,
+      providerId: job.download.providerId,
+      sourceUrl: job.download.sourceUrl
+    });
+  } catch (error) {
+    job.error = errorMessage(error);
+    job.status = "failed";
+    job.updatedAt = new Date().toISOString();
+    console.error("[spotifybu.provider-download] job failed", {
+      diagnosticId: job.diagnosticId,
+      error: job.error,
+      jobId,
+      ...job.requestSummary
+    });
+  }
+}
+
+function snapshotProviderDownloadJob(
+  job: ProviderDownloadJobRecord
+): ProviderDownloadJobSnapshot {
+  return {
+    createdAt: job.createdAt,
+    diagnosticId: job.diagnosticId,
+    download: job.download,
+    error: job.error,
+    id: job.id,
+    request: job.requestSummary,
+    status: job.status,
+    updatedAt: job.updatedAt
+  };
+}
+
+function summarizeProviderDownloadJobRequest(
+  request: AuthorizedProviderDownloadRequest
+): ProviderDownloadJobSnapshot["request"] {
+  const sourceUrl = String(request.sourceUrl ?? "");
+  const track = request.track as Partial<BackupTrack> | undefined;
+  const trackPosition =
+    typeof track?.position === "number" ? track.position : undefined;
+
+  return {
+    providerId: String(request.providerId ?? ""),
+    sourceHost: safeHostname(sourceUrl),
+    sourceUrl,
+    trackName: typeof track?.name === "string" ? track.name : "",
+    ...(trackPosition === undefined ? {} : { trackPosition })
+  };
+}
+
+function pruneProviderDownloadJobs() {
+  const now = Date.now();
+
+  for (const [jobId, job] of providerDownloadJobs) {
+    const updatedAt = Date.parse(job.updatedAt);
+    const isFinished = job.status === "completed" || job.status === "failed";
+
+    if (
+      isFinished &&
+      Number.isFinite(updatedAt) &&
+      now - updatedAt > providerDownloadJobTtlMs
+    ) {
+      providerDownloadJobs.delete(jobId);
+    }
+  }
+
+  if (providerDownloadJobs.size <= maxProviderDownloadJobs) {
+    return;
+  }
+
+  const removableJobs = [...providerDownloadJobs.values()]
+    .filter((job) => job.status === "completed" || job.status === "failed")
+    .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
+
+  for (const job of removableJobs) {
+    if (providerDownloadJobs.size <= maxProviderDownloadJobs) {
+      break;
+    }
+
+    providerDownloadJobs.delete(job.id);
   }
 }
 
@@ -1567,6 +1746,12 @@ function emptyProviderDownloadAttemptLog(): ProviderDownloadAttemptLog {
 
 function providerDownloadDiagnosticId() {
   return `pd-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+}
+
+function providerDownloadJobId() {
+  return `pdj-${Date.now().toString(36)}-${Math.random()
     .toString(36)
     .slice(2, 8)}`;
 }
