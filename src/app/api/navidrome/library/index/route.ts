@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import {
+  getCachedNavidromeLibraryIndexSummary,
   getNavidromeLibraryIndexSummary,
-  scanNavidromeLibraryIndex
+  getNavidromeLibraryIndexScanStatus,
+  startNavidromeLibraryIndexScan
 } from "@/lib/navidrome";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +13,8 @@ export const maxDuration = 900;
 export async function GET() {
   return NextResponse.json(
     {
-      index: await getNavidromeLibraryIndexSummary()
+      index: await getNavidromeLibraryIndexSummary(),
+      scan: getNavidromeLibraryIndexScanStatus()
     },
     {
       headers: {
@@ -23,9 +26,18 @@ export async function GET() {
 
 export async function POST() {
   try {
+    const scan = startNavidromeLibraryIndexScan();
+    const index =
+      scan.index ??
+      getCachedNavidromeLibraryIndexSummary() ?? {
+        stale: true,
+        trackCount: 0
+      };
+
     return NextResponse.json(
       {
-        index: await scanNavidromeLibraryIndex()
+        index,
+        scan
       },
       {
         headers: {

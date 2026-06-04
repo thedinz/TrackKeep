@@ -29,7 +29,7 @@ import {
 } from "./types";
 
 type DownloadProviderId = "jiosaavn" | "youtube";
-type DownloadFormat = "flac" | "mp3";
+type DownloadFormat = "mp3";
 type DownloadQuality = "128" | "320";
 
 export type ProviderSearchRequest = {
@@ -762,7 +762,7 @@ function pruneProviderDownloadJobs() {
 }
 
 function normalizeDownloadFormat(value?: string): DownloadFormat {
-  return value === "flac" ? "flac" : "mp3";
+  return "mp3";
 }
 
 function normalizeDownloadQuality(value?: string): DownloadQuality {

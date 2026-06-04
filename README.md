@@ -6,7 +6,7 @@ The point is not to replace Navidrome search. Navidrome already tells you what i
 
 Current stable release: `1.1.1`. It includes the web UI, local app login, Spotify OAuth, playlist/song/album metadata reads, Navidrome library checks, folder planning, library indexing, matched-file organization, Navidrome playlist creation, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
-SpotifyBU can source audio from files already present in the mounted Navidrome music library and can search YouTube first, then JioSaavn, for missing Spotify tracks. Single-track backup lets the user review provider candidates before downloading. Bulk playlist backup is intentionally more automated: after the user chooses format and quality, accepts the provider warnings, and starts the job, SpotifyBU searches each missing track, chooses the highest-scoring candidate, and stages the final file into the configured Navidrome library. Provider downloads show authorization and bulk-risk warnings, preserve provenance, and stage files only into the configured Navidrome library.
+SpotifyBU can source audio from files already present in the mounted Navidrome music library and can search YouTube first, then JioSaavn, for missing Spotify tracks. Single-track backup lets the user review provider candidates before downloading. Bulk playlist backup is intentionally more automated: after the user chooses quality, accepts the provider warnings, and starts the job, SpotifyBU searches each missing track, chooses the highest-scoring candidate, and stages the final file into the configured Navidrome library. Provider downloads show authorization and bulk-risk warnings, preserve provenance, and stage files only into the configured Navidrome library.
 
 ## Features
 
@@ -17,6 +17,7 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - Playlist rail badges for playlists known to be fully backed up
 - Song and album metadata lookup from Spotify URLs, URIs, or IDs
 - Playlist track preview
+- Optional Navidrome playlist creation from matched Spotify playlist tracks
 - JSON and CSV metadata exports
 - Navidrome library folder status checks
 - Navidrome library indexing for local backup coverage checks
@@ -31,7 +32,7 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - Reviewed single-track source downloads for YouTube and JioSaavn using `yt-dlp` and background job polling
 - One-button bulk playlist downloads that automatically choose the best provider match for each missing Spotify track
 - Throttled bulk backup queues with per-track waits, chunk pauses, progress reporting, and partial-failure reporting
-- Output controls for MP3 or FLAC, with 128 kbps or 320 kbps quality targets
+- MP3 output with 128 kbps or 320 kbps quality targets
 - Navidrome-volume staging with idle cleanup for abandoned failed download/convert temp files
 - Docker image with Node.js, `ffmpeg`, `yt-dlp`, Python 3, and `pip`
 - GitHub Container Registry image publishing for `dev`, `latest`, and version tags
@@ -264,6 +265,13 @@ only through its own startup/watch/scheduled scan behavior.
 The Navidrome API credentials are regular Navidrome user credentials. SpotifyBU
 generates the Subsonic token/salt request parameters at request time; it does not
 need a separate Navidrome API key.
+
+When Navidrome API credentials are configured, Spotify playlist views include a
+Create in Navidrome action. The action creates or updates a same-named
+Navidrome playlist using Spotify tracks that are already matched to songs in the
+Navidrome API. Tracks that are not backed up or not visible to Navidrome are
+skipped and reported in the UI, so scan/index the library before recreating a
+playlist.
 
 If Library Index fails, check the mounted folder first:
 

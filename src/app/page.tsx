@@ -151,6 +151,15 @@ type NavidromeLibraryIndexSummary = {
   trackCount: number;
 };
 
+type NavidromeLibraryIndexScanStatus = {
+  completedAt?: string;
+  error?: string;
+  id?: string;
+  index?: NavidromeLibraryIndexSummary;
+  startedAt?: string;
+  state: "failed" | "idle" | "running" | "succeeded";
+};
+
 type PlaylistSummary = {
   collaborative: boolean;
   description: string;
@@ -206,6 +215,7 @@ type ResolveResponse = {
 
 type LibraryIndexResponse = {
   index: NavidromeLibraryIndexSummary;
+  scan?: NavidromeLibraryIndexScanStatus;
 };
 
 type LibraryMatchesResponse = {
@@ -349,6 +359,8 @@ export default function Home() {
   const [showAllFolderPlans, setShowAllFolderPlans] = useState(false);
   const [libraryIndex, setLibraryIndex] =
     useState<NavidromeLibraryIndexSummary | null>(null);
+  const [libraryIndexScan, setLibraryIndexScan] =
+    useState<NavidromeLibraryIndexScanStatus | null>(null);
   const [libraryMatches, setLibraryMatches] = useState<LibraryMatch[]>([]);
   const [query, setQuery] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
@@ -370,7 +382,6 @@ export default function Home() {
     useState<NavidromeLibraryStatus | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
   const [downloadTrackPosition, setDownloadTrackPosition] = useState("");
-  const [downloadFormat, setDownloadFormat] = useState("mp3");
   const [downloadQuality, setDownloadQuality] = useState("320");
   const [providerCandidates, setProviderCandidates] = useState<
     ProviderSearchCandidate[]
@@ -465,19 +476,32 @@ export default function Home() {
     }
   }, []);
 
+  const applyLibraryIndexResponse = useCallback(
+    (response: LibraryIndexResponse) => {
+      setLibraryIndex((current) =>
+        response.scan?.state === "running" ? current ?? response.index : response.index
+      );
+      setLibraryIndexScan(response.scan ?? null);
+      setIsScanningLibrary(response.scan?.state === "running");
+    },
+    []
+  );
+
   const loadLibraryIndex = useCallback(async () => {
     try {
       const response = await fetchJson<LibraryIndexResponse>(
         "/api/navidrome/library/index"
       );
-      setLibraryIndex(response.index);
+      applyLibraryIndexResponse(response);
     } catch {
       setLibraryIndex({
         stale: true,
         trackCount: 0
       });
+      setLibraryIndexScan(null);
+      setIsScanningLibrary(false);
     }
-  }, []);
+  }, [applyLibraryIndexResponse]);
 
   const loadAppInfo = useCallback(async () => {
     try {
@@ -564,20 +588,27 @@ export default function Home() {
   const scanNavidromeLibrary = useCallback(async () => {
     setIsScanningLibrary(true);
     setRequestError(null);
+    let scanStarted = false;
 
     try {
       const response = await postJson<LibraryIndexResponse>(
         "/api/navidrome/library/index",
         {}
       );
-      setLibraryIndex(response.index);
-      await refreshLibraryMatches();
+      applyLibraryIndexResponse(response);
+      scanStarted = response.scan?.state === "running";
+
+      if (!scanStarted) {
+        await refreshLibraryMatches();
+      }
     } catch (error) {
       setRequestError(errorMessage(error));
     } finally {
-      setIsScanningLibrary(false);
+      if (!scanStarted) {
+        setIsScanningLibrary(false);
+      }
     }
-  }, [refreshLibraryMatches]);
+  }, [applyLibraryIndexResponse, refreshLibraryMatches]);
 
   const organizeLibraryMatches = useCallback(async () => {
     if (!tracks.length) {
@@ -763,7 +794,6 @@ export default function Home() {
         "/api/providers/download",
         {
           bulkRiskAccepted: downloadBulkRiskAccepted,
-          format: downloadFormat,
           providerId: selectedCandidate.providerId,
           quality: downloadQuality,
           rightsConfirmed: downloadRightsConfirmed,
@@ -809,7 +839,6 @@ export default function Home() {
     }
   }, [
     downloadBulkRiskAccepted,
-    downloadFormat,
     downloadQuality,
     downloadRightsConfirmed,
     downloadTrackPosition,
@@ -850,9 +879,9 @@ export default function Home() {
   const changeSourceKind = useCallback((nextSourceKind: SourceKind) => {
     setSourceKind(nextSourceKind);
     setLibraryOrganizeMessage(null);
-    setNavidromePlaylistMessage(null);
     clearBackupWorkflowState();
     setRequestError(null);
+    setNavidromePlaylistMessage(null);
     setResolvedSource(null);
     setTracks([]);
     setFolderPlans([]);
@@ -900,6 +929,58 @@ export default function Home() {
     loadNavidromeStatus,
     loadSession,
     loadSpotifyAuthConfig
+  ]);
+
+  useEffect(() => {
+    if (libraryIndexScan?.state !== "running") {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function pollLibraryIndexScan() {
+      try {
+        const response = await fetchJson<LibraryIndexResponse>(
+          "/api/navidrome/library/index"
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        applyLibraryIndexResponse(response);
+
+        if (response.scan?.state === "succeeded") {
+          await refreshLibraryMatches();
+          return;
+        }
+
+        if (response.scan?.state === "failed") {
+          setRequestError(
+            response.scan.error ?? "SpotifyBU could not scan the Navidrome library."
+          );
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setRequestError(errorMessage(error));
+          setLibraryIndexScan(null);
+          setIsScanningLibrary(false);
+        }
+      }
+    }
+
+    const intervalId = window.setInterval(() => {
+      void pollLibraryIndexScan();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    applyLibraryIndexResponse,
+    libraryIndexScan?.state,
+    refreshLibraryMatches
   ]);
 
   useEffect(() => {
@@ -1191,7 +1272,6 @@ export default function Home() {
             "/api/providers/download",
             {
               bulkRiskAccepted: true,
-              format: downloadFormat,
               providerId: candidate.providerId,
               quality: downloadQuality,
               rightsConfirmed: true,
@@ -1272,7 +1352,6 @@ export default function Home() {
     }
   }, [
     downloadTrackOptions,
-    downloadFormat,
     downloadQuality,
     markDownloadedTrackInLibrary,
     refreshLibraryMatches
@@ -1288,6 +1367,16 @@ export default function Home() {
         }`
       : "No library scan yet"
     : "Checking index";
+  const libraryIndexScanLabel =
+    libraryIndexScan?.state === "running"
+      ? "Library scan running in the background."
+      : libraryIndexScan?.state === "failed"
+        ? `Library scan failed: ${
+            libraryIndexScan.error ?? "SpotifyBU could not scan the library."
+          }`
+        : libraryIndexScan?.state === "succeeded"
+          ? "Library scan completed."
+          : null;
   const playlistSource = selectedPlaylist
     ? ({
         externalUrl: selectedPlaylist.externalUrl,
@@ -1778,24 +1867,6 @@ export default function Home() {
                   </div>
                   <div className="provider-throttle-grid compact backup-workflow-settings">
                     <label className="provider-field">
-                      <span>Format</span>
-                      <select
-                        disabled={isDownloadingProvider || isDownloadingBulkProvider}
-                        onChange={(event) => {
-                          setDownloadFormat(event.target.value);
-                          setDownloadRightsConfirmed(false);
-                          setDownloadBulkRiskAccepted(false);
-                          setProviderDownloadMessage(null);
-                          setBulkDownloadMessage(null);
-                          setBulkDownloadProgress(null);
-                        }}
-                        value={downloadFormat}
-                      >
-                        <option value="mp3">MP3</option>
-                        <option value="flac">FLAC</option>
-                      </select>
-                    </label>
-                    <label className="provider-field">
                       <span>Quality</span>
                       <select
                         disabled={isDownloadingProvider || isDownloadingBulkProvider}
@@ -1983,9 +2054,7 @@ export default function Home() {
                         >
                           <div className="download-progress-meta">
                             <span>Downloading</span>
-                            <span>
-                              {downloadFormat.toUpperCase()} {downloadQuality}
-                            </span>
+                            <span>MP3 {downloadQuality} kbps</span>
                           </div>
                           <div
                             aria-label="Provider download in progress"
@@ -2221,6 +2290,7 @@ export default function Home() {
                 <span>
                   <h3>Library index</h3>
                   <p>{libraryIndexLabel}</p>
+                  {libraryIndexScanLabel ? <p>{libraryIndexScanLabel}</p> : null}
                   {libraryIndex?.navidromeScan ? (
                     <p>{libraryIndex.navidromeScan.message}</p>
                   ) : null}
