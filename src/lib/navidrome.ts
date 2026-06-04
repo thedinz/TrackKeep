@@ -131,6 +131,21 @@ export type NavidromeLibraryIndexSummary = {
   trackCount: number;
 };
 
+export type NavidromeLibraryIndexScanState =
+  | "failed"
+  | "idle"
+  | "running"
+  | "succeeded";
+
+export type NavidromeLibraryIndexScanStatus = {
+  completedAt?: string;
+  error?: string;
+  id?: string;
+  index?: NavidromeLibraryIndexSummary;
+  startedAt?: string;
+  state: NavidromeLibraryIndexScanState;
+};
+
 export type NavidromeTrackMatch = {
   exists: boolean;
   expectedFolder: string;
@@ -168,6 +183,7 @@ export type NavidromePlaylistSyncResult = {
 const albumFolderLogSegments = [".spotifybu", "album-folders.json"];
 const libraryIndexSegments = [".spotifybu", "library-index.json"];
 const defaultOrganizeMoveLimit = 15;
+const indexValidationConcurrency = 64;
 const audioFileExtensions = new Set([
   ".aac",
   ".aiff",
@@ -182,6 +198,11 @@ const audioFileExtensions = new Set([
   ".wma"
 ]);
 const execFileAsync = promisify(execFile);
+let activeLibraryIndexScan: Promise<void> | null = null;
+let lastLibraryIndexSummary: NavidromeLibraryIndexSummary | null = null;
+let libraryIndexScanStatus: NavidromeLibraryIndexScanStatus = {
+  state: "idle"
+};
 
 export function getNavidromeLibraryPath() {
   const configuredPath = process.env.NAVIDROME_LIBRARY_PATH?.trim();
@@ -506,15 +527,68 @@ export async function getNavidromeLibraryIndexSummary() {
   const libraryPath = getNavidromeLibraryPath();
 
   if (!libraryPath) {
-    return {
+    const summary = {
       stale: true,
       trackCount: 0
     } satisfies NavidromeLibraryIndexSummary;
+
+    lastLibraryIndexSummary = summary;
+
+    return summary;
   }
 
-  const index = await readNavidromeLibraryIndex();
+  const index = await readCurrentNavidromeLibraryIndex();
+  const summary = summarizeNavidromeLibraryIndex(index, libraryPath);
 
-  return summarizeNavidromeLibraryIndex(index, libraryPath);
+  lastLibraryIndexSummary = summary;
+
+  return summary;
+}
+
+export function getCachedNavidromeLibraryIndexSummary() {
+  return lastLibraryIndexSummary;
+}
+
+export function getNavidromeLibraryIndexScanStatus() {
+  return libraryIndexScanStatus;
+}
+
+export function startNavidromeLibraryIndexScan() {
+  if (activeLibraryIndexScan) {
+    return libraryIndexScanStatus;
+  }
+
+  const startedAt = new Date().toISOString();
+  const scan = {
+    id: randomBytes(8).toString("hex"),
+    startedAt,
+    state: "running"
+  } satisfies NavidromeLibraryIndexScanStatus;
+
+  libraryIndexScanStatus = scan;
+  activeLibraryIndexScan = scanNavidromeLibraryIndex()
+    .then((index) => {
+      libraryIndexScanStatus = {
+        ...scan,
+        completedAt: new Date().toISOString(),
+        index,
+        state: "succeeded"
+      };
+    })
+    .catch((error) => {
+      libraryIndexScanStatus = {
+        ...scan,
+        completedAt: new Date().toISOString(),
+        error: errorMessage(error),
+        state: "failed"
+      };
+    })
+    .finally(() => {
+      activeLibraryIndexScan = null;
+    });
+  void activeLibraryIndexScan;
+
+  return libraryIndexScanStatus;
 }
 
 export async function readNavidromeLibraryIndex() {
@@ -543,6 +617,55 @@ export async function readNavidromeLibraryIndex() {
 
     throw error;
   }
+}
+
+async function readCurrentNavidromeLibraryIndex() {
+  const libraryPath = getNavidromeLibraryPath();
+  const index = await readNavidromeLibraryIndex();
+
+  if (!libraryPath || !index) {
+    return index;
+  }
+
+  return pruneMissingNavidromeIndexTracks(index, libraryPath);
+}
+
+async function pruneMissingNavidromeIndexTracks(
+  index: NavidromeLibraryIndex,
+  libraryPath: string
+) {
+  if (index.libraryPath !== libraryPath) {
+    return index;
+  }
+
+  const tracks = (
+    await mapWithConcurrency(
+      index.tracks,
+      indexValidationConcurrency,
+      async (track) => {
+        try {
+          const filePath = absoluteLibraryPath(libraryPath, track.relativePath);
+
+          return (await canAccess(filePath, constants.F_OK)) ? track : null;
+        } catch {
+          return null;
+        }
+      }
+    )
+  ).filter((track): track is NavidromeIndexedTrack => Boolean(track));
+
+  if (tracks.length === index.tracks.length) {
+    return index;
+  }
+
+  const updatedIndex = {
+    ...index,
+    tracks
+  } satisfies NavidromeLibraryIndex;
+
+  await writeNavidromeLibraryIndex(updatedIndex).catch(() => undefined);
+
+  return updatedIndex;
 }
 
 export async function scanNavidromeLibraryIndex() {
@@ -600,10 +723,14 @@ export async function scanNavidromeLibraryIndex() {
   await writeNavidromeLibraryIndex(index);
   const navidromeScan = await requestNavidromeServerScan();
 
-  return {
+  const summary = {
     ...summarizeNavidromeLibraryIndex(index, status.libraryPath),
     navidromeScan
   } satisfies NavidromeLibraryIndexSummary;
+
+  lastLibraryIndexSummary = summary;
+
+  return summary;
 }
 
 export async function upsertNavidromeLibraryIndexTrack(filePath: string) {
@@ -613,8 +740,15 @@ export async function upsertNavidromeLibraryIndexTrack(filePath: string) {
     throw new Error("NAVIDROME_LIBRARY_PATH is not configured.");
   }
 
-  const indexedTrack = await indexAudioFile(libraryPath, filePath);
-  const existingIndex = await readNavidromeLibraryIndex();
+  const targetPath = path.resolve(/* turbopackIgnore: true */ filePath);
+  const relativePath = path.relative(libraryPath, targetPath);
+
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    throw new Error("Resolved Navidrome target escaped the library path.");
+  }
+
+  const indexedTrack = await indexAudioFile(libraryPath, targetPath);
+  const existingIndex = await readCurrentNavidromeLibraryIndex();
   const reusableIndex =
     existingIndex?.libraryPath === libraryPath ? existingIndex : null;
   const index =
@@ -645,12 +779,15 @@ export async function upsertNavidromeLibraryIndexTrack(filePath: string) {
 
   await writeNavidromeLibraryIndex(index);
 
-  return summarizeNavidromeLibraryIndex(index, libraryPath);
+  const summary = summarizeNavidromeLibraryIndex(index, libraryPath);
+  lastLibraryIndexSummary = summary;
+
+  return summary;
 }
 
 export async function matchNavidromeTracks(tracks: BackupTrack[]) {
   const libraryPath = getNavidromeLibraryPath();
-  const index = await readNavidromeLibraryIndex();
+  const index = await readCurrentNavidromeLibraryIndex();
 
   return matchNavidromeTracksWithIndex(
     tracks,
@@ -672,16 +809,19 @@ export async function organizeNavidromeMatchedTracks(
   }
 
   const index = await readNavidromeLibraryIndex();
+  const currentIndex = index
+    ? await pruneMissingNavidromeIndexTracks(index, libraryPath)
+    : null;
 
-  if (!index) {
+  if (!currentIndex) {
     throw new Error("Scan the Navidrome library before organizing matched files.");
   }
 
-  if (index.libraryPath !== libraryPath) {
+  if (currentIndex.libraryPath !== libraryPath) {
     throw new Error("Scan the current Navidrome library before organizing files.");
   }
 
-  const matches = matchNavidromeTracksWithIndex(tracks, index);
+  const matches = matchNavidromeTracksWithIndex(tracks, currentIndex);
   const trackPositionFilter = normalizeTrackPositionFilter(options.trackPositions);
   const maxMoves = normalizeOrganizeMoveLimit(options.maxMoves);
   const moveCandidates = matches.filter(
@@ -693,7 +833,7 @@ export async function organizeNavidromeMatchedTracks(
   );
   const batchCandidates = moveCandidates.slice(0, maxMoves);
   const occupiedRelativePaths = new Set(
-    index.tracks.map((track) => normalizeRelativePathKey(track.relativePath))
+    currentIndex.tracks.map((track) => normalizeRelativePathKey(track.relativePath))
   );
   let movedCount = 0;
   let skippedCount = 0;
@@ -729,7 +869,7 @@ export async function organizeNavidromeMatchedTracks(
   }
 
   const updatedIndex = {
-    ...index,
+    ...currentIndex,
     generatedAt: new Date().toISOString()
   } satisfies NavidromeLibraryIndex;
 
