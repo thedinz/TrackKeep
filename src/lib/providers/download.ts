@@ -1377,10 +1377,6 @@ async function runYtDlp({
         `${quality}K`,
         "--format",
         formatSelector,
-        "--embed-metadata",
-        "--embed-thumbnail",
-        "--convert-thumbnails",
-        "jpg",
         ...ytDlpJsRuntimeArgs(),
         "--sleep-requests",
         "1",
@@ -1582,6 +1578,7 @@ async function tagDownloadedFile(filePath: string, track: BackupTrack) {
     /* turbopackIgnore: true */ parsedPath.dir,
     `${parsedPath.name}.spotifybu-tagging${parsedPath.ext}`
   );
+  let coverPath: string | null = null;
   const metadataArgs = [
     "-metadata",
     `title=${track.name}`,
@@ -1602,32 +1599,152 @@ async function tagDownloadedFile(filePath: string, track: BackupTrack) {
   }
 
   try {
-    await execFileAsync(
-      "ffmpeg",
-      [
-        "-y",
-        "-i",
-        filePath,
-        "-map",
-        "0",
-        "-c",
-        "copy",
-        ...metadataArgs,
-        tempPath
-      ],
-      {
-        maxBuffer: 1024 * 1024 * 2,
-        timeout: 60000
-      }
+    coverPath = await downloadSpotifyAlbumCover(
+      parsedPath.dir,
+      parsedPath.name,
+      track.albumImageUrl
     );
+    await writeTaggedAudioFile(filePath, tempPath, metadataArgs, coverPath);
     await rename(tempPath, filePath);
-  } catch {
+  } catch (error) {
     if (await canAccess(tempPath, constants.F_OK)) {
       await rm(tempPath, {
         force: true
       }).catch(() => undefined);
     }
+
+    if (coverPath) {
+      try {
+        await writeTaggedAudioFile(filePath, tempPath, metadataArgs, null);
+        await rename(tempPath, filePath);
+      } catch {
+        if (await canAccess(tempPath, constants.F_OK)) {
+          await rm(tempPath, {
+            force: true
+          }).catch(() => undefined);
+        }
+      }
+    }
+  } finally {
+    if (coverPath) {
+      await rm(coverPath, {
+        force: true
+      }).catch(() => undefined);
+    }
   }
+}
+
+async function writeTaggedAudioFile(
+  filePath: string,
+  tempPath: string,
+  metadataArgs: string[],
+  coverPath: string | null
+) {
+  await execFileAsync(
+    "ffmpeg",
+    [
+      "-y",
+      "-i",
+      filePath,
+      ...(coverPath ? ["-i", coverPath] : []),
+      "-map",
+      "0:a:0",
+      ...(coverPath ? ["-map", "1:v:0"] : []),
+      "-map_metadata",
+      "-1",
+      "-c:a",
+      "copy",
+      ...(coverPath
+        ? [
+            "-c:v",
+            "mjpeg",
+            "-disposition:v:0",
+            "attached_pic",
+            "-metadata:s:v",
+            "title=Album cover",
+            "-metadata:s:v",
+            "comment=Cover (front)"
+          ]
+        : []),
+      "-id3v2_version",
+      "3",
+      ...metadataArgs,
+      tempPath
+    ],
+    {
+      maxBuffer: 1024 * 1024 * 2,
+      timeout: 60000
+    }
+  );
+}
+
+async function downloadSpotifyAlbumCover(
+  directory: string,
+  fileBase: string,
+  imageUrl?: string
+) {
+  if (!imageUrl) {
+    return null;
+  }
+
+  let url: URL;
+
+  try {
+    url = new URL(imageUrl);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    return null;
+  }
+
+  try {
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+
+    if (contentType && !contentType.toLowerCase().startsWith("image/")) {
+      return null;
+    }
+
+    const bytes = Buffer.from(await response.arrayBuffer());
+
+    if (!bytes.length) {
+      return null;
+    }
+
+    const coverPath = path.join(
+      /* turbopackIgnore: true */ directory,
+      `${fileBase}.spotifybu-cover${coverExtension(contentType)}`
+    );
+
+    await writeFile(coverPath, bytes);
+
+    return coverPath;
+  } catch {
+    return null;
+  }
+}
+
+function coverExtension(contentType: string) {
+  const normalizedContentType = contentType.toLowerCase();
+
+  if (normalizedContentType.includes("png")) {
+    return ".png";
+  }
+
+  if (normalizedContentType.includes("webp")) {
+    return ".webp";
+  }
+
+  return ".jpg";
 }
 
 async function recordProviderDownload(entry: ProviderDownloadLogEntry) {

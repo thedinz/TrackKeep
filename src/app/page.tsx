@@ -181,8 +181,12 @@ type BackupTrack = {
   addedAt?: string;
   album: string;
   albumArtist: string;
+  albumArtistIds?: string[];
   albumId?: string;
+  albumImageUrl?: string;
+  albumReleaseDate?: string;
   artists: string[];
+  artistIds?: string[];
   discNumber?: number;
   durationMs: number;
   explicit: boolean;
@@ -190,6 +194,7 @@ type BackupTrack = {
   isrc?: string;
   name: string;
   position: number;
+  spotifyUri?: string;
   spotifyUrl?: string;
   trackNumber?: number;
 };

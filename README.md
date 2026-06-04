@@ -27,6 +27,7 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - Matched-file organization into planned Navidrome album folders
 - Create or update matching Navidrome playlists from backed-up Spotify playlist tracks
 - Stable album-folder logging for staged download jobs
+- Spotify title, artist, album, and album-cover tagging for staged provider downloads
 - Source-provider catalog with active YouTube and JioSaavn sourcing plus planned future providers
 - Automatic provider search for missing tracks, with YouTube checked before JioSaavn
 - Reviewed single-track source downloads for YouTube and JioSaavn using `yt-dlp` and background job polling
