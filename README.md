@@ -52,7 +52,7 @@ The test image built from the `dev` branch is:
 ghcr.io/thedinz/spotifybu:dev
 ```
 
-Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds use prerelease versions such as `1.1.0-dev.7`; stable releases use normal version tags such as `1.1.1`.
+Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds use prerelease versions such as `1.1.0-dev.10`; stable releases use normal version tags such as `1.1.1`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
 
 For the exact v1.1.1 release, pin one of these tags:
 
@@ -78,7 +78,6 @@ services:
     ports:
       - "3000:3000"
     environment:
-      GIT_BRANCH: main
       NAVIDROME_LIBRARY_PATH: /music
       NAVIDROME_URL: http://host.docker.internal:4533
       NAVIDROME_USERNAME: your-navidrome-username
@@ -95,7 +94,7 @@ volumes:
   spotifybu_config:
 ```
 
-For testing the `dev` branch, change the image to `ghcr.io/thedinz/spotifybu:dev` and set `GIT_BRANCH=dev`.
+For testing the `dev` branch, change the image to `ghcr.io/thedinz/spotifybu:dev`.
 
 Then start it:
 
@@ -133,7 +132,7 @@ Set these values before starting the app:
 | --- | --- | --- |
 | `SPOTIFYBU_IMAGE` | No | Docker image tag to run. The checked-in Docker example defaults to `ghcr.io/thedinz/spotifybu:dev` for testing. Use `ghcr.io/thedinz/spotifybu:latest` for stable installs. |
 | `SPOTIFYBU_PORT` | No | Host port for the web UI. Defaults to `3000`. |
-| `NEXT_PUBLIC_APP_URL` | Yes | Public URL for SpotifyBU. Must match the Spotify redirect base URL. |
+| `NEXT_PUBLIC_APP_URL` | No | Public URL for SpotifyBU. If blank, SpotifyBU derives it from `X-Forwarded-Host`/`X-Forwarded-Proto` or the request host. Set it when the inferred Spotify redirect URI is wrong. |
 | `SPOTIFYBU_APP_SECRET` | Yes | Long random value used to sign SpotifyBU's own login sessions. This is not your Spotify app Client Secret. |
 | `SPOTIFYBU_SECURE_COOKIES` | No | Set `true` for HTTPS reverse-proxy installs. Defaults to `false` in the Docker example for Unraid-style HTTP installs. |
 | `NAVIDROME_MUSIC_PATH` | Yes | Host path to the music folder Navidrome scans. |
@@ -168,6 +167,12 @@ NEXT_PUBLIC_APP_URL=https://spotifybu.example.com
 SPOTIFYBU_SECURE_COOKIES=true
 ```
 
+You can leave `NEXT_PUBLIC_APP_URL` blank when your reverse proxy forwards the
+original host and scheme with `X-Forwarded-Host` and `X-Forwarded-Proto`. After
+signing in to SpotifyBU, check the Connect Spotify screen and copy the redirect
+URI it shows into the Spotify Developer Dashboard. If that URI shows the wrong
+host or scheme, set `NEXT_PUBLIC_APP_URL` to the exact public base URL.
+
 The HTTPS endpoint does not have to expose SpotifyBU broadly to the internet.
 It only has to be reachable by the browser doing the Spotify login. Common
 options are an internal HTTPS reverse proxy with local DNS, a reverse proxy with
@@ -182,13 +187,12 @@ NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000
 SPOTIFYBU_SECURE_COOKIES=false
 ```
 
-Then add this Spotify redirect URI:
+Then add the Spotify redirect URI shown on SpotifyBU's Connect Spotify screen.
+When `NEXT_PUBLIC_APP_URL` is set, it will be:
 
 ```text
 <NEXT_PUBLIC_APP_URL>/api/auth/callback
 ```
-
-SpotifyBU also honors standard `X-Forwarded-Host` and `X-Forwarded-Proto` headers when `NEXT_PUBLIC_APP_URL` is not set, but setting `NEXT_PUBLIC_APP_URL` is recommended for reverse-proxy installs because Spotify OAuth redirect URIs must be exact.
 
 Your proxy should forward the original host and scheme. For most proxies, that means passing `X-Forwarded-Host` and `X-Forwarded-Proto` to the container.
 
@@ -199,7 +203,8 @@ Your proxy should forward the original host and scheme. For most proxies, that m
 3. Leave the Spotify app's Client Secret out of SpotifyBU. SpotifyBU uses
    Authorization Code with PKCE, which exchanges the login code with
    `client_id` and `code_verifier` instead of `client_secret`.
-4. Add this redirect URI to the Spotify app:
+4. Add the redirect URI shown on SpotifyBU's Connect Spotify screen to the
+   Spotify app. When `NEXT_PUBLIC_APP_URL` is set, the URI is:
 
    ```text
    <NEXT_PUBLIC_APP_URL>/api/auth/callback

@@ -17,9 +17,9 @@ type SpotifyTokenResponse = {
 };
 
 type SpotifyPaging<T> = {
-  items: T[];
-  next: string | null;
-  total: number;
+  items?: Array<T | null>;
+  next?: string | null;
+  total?: number;
 };
 
 type SpotifyImage = {
@@ -78,23 +78,23 @@ type SpotifyAlbumTrackObject = {
 };
 
 type SpotifyAlbumObject = SpotifyAlbumSummaryObject & {
-  tracks: SpotifyPaging<SpotifyAlbumTrackObject>;
+  tracks?: SpotifyPaging<SpotifyAlbumTrackObject>;
 };
 
 type SpotifyPlaylistObject = {
-  collaborative: boolean;
+  collaborative?: boolean;
   description?: string;
   external_urls?: SpotifyExternalUrls;
-  id: string;
+  id?: string;
   images?: SpotifyImage[];
-  name: string;
+  name?: string;
   owner?: {
     display_name?: string;
     id?: string;
   };
-  public: boolean | null;
-  tracks: {
-    total: number;
+  public?: boolean | null;
+  tracks?: {
+    total?: number;
   };
 };
 
@@ -501,8 +501,12 @@ async function getAllPages<T>(tokenSet: SpotifyTokenSet, path: string) {
 
   while (nextUrl) {
     const page: SpotifyPaging<T> = await spotifyFetch(tokenSet, nextUrl);
-    items.push(...page.items);
-    nextUrl = page.next;
+    const pageItems = Array.isArray(page.items)
+      ? page.items.filter((item): item is T => item !== null)
+      : [];
+
+    items.push(...pageItems);
+    nextUrl = page.next || null;
   }
 
   return items;
@@ -510,15 +514,15 @@ async function getAllPages<T>(tokenSet: SpotifyTokenSet, path: string) {
 
 function mapPlaylist(playlist: SpotifyPlaylistObject) {
   return {
-    collaborative: playlist.collaborative,
+    collaborative: Boolean(playlist.collaborative),
     description: playlist.description ?? "",
     externalUrl: playlist.external_urls?.spotify,
-    id: playlist.id,
+    id: playlist.id ?? "",
     imageUrl: firstImageUrl(playlist.images),
-    name: playlist.name,
+    name: playlist.name ?? "Untitled playlist",
     owner: playlist.owner?.display_name || playlist.owner?.id || "Spotify",
-    public: playlist.public,
-    tracksTotal: playlist.tracks.total
+    public: playlist.public ?? null,
+    tracksTotal: playlist.tracks?.total ?? 0
   } satisfies PlaylistSummary;
 }
 
@@ -535,7 +539,7 @@ function mapAlbum(album: SpotifyAlbumObject) {
     imageUrl: firstImageUrl(album.images),
     name: album.name ?? "Unknown album",
     releaseDate: album.release_date,
-    tracksTotal: album.total_tracks ?? album.tracks.total
+    tracksTotal: album.total_tracks ?? album.tracks?.total ?? 0
   } satisfies AlbumSummary;
 }
 
