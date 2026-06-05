@@ -416,6 +416,20 @@ export default function Home() {
   const [navidromePlaylistMessage, setNavidromePlaylistMessage] =
     useState<string | null>(null);
 
+  const applyLibraryMatches = useCallback(
+    (nextTracks: BackupTrack[], nextMatches: LibraryMatch[]) => {
+      setLibraryMatches(nextMatches);
+
+      if (sourceKind === "playlist" && selectedPlaylistId) {
+        setPlaylistBackupStatuses((current) => ({
+          ...current,
+          [selectedPlaylistId]: getPlaylistBackupStatus(nextTracks, nextMatches)
+        }));
+      }
+    },
+    [selectedPlaylistId, sourceKind]
+  );
+
   const clearBackupWorkflowState = useCallback(() => {
     setBulkDownloadMessage(null);
     setBulkDownloadProgress(null);
@@ -528,8 +542,8 @@ export default function Home() {
 
   const refreshLibraryMatches = useCallback(async (nextTracks = tracks) => {
     if (!nextTracks.length) {
-      setLibraryMatches([]);
-      return;
+      applyLibraryMatches([], []);
+      return [];
     }
 
     const response = await postJson<LibraryMatchesResponse>(
@@ -539,8 +553,10 @@ export default function Home() {
       }
     );
 
-    setLibraryMatches(response.libraryMatches);
-  }, [tracks]);
+    applyLibraryMatches(nextTracks, response.libraryMatches);
+
+    return response.libraryMatches;
+  }, [applyLibraryMatches, tracks]);
 
   const markDownloadedTrackInLibrary = useCallback(
     (track: BackupTrack, relativePath: string) => {
@@ -677,14 +693,25 @@ export default function Home() {
         totalSkippedCount += response.skippedCount;
         latestLibraryMatches = response.libraryMatches;
         setLibraryIndex(response.index);
-        setLibraryMatches(response.libraryMatches);
+        applyLibraryMatches(tracks, response.libraryMatches);
       }
 
+      latestLibraryMatches = await refreshLibraryMatches(tracks);
+
       if (totalMovedCount || totalSkippedCount) {
+        const remainingMoveCount = latestLibraryMatches.filter(
+          (match) => match.needsMove
+        ).length;
         setLibraryOrganizeMessage(
           `Organized ${numberFormatter.format(totalMovedCount)} files${
             totalSkippedCount
               ? `; ${numberFormatter.format(totalSkippedCount)} could not be moved`
+              : ""
+          }${
+            remainingMoveCount
+              ? `; ${numberFormatter.format(
+                  remainingMoveCount
+                )} still need organization`
               : ""
           }.`
         );
@@ -695,7 +722,7 @@ export default function Home() {
       setIsOrganizingLibrary(false);
       setLibraryOrganizeProgress(null);
     }
-  }, [libraryMatches, tracks]);
+  }, [applyLibraryMatches, libraryMatches, refreshLibraryMatches, tracks]);
 
   const createNavidromePlaylist = useCallback(async () => {
     if (!selectedPlaylistId) {
