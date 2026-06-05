@@ -1,4 +1,5 @@
 import { getAppBaseUrl } from "./app-url";
+import { appendDiagnosticLog, diagnosticError } from "./diagnostics";
 
 export type SpotifyTokenSet = {
   access_token: string;
@@ -175,6 +176,24 @@ export const SPOTIFY_SCOPES = [
   "user-library-read"
 ];
 
+const playlistSummaryFields = [
+  "collaborative",
+  "description",
+  "external_urls",
+  "id",
+  "images",
+  "name",
+  "owner(display_name,id)",
+  "public",
+  "tracks(total)"
+].join(",");
+
+const userPlaylistsFields = [
+  `items(${playlistSummaryFields})`,
+  "next",
+  "total"
+].join(",");
+
 export function getSpotifyClientId() {
   const clientId = process.env.SPOTIFY_CLIENT_ID;
 
@@ -266,33 +285,18 @@ export async function getCurrentUser(tokenSet: SpotifyTokenSet) {
 export async function getUserPlaylists(tokenSet: SpotifyTokenSet) {
   const playlists = await getAllPages<SpotifyPlaylistObject>(
     tokenSet,
-    "/me/playlists?limit=50"
+    `/me/playlists?limit=50&fields=${encodeURIComponent(userPlaylistsFields)}`
+  );
+  const hydratedPlaylists = await hydrateMissingPlaylistTotals(
+    tokenSet,
+    playlists
   );
 
-  return playlists.map(mapPlaylist);
+  return hydratedPlaylists.map(mapPlaylist).filter((playlist) => playlist.id);
 }
 
 export async function getPlaylist(tokenSet: SpotifyTokenSet, playlistId: string) {
-  const fields = [
-    "collaborative",
-    "description",
-    "external_urls",
-    "id",
-    "images",
-    "name",
-    "owner(display_name,id)",
-    "public",
-    "tracks(total)"
-  ].join(",");
-
-  return mapPlaylist(
-    await spotifyFetch<SpotifyPlaylistObject>(
-      tokenSet,
-      `/playlists/${encodeURIComponent(playlistId)}?fields=${encodeURIComponent(
-        fields
-      )}`
-    )
-  );
+  return mapPlaylist(await fetchPlaylistSummary(tokenSet, playlistId));
 }
 
 export async function getPlaylistTracks(
@@ -524,6 +528,99 @@ function mapPlaylist(playlist: SpotifyPlaylistObject) {
     public: playlist.public ?? null,
     tracksTotal: playlist.tracks?.total ?? 0
   } satisfies PlaylistSummary;
+}
+
+async function hydrateMissingPlaylistTotals(
+  tokenSet: SpotifyTokenSet,
+  playlists: SpotifyPlaylistObject[]
+) {
+  const missingTrackTotalPlaylists = playlists.filter(
+    (playlist): playlist is SpotifyPlaylistObject & { id: string } =>
+      Boolean(playlist.id) && !hasPlaylistTrackTotal(playlist)
+  );
+
+  if (!missingTrackTotalPlaylists.length) {
+    return playlists;
+  }
+
+  await appendDiagnosticLog("spotify.playlists.missing_track_totals", {
+    count: missingTrackTotalPlaylists.length,
+    examples: missingTrackTotalPlaylists.slice(0, 8).map((playlist) => ({
+      id: playlist.id,
+      name: playlist.name ?? "Untitled playlist",
+      trackKeys: playlist.tracks ? Object.keys(playlist.tracks) : []
+    }))
+  });
+
+  const hydratedEntries = await mapWithConcurrency(
+    missingTrackTotalPlaylists,
+    5,
+    async (playlist) => {
+      try {
+        return {
+          id: playlist.id,
+          playlist: await fetchPlaylistSummary(tokenSet, playlist.id)
+        };
+      } catch (error) {
+        await appendDiagnosticLog("spotify.playlists.hydrate_failed", {
+          error: diagnosticError(error),
+          playlistId: playlist.id,
+          playlistName: playlist.name ?? "Untitled playlist"
+        });
+
+        return null;
+      }
+    }
+  );
+  const hydratedById = new Map(
+    hydratedEntries
+      .filter(
+        (entry): entry is { id: string; playlist: SpotifyPlaylistObject } =>
+          Boolean(entry)
+      )
+      .map((entry) => [entry.id, entry.playlist])
+  );
+
+  return playlists.map((playlist) =>
+    playlist.id && hydratedById.has(playlist.id)
+      ? {
+          ...playlist,
+          ...hydratedById.get(playlist.id)
+        }
+      : playlist
+  );
+}
+
+function hasPlaylistTrackTotal(playlist: SpotifyPlaylistObject) {
+  return typeof playlist.tracks?.total === "number";
+}
+
+async function fetchPlaylistSummary(
+  tokenSet: SpotifyTokenSet,
+  playlistId: string
+) {
+  return spotifyFetch<SpotifyPlaylistObject>(
+    tokenSet,
+    `/playlists/${encodeURIComponent(playlistId)}?fields=${encodeURIComponent(
+      playlistSummaryFields
+    )}`
+  );
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>
+) {
+  const results: R[] = [];
+
+  for (let index = 0; index < items.length; index += concurrency) {
+    results.push(
+      ...(await Promise.all(items.slice(index, index + concurrency).map(mapper)))
+    );
+  }
+
+  return results;
 }
 
 function mapAlbum(album: SpotifyAlbumObject) {

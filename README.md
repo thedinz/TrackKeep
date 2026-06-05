@@ -52,7 +52,7 @@ The test image built from the `dev` branch is:
 ghcr.io/thedinz/spotifybu:dev
 ```
 
-Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds use prerelease versions such as `1.1.0-dev.10`; stable releases use normal version tags such as `1.1.1`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
+Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds use prerelease versions such as `1.1.0-dev.11`; stable releases use normal version tags such as `1.1.1`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
 
 For the exact v1.1.1 release, pin one of these tags:
 
@@ -132,7 +132,7 @@ Set these values before starting the app:
 | --- | --- | --- |
 | `SPOTIFYBU_IMAGE` | No | Docker image tag to run. The checked-in Docker example defaults to `ghcr.io/thedinz/spotifybu:dev` for testing. Use `ghcr.io/thedinz/spotifybu:latest` for stable installs. |
 | `SPOTIFYBU_PORT` | No | Host port for the web UI. Defaults to `3000`. |
-| `NEXT_PUBLIC_APP_URL` | No | Public URL for SpotifyBU. If blank, SpotifyBU derives it from `X-Forwarded-Host`/`X-Forwarded-Proto` or the request host. Set it when the inferred Spotify redirect URI is wrong. |
+| `NEXT_PUBLIC_APP_URL` | No | Public URL for SpotifyBU. Set this for reverse-proxy installs. If blank, SpotifyBU derives it from `X-Forwarded-Host`/`X-Forwarded-Proto` or the request host. |
 | `SPOTIFYBU_APP_SECRET` | Yes | Long random value used to sign SpotifyBU's own login sessions. This is not your Spotify app Client Secret. |
 | `SPOTIFYBU_SECURE_COOKIES` | No | Set `true` for HTTPS reverse-proxy installs. Defaults to `false` in the Docker example for Unraid-style HTTP installs. |
 | `NAVIDROME_MUSIC_PATH` | Yes | Host path to the music folder Navidrome scans. |
@@ -144,6 +144,8 @@ Set these values before starting the app:
 Inside the container:
 
 - `/config` stores SpotifyBU settings and changed login credentials.
+- `/config/logs/spotifybu.log` stores focused JSON-line diagnostics for Spotify
+  route failures and unusual Spotify playlist payloads.
 - `/music` is the mounted Navidrome music library.
 - `NAVIDROME_LIBRARY_PATH` is set to `/music`.
 - `SPOTIFYBU_CONFIG_DIR` is set to `/config`.
@@ -167,11 +169,12 @@ NEXT_PUBLIC_APP_URL=https://spotifybu.example.com
 SPOTIFYBU_SECURE_COOKIES=true
 ```
 
-You can leave `NEXT_PUBLIC_APP_URL` blank when your reverse proxy forwards the
-original host and scheme with `X-Forwarded-Host` and `X-Forwarded-Proto`. After
-signing in to SpotifyBU, check the Connect Spotify screen and copy the redirect
-URI it shows into the Spotify Developer Dashboard. If that URI shows the wrong
-host or scheme, set `NEXT_PUBLIC_APP_URL` to the exact public base URL.
+For reverse-proxy installs, setting `NEXT_PUBLIC_APP_URL` is recommended. You
+can leave it blank only when your proxy forwards the original host and scheme
+with `X-Forwarded-Host` and `X-Forwarded-Proto`. After signing in to SpotifyBU,
+check the Connect Spotify screen and copy the redirect URI it shows into the
+Spotify Developer Dashboard. If that URI shows the wrong host or scheme, set
+`NEXT_PUBLIC_APP_URL` to the exact public base URL.
 
 The HTTPS endpoint does not have to expose SpotifyBU broadly to the internet.
 It only has to be reachable by the browser doing the Spotify login. Common
