@@ -1,6 +1,6 @@
 # SpotifyBU
 
-SpotifyBU is a Docker-first web app for turning a Spotify library into a local, Navidrome-ready backup. It connects to a user's Spotify account, reads playlists, resolves Spotify song/album metadata, checks which songs are already backed up locally, stages missing tracks into stable Navidrome folders such as `Artist - Album`, and exports backup metadata.
+SpotifyBU is a Docker-first web app for turning a Spotify library into a local, Navidrome-ready backup. It connects to a user's Spotify account, reads playlists, resolves Spotify song/album metadata, checks which songs are already backed up locally, stages missing tracks into Lidarr-compatible Navidrome folders, and exports backup metadata.
 
 The point is not to replace Navidrome search. Navidrome already tells you what is in Navidrome. SpotifyBU uses Spotify as the source-of-truth list, uses Navidrome matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
 
@@ -21,10 +21,10 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - JSON and CSV metadata exports
 - Navidrome library folder status checks
 - Navidrome library indexing for local backup coverage checks
-- Navidrome folder planning using `Artist - Album`
+- Navidrome folder planning using Lidarr-style artist, album, and track paths
 - Backup coverage counts for backed-up and missing Spotify tracks
 - Track backup table with one-click provider search for missing tracks
-- Matched-file organization into planned Navidrome album folders
+- Matched-file organization into Lidarr-compatible Navidrome album folders
 - Create or update matching Navidrome playlists from backed-up Spotify playlist tracks
 - Stable album-folder logging for staged download jobs
 - Spotify title, artist, album, and album-cover tagging for staged provider downloads
@@ -52,7 +52,7 @@ The test image built from the `dev` branch is:
 ghcr.io/thedinz/spotifybu:dev
 ```
 
-Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds use prerelease versions such as `1.1.0-dev.11`; stable releases use normal version tags such as `1.1.1`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
+Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds use prerelease versions such as `1.1.0-dev.12`; stable releases use normal version tags such as `1.1.1`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
 
 For the exact v1.1.1 release, pin one of these tags:
 
@@ -259,7 +259,7 @@ Provider downloads stage temporary files under:
 /music/.spotifybu/tmp/provider-downloads
 ```
 
-Finished files are moved into their final `Artist - Album` folder before the response completes. If a download, move, or conversion fails, leftover staging files stay on the mounted music volume rather than the container filesystem. After 10 minutes of provider-download idleness, SpotifyBU removes stale staging files older than 10 minutes old.
+Finished files are moved into their final Lidarr-style `Artist/Artist - Album Type - Release Year - Album/0103 - Track` path before the response completes. If a download, move, or conversion fails, leftover staging files stay on the mounted music volume rather than the container filesystem. After 10 minutes of provider-download idleness, SpotifyBU removes stale staging files older than 10 minutes old.
 
 Navidrome still needs read access to the same host folder and a scan/watch configuration that sees new files.
 
@@ -367,7 +367,7 @@ docker run --rm -p 3000:3000 \
 - `src/app/api/providers/download/route.ts` starts confirmed single-track provider download jobs.
 - `src/app/api/providers/download/status/[jobId]/route.ts` reports provider download job status for UI polling.
 - `src/app/api/providers/download/batch/route.ts` supports confirmed throttled provider download queues.
-- `src/app/api/navidrome/library/organize/route.ts` moves matched local files into their planned Navidrome album folders in small batches.
+- `src/app/api/navidrome/library/organize/route.ts` moves or renames matched local files into their planned Lidarr-compatible Navidrome paths in small batches.
 - `src/app/api/spotify/playlists/[playlistId]/navidrome/route.ts` creates or updates a matching Navidrome playlist from backed-up Spotify tracks.
 - `src/lib/session.ts` and `src/lib/server-session.ts` own PKCE cookie and Spotify token-session handling.
 - `.github/workflows/docker-image.yml` publishes GHCR images for `dev`, `main`, and `v*` tags. The `dev` branch publishes `dev`; `main` and version tags publish stable tags such as `latest`.

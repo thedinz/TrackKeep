@@ -185,6 +185,8 @@ type BackupTrack = {
   albumId?: string;
   albumImageUrl?: string;
   albumReleaseDate?: string;
+  albumTracksTotal?: number;
+  albumType?: string;
   artists: string[];
   artistIds?: string[];
   discNumber?: number;
@@ -1748,7 +1750,7 @@ export default function Home() {
                   }`}
                   disabled={!canOrganizeLibrary || isOrganizingLibrary}
                   onClick={() => void organizeLibraryMatches()}
-                  title="Move matched files into Artist - Album folders"
+                  title="Move matched files into Lidarr-style folders"
                   type="button"
                 >
                   {isOrganizingLibrary ? (

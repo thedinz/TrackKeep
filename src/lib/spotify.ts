@@ -39,6 +39,7 @@ type SpotifyArtist = {
 };
 
 type SpotifyAlbumSummaryObject = {
+  album_type?: string;
   artists?: SpotifyArtist[];
   external_urls?: SpotifyExternalUrls;
   id?: string;
@@ -124,6 +125,7 @@ export type PlaylistSummary = {
 };
 
 export type AlbumSummary = {
+  albumType?: string;
   artists: string[];
   artistIds: string[];
   externalUrl?: string;
@@ -142,6 +144,8 @@ export type BackupTrack = {
   albumId?: string;
   albumImageUrl?: string;
   albumReleaseDate?: string;
+  albumTracksTotal?: number;
+  albumType?: string;
   artists: string[];
   artistIds: string[];
   discNumber?: number;
@@ -304,7 +308,7 @@ export async function getPlaylistTracks(
   playlistId: string
 ) {
   const fields = [
-    "items(added_at,track(id,name,type,uri,duration_ms,explicit,external_ids(isrc),external_urls(spotify),album(id,name,release_date,images),artists(id,name)))",
+    "items(added_at,track(id,name,type,uri,duration_ms,explicit,external_ids(isrc),external_urls(spotify),album(id,name,album_type,release_date,total_tracks,images),artists(id,name)))",
     "next",
     "total"
   ].join(",");
@@ -627,6 +631,7 @@ function mapAlbum(album: SpotifyAlbumObject) {
   const artists = album.artists ?? [];
 
   return {
+    albumType: album.album_type,
     artists: artists.map((artist) => artist.name),
     artistIds: artists
       .map((artist) => artist.id)
@@ -662,6 +667,8 @@ function mapTrackObject(
     albumId: album?.id,
     albumImageUrl: firstImageUrl(album?.images),
     albumReleaseDate: album?.release_date,
+    albumTracksTotal: album?.total_tracks,
+    albumType: album?.album_type,
     artists: artists.map((artist) => artist.name),
     artistIds: artists
       .map((artist) => artist.id)

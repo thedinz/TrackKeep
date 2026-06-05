@@ -13,6 +13,7 @@ import {
 import path from "path";
 import { promisify } from "util";
 import {
+  buildNavidromeTrackFileBase,
   ensureNavidromeTargetDirectory,
   getNavidromeLibraryPath,
   planNavidromeAlbumFolders,
@@ -532,10 +533,10 @@ async function downloadAuthorizedProviderTrackInner(
 
     stage = "preparing destination";
     await recordNavidromeAlbumFolders([request.track]);
-    const targetDirectory = await ensureNavidromeTargetDirectory([
-      folderPlan.folderName
-    ]);
-    const fileBase = buildTrackFileBase(request.track);
+    const targetDirectory = await ensureNavidromeTargetDirectory(
+      relativePathSegments(folderPlan.relativePath)
+    );
+    const fileBase = buildNavidromeTrackFileBase(request.track);
     const stagingDirectory = await createDownloadStagingDirectory(libraryPath);
     const outputTemplate = path.join(
       /* turbopackIgnore: true */ stagingDirectory,
@@ -1877,23 +1878,8 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown error.";
 }
 
-function buildTrackFileBase(track: BackupTrack) {
-  const prefix = track.trackNumber
-    ? track.trackNumber.toString().padStart(2, "0")
-    : track.position.toString().padStart(2, "0");
-
-  return sanitizeFileBase(`${prefix} - ${track.name}`);
-}
-
-function sanitizeFileBase(value: string) {
-  return (
-    value
-      .normalize("NFKD")
-      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 120) || "Unknown Track"
-  );
+function relativePathSegments(value: string) {
+  return value.replace(/\\/g, "/").split("/").filter(Boolean);
 }
 
 function toLibraryRelativePath(libraryPath: string, filePath: string) {
