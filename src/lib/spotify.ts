@@ -89,6 +89,9 @@ type SpotifyPlaylistObject = {
   external_urls?: SpotifyExternalUrls;
   id?: string;
   images?: SpotifyImage[];
+  items?: {
+    total?: number;
+  };
   name?: string;
   owner?: {
     display_name?: string;
@@ -102,6 +105,7 @@ type SpotifyPlaylistObject = {
 
 type SpotifyPlaylistTrackItem = {
   added_at?: string;
+  item?: SpotifyTrackObject | null;
   track?: SpotifyTrackObject | null;
 };
 
@@ -120,6 +124,7 @@ export type PlaylistSummary = {
   imageUrl?: string;
   name: string;
   owner: string;
+  ownerId?: string;
   public: boolean | null;
   tracksTotal: number;
 };
@@ -180,7 +185,7 @@ export const SPOTIFY_SCOPES = [
   "user-library-read"
 ];
 
-const playlistSummaryFields = [
+const playlistMetadataFields = [
   "collaborative",
   "description",
   "external_urls",
@@ -188,7 +193,12 @@ const playlistSummaryFields = [
   "images",
   "name",
   "owner(display_name,id)",
-  "public",
+  "public"
+].join(",");
+
+const playlistSummaryFields = [
+  playlistMetadataFields,
+  "items(total)",
   "tracks(total)"
 ].join(",");
 
@@ -238,7 +248,11 @@ export async function exchangeCodeForToken({
   });
 
   if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
+    throw new SpotifyApiError(
+      await responseErrorMessage(response),
+      response.status,
+      spotifyTokenUrl
+    );
   }
 
   return tokenSetFromResponse(await response.json());
@@ -264,7 +278,11 @@ export async function refreshAccessToken(tokenSet: SpotifyTokenSet) {
   });
 
   if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
+    throw new SpotifyApiError(
+      await responseErrorMessage(response),
+      response.status,
+      spotifyTokenUrl
+    );
   }
 
   return tokenSetFromResponse(await response.json(), tokenSet.refresh_token);
@@ -307,22 +325,30 @@ export async function getPlaylistTracks(
   tokenSet: SpotifyTokenSet,
   playlistId: string
 ) {
-  const fields = [
-    "items(added_at,track(id,name,type,uri,duration_ms,explicit,external_ids(isrc),external_urls(spotify),album(id,name,album_type,release_date,total_tracks,images),artists(id,name)))",
-    "next",
-    "total"
-  ].join(",");
+  let items: SpotifyPlaylistTrackItem[];
 
-  const items = await getAllPages<SpotifyPlaylistTrackItem>(
-    tokenSet,
-    `/playlists/${encodeURIComponent(playlistId)}/tracks?limit=50&fields=${encodeURIComponent(
-      fields
-    )}`
-  );
+  try {
+    items = await getAllPages<SpotifyPlaylistTrackItem>(
+      tokenSet,
+      `/playlists/${encodeURIComponent(playlistId)}/items?limit=50`
+    );
+  } catch (error) {
+    if (isSpotifyApiStatus(error, 403)) {
+      throw new Error(
+        "Spotify only exposes playlist tracks for playlists owned by or collaborated on by the connected Spotify user. Choose an owned or collaborative playlist, or copy this playlist into that user's account first."
+      );
+    }
+
+    throw error;
+  }
 
   return items
+    .map((item) => ({
+      addedAt: item.added_at,
+      track: item.item ?? item.track
+    }))
     .filter((item) => item.track?.type === "track")
-    .map((item, index) => mapTrackObject(item.track, index, item.added_at));
+    .map((item, index) => mapTrackObject(item.track, index, item.addedAt));
 }
 
 export async function getTrack(tokenSet: SpotifyTokenSet, trackId: string) {
@@ -333,6 +359,23 @@ export async function getTrack(tokenSet: SpotifyTokenSet, trackId: string) {
     ),
     0
   );
+}
+
+export async function getTracks(tokenSet: SpotifyTokenSet, trackIds: string[]) {
+  const trackObjects = await getTracksByIds(tokenSet, trackIds);
+  const tracks: BackupTrack[] = [];
+
+  trackObjects.forEach((track, index) => {
+    if (track) {
+      tracks.push(mapTrackObject(track, index));
+    }
+  });
+
+  if (!tracks.length) {
+    throw new Error("SpotifyBU could not resolve any Spotify songs from that list.");
+  }
+
+  return tracks;
 }
 
 export async function getAlbum(tokenSet: SpotifyTokenSet, albumId: string) {
@@ -478,6 +521,34 @@ export function parseSpotifyItemId(input: string, expectedType: SpotifyItemType)
   throw new Error(`Enter a Spotify ${expectedType} URL, URI, or ID.`);
 }
 
+export function parseSpotifyTrackIds(input: string) {
+  const trackIds: string[] = [];
+  const candidates = input
+    .split(/[\s,]+/)
+    .map((candidate) =>
+      candidate.trim().replace(/^[<"'([]+|[>"')\].]+$/g, "")
+    )
+    .filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      trackIds.push(parseSpotifyItemId(candidate, "track"));
+    } catch {
+      // Ignore non-track text in pasted CSV or copied playlist snippets.
+    }
+  }
+
+  if (!trackIds.length) {
+    throw new Error("Paste at least one Spotify song URL, URI, or ID.");
+  }
+
+  if (trackIds.length > 500) {
+    throw new Error("Track lists are limited to 500 Spotify songs at a time.");
+  }
+
+  return trackIds;
+}
+
 async function spotifyFetch<T>(
   tokenSet: SpotifyTokenSet,
   pathOrUrl: string,
@@ -497,7 +568,11 @@ async function spotifyFetch<T>(
   });
 
   if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
+    throw new SpotifyApiError(
+      await responseErrorMessage(response),
+      response.status,
+      url
+    );
   }
 
   return (await response.json()) as T;
@@ -521,6 +596,8 @@ async function getAllPages<T>(tokenSet: SpotifyTokenSet, path: string) {
 }
 
 function mapPlaylist(playlist: SpotifyPlaylistObject) {
+  const ownerId = playlist.owner?.id;
+
   return {
     collaborative: Boolean(playlist.collaborative),
     description: playlist.description ?? "",
@@ -528,9 +605,10 @@ function mapPlaylist(playlist: SpotifyPlaylistObject) {
     id: playlist.id ?? "",
     imageUrl: firstImageUrl(playlist.images),
     name: playlist.name ?? "Untitled playlist",
-    owner: playlist.owner?.display_name || playlist.owner?.id || "Spotify",
+    owner: playlist.owner?.display_name || ownerId || "Spotify",
+    ownerId,
     public: playlist.public ?? null,
-    tracksTotal: playlist.tracks?.total ?? 0
+    tracksTotal: playlist.items?.total ?? playlist.tracks?.total ?? 0
   } satisfies PlaylistSummary;
 }
 
@@ -552,6 +630,7 @@ async function hydrateMissingPlaylistTotals(
     examples: missingTrackTotalPlaylists.slice(0, 8).map((playlist) => ({
       id: playlist.id,
       name: playlist.name ?? "Untitled playlist",
+      itemKeys: playlist.items ? Object.keys(playlist.items) : [],
       trackKeys: playlist.tracks ? Object.keys(playlist.tracks) : []
     }))
   });
@@ -563,7 +642,10 @@ async function hydrateMissingPlaylistTotals(
       try {
         return {
           id: playlist.id,
-          playlist: await fetchPlaylistSummary(tokenSet, playlist.id)
+          playlist: await fetchPlaylistSummaryWithTrackTotal(
+            tokenSet,
+            playlist.id
+          )
         };
       } catch (error) {
         await appendDiagnosticLog("spotify.playlists.hydrate_failed", {
@@ -596,10 +678,25 @@ async function hydrateMissingPlaylistTotals(
 }
 
 function hasPlaylistTrackTotal(playlist: SpotifyPlaylistObject) {
-  return typeof playlist.tracks?.total === "number";
+  return (
+    typeof playlist.items?.total === "number" ||
+    typeof playlist.tracks?.total === "number"
+  );
 }
 
 async function fetchPlaylistSummary(
+  tokenSet: SpotifyTokenSet,
+  playlistId: string
+) {
+  return spotifyFetch<SpotifyPlaylistObject>(
+    tokenSet,
+    `/playlists/${encodeURIComponent(playlistId)}?fields=${encodeURIComponent(
+      playlistMetadataFields
+    )}`
+  );
+}
+
+async function fetchPlaylistSummaryWithTrackTotal(
   tokenSet: SpotifyTokenSet,
   playlistId: string
 ) {
@@ -687,18 +784,21 @@ function mapTrackObject(
 }
 
 async function getTracksByIds(tokenSet: SpotifyTokenSet, trackIds: string[]) {
-  const tracks: Array<SpotifyTrackObject | null> = [];
+  return mapWithConcurrency(trackIds, 8, async (trackId) => {
+    try {
+      return await spotifyFetch<SpotifyTrackObject>(
+        tokenSet,
+        `/tracks/${encodeURIComponent(trackId)}`
+      );
+    } catch (error) {
+      await appendDiagnosticLog("spotify.track.fetch_failed", {
+        error: diagnosticError(error),
+        trackId
+      });
 
-  for (let index = 0; index < trackIds.length; index += 50) {
-    const ids = trackIds.slice(index, index + 50);
-    const response = await spotifyFetch<{
-      tracks: Array<SpotifyTrackObject | null>;
-    }>(tokenSet, `/tracks?ids=${ids.map(encodeURIComponent).join(",")}`);
-
-    tracks.push(...response.tracks);
-  }
-
-  return tracks;
+      return null;
+    }
+  });
 }
 
 function firstImageUrl(images?: SpotifyImage[]) {
@@ -739,4 +839,19 @@ async function responseErrorMessage(response: Response) {
 
 function csvCell(value: string) {
   return `"${value.replace(/"/g, '""')}"`;
+}
+
+class SpotifyApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly url: string
+  ) {
+    super(message);
+    this.name = "SpotifyApiError";
+  }
+}
+
+function isSpotifyApiStatus(error: unknown, status: number) {
+  return error instanceof SpotifyApiError && error.status === status;
 }

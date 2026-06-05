@@ -4,7 +4,7 @@ SpotifyBU is a Docker-first web app for turning a Spotify library into a local, 
 
 The point is not to replace Navidrome search. Navidrome already tells you what is in Navidrome. SpotifyBU uses Spotify as the source-of-truth list, uses Navidrome matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
 
-Current stable release: `1.1.4`. It includes the web UI, local app login, Spotify OAuth, playlist/song/album metadata reads, Navidrome library checks, Lidarr-compatible folder planning, library indexing, matched-file organization, Navidrome playlist creation, Docker packaging, and automatic provider sourcing inspired by spotDL.
+Current stable release: `1.1.8`. It includes the web UI, local app login, Spotify OAuth, playlist/song/album/track-list metadata reads, Navidrome library checks, Lidarr-compatible folder planning, library indexing, matched-file organization, Navidrome playlist creation, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
 SpotifyBU can source audio from files already present in the mounted Navidrome music library and can search YouTube first, then JioSaavn, for missing Spotify tracks. Single-track backup lets the user review provider candidates before downloading. Bulk playlist backup is intentionally more automated: after the user chooses quality, accepts the provider warnings, and starts the job, SpotifyBU searches each missing track, chooses the highest-scoring candidate, and stages the final file into the configured Navidrome library. Provider downloads show authorization and bulk-risk warnings, preserve provenance, and stage files only into the configured Navidrome library.
 
@@ -15,7 +15,7 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - Settings page for changing the SpotifyBU app username and password
 - Playlist listing with private and collaborative playlist scopes
 - Playlist rail badges for playlists known to be fully backed up
-- Song and album metadata lookup from Spotify URLs, URIs, or IDs
+- Song, album, and pasted track-list metadata lookup from Spotify URLs, URIs, or IDs
 - Playlist track preview
 - Optional Navidrome playlist creation from matched Spotify playlist tracks
 - JSON and CSV metadata exports
@@ -52,13 +52,13 @@ The test image built from the `dev` branch is:
 ghcr.io/thedinz/spotifybu:dev
 ```
 
-Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.1.0-dev.12`; stable releases use normal version tags such as `1.1.4`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
+Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.1.0-dev.12`; stable releases use normal version tags such as `1.1.8`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
 
-For the exact v1.1.4 release, pin one of these tags:
+For the exact v1.1.8 release, pin one of these tags:
 
 ```text
-ghcr.io/thedinz/spotifybu:v1.1.4
-ghcr.io/thedinz/spotifybu:1.1.4
+ghcr.io/thedinz/spotifybu:v1.1.8
+ghcr.io/thedinz/spotifybu:1.1.8
 ghcr.io/thedinz/spotifybu:1.1
 ```
 
@@ -221,6 +221,25 @@ Your proxy should forward the original host and scheme. For most proxies, that m
 
 Spotify's official PKCE flow docs are here: https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow
 Spotify's redirect URI requirements are here: https://developer.spotify.com/documentation/web-api/concepts/redirect_uri
+
+### Followed Playlists And Track Lists
+
+SpotifyBU always tries to read a selected playlist through Spotify's official
+playlist item API. Under Spotify's 2026 Development Mode rules, Spotify may
+return `403 Forbidden` for playlist items unless the connected Spotify user owns
+the playlist or is a collaborator. SpotifyBU can still list followed playlist
+metadata because that is a different Spotify API response; the blocked part is
+the ordered track list itself.
+
+When a followed playlist is blocked, use the `Track list` source type. Paste
+Spotify song URLs, URIs, or IDs from a playlist export or copied track list, and
+SpotifyBU resolves each song through Spotify's track metadata API. The rest of
+the workflow is the same: Navidrome matching, missing-track provider search,
+bulk backup, and local metadata export all work from that resolved track list.
+
+Direct playlist reads are still best when Spotify allows them. Track lists are
+the supported fallback for followed playlists that Spotify refuses to expose to
+third-party Development Mode apps.
 
 If Spotify shows `redirect_uri: Not matching configuration`, compare the
 SpotifyBU connect-screen redirect URI with the Spotify app's redirect URI list.

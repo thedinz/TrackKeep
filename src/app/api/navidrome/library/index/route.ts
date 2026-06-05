@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  emptyNavidromeLibraryIndexSummary,
   getCachedNavidromeLibraryIndexSummary,
   getNavidromeLibraryIndexSummary,
   getNavidromeLibraryIndexScanStatus,
@@ -11,17 +12,34 @@ export const runtime = "nodejs";
 export const maxDuration = 900;
 
 export async function GET() {
-  return NextResponse.json(
-    {
+  const scan = getNavidromeLibraryIndexScanStatus();
+
+  if (scan.state !== "idle") {
+    return libraryIndexResponse({
+      index: scan.index ?? getCachedIndexSummary(),
+      scan
+    });
+  }
+
+  try {
+    return libraryIndexResponse({
       index: await getNavidromeLibraryIndexSummary(),
-      scan: getNavidromeLibraryIndexScanStatus()
-    },
-    {
-      headers: {
-        "Cache-Control": "no-store"
+      scan
+    });
+  } catch (error) {
+    return libraryIndexResponse({
+      index: getCachedIndexSummary(),
+      scan: {
+        ...scan,
+        completedAt: scan.completedAt ?? new Date().toISOString(),
+        error:
+          error instanceof Error
+            ? error.message
+            : "SpotifyBU could not read the Navidrome library index.",
+        state: "failed"
       }
-    }
-  );
+    });
+  }
 }
 
 export async function POST() {
@@ -29,22 +47,12 @@ export async function POST() {
     const scan = startNavidromeLibraryIndexScan();
     const index =
       scan.index ??
-      getCachedNavidromeLibraryIndexSummary() ?? {
-        stale: true,
-        trackCount: 0
-      };
+      getCachedIndexSummary();
 
-    return NextResponse.json(
-      {
-        index,
-        scan
-      },
-      {
-        headers: {
-          "Cache-Control": "no-store"
-        }
-      }
-    );
+    return libraryIndexResponse({
+      index,
+      scan
+    });
   } catch (error) {
     return NextResponse.json(
       {
@@ -58,4 +66,22 @@ export async function POST() {
       }
     );
   }
+}
+
+function libraryIndexResponse(body: {
+  index: ReturnType<typeof getCachedIndexSummary>;
+  scan: ReturnType<typeof getNavidromeLibraryIndexScanStatus>;
+}) {
+  return NextResponse.json(body, {
+    headers: {
+      "Cache-Control": "no-store"
+    }
+  });
+}
+
+function getCachedIndexSummary() {
+  return (
+    getCachedNavidromeLibraryIndexSummary() ??
+    emptyNavidromeLibraryIndexSummary
+  );
 }

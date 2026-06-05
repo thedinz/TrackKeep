@@ -5,11 +5,14 @@ import {
   getAlbum,
   getAlbumTracks,
   getTrack,
+  getTracks,
   parseSpotifyItemId,
+  parseSpotifyTrackIds,
   type SpotifyItemType
 } from "@/lib/spotify";
 
 const resolvableTypes = new Set<SpotifyItemType>(["album", "track"]);
+const trackListType = "track-list";
 
 export async function GET(request: NextRequest) {
   const session = await getSpotifySession();
@@ -21,13 +24,19 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const type = request.nextUrl.searchParams.get("type") as SpotifyItemType | null;
+  const type = request.nextUrl.searchParams.get("type");
   const input = request.nextUrl.searchParams.get("input") ?? "";
 
-  if (!type || !resolvableTypes.has(type)) {
+  if (
+    !type ||
+    (type !== trackListType && !resolvableTypes.has(type as SpotifyItemType))
+  ) {
     return withSessionCookie(
       NextResponse.json(
-        { error: "Choose song or album before resolving Spotify metadata." },
+        {
+          error:
+            "Choose song, album, or track list before resolving Spotify metadata."
+        },
         { status: 400 }
       ),
       session
@@ -35,9 +44,35 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const id = parseSpotifyItemId(input, type);
+    if (type === trackListType) {
+      const trackIds = parseSpotifyTrackIds(input);
+      const tracks = await getTracks(session.token, trackIds);
+      const [folderPlans, libraryMatches] = await Promise.all([
+        planNavidromeAlbumFolders(tracks),
+        matchNavidromeTracks(tracks)
+      ]);
 
-    if (type === "track") {
+      return withSessionCookie(
+        NextResponse.json({
+          folderPlans,
+          libraryMatches,
+          source: {
+            name: "Imported Spotify songs",
+            subtitle: `${tracks.length} songs from pasted Spotify links`,
+            tracksTotal: tracks.length,
+            type
+          },
+          tracks,
+          type
+        }),
+        session
+      );
+    }
+
+    const spotifyItemType = type as SpotifyItemType;
+    const id = parseSpotifyItemId(input, spotifyItemType);
+
+    if (spotifyItemType === "track") {
       const track = await getTrack(session.token, id);
       const [folderPlans, libraryMatches] = await Promise.all([
         planNavidromeAlbumFolders([track]),
@@ -56,10 +91,10 @@ export async function GET(request: NextRequest) {
               track.album || "Unknown Album"
             }`,
             tracksTotal: 1,
-            type
+            type: spotifyItemType
           },
           tracks: [track],
-          type
+          type: spotifyItemType
         }),
         session
       );
@@ -85,10 +120,10 @@ export async function GET(request: NextRequest) {
           name: album.name,
           subtitle: album.artists.join(", ") || "Unknown Artist",
           tracksTotal: album.tracksTotal,
-          type
+          type: spotifyItemType
         },
         tracks,
-        type
+        type: spotifyItemType
       }),
       session
     );
