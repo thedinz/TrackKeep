@@ -209,6 +209,11 @@ let libraryIndexScanStatus: NavidromeLibraryIndexScanStatus = {
   state: "idle"
 };
 
+export const emptyNavidromeLibraryIndexSummary = {
+  stale: true,
+  trackCount: 0
+} satisfies NavidromeLibraryIndexSummary;
+
 export function getNavidromeLibraryPath() {
   const configuredPath = process.env.NAVIDROME_LIBRARY_PATH?.trim();
 
@@ -538,10 +543,7 @@ export async function getNavidromeLibraryIndexSummary() {
   const libraryPath = getNavidromeLibraryPath();
 
   if (!libraryPath) {
-    const summary = {
-      stale: true,
-      trackCount: 0
-    } satisfies NavidromeLibraryIndexSummary;
+    const summary = emptyNavidromeLibraryIndexSummary;
 
     lastLibraryIndexSummary = summary;
 
@@ -572,31 +574,37 @@ export function startNavidromeLibraryIndexScan() {
   const startedAt = new Date().toISOString();
   const scan = {
     id: randomBytes(8).toString("hex"),
+    index: lastLibraryIndexSummary ?? emptyNavidromeLibraryIndexSummary,
     startedAt,
     state: "running"
   } satisfies NavidromeLibraryIndexScanStatus;
 
   libraryIndexScanStatus = scan;
-  activeLibraryIndexScan = scanNavidromeLibraryIndex()
-    .then((index) => {
-      libraryIndexScanStatus = {
-        ...scan,
-        completedAt: new Date().toISOString(),
-        index,
-        state: "succeeded"
-      };
-    })
-    .catch((error) => {
-      libraryIndexScanStatus = {
-        ...scan,
-        completedAt: new Date().toISOString(),
-        error: errorMessage(error),
-        state: "failed"
-      };
-    })
-    .finally(() => {
-      activeLibraryIndexScan = null;
-    });
+  activeLibraryIndexScan = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      void scanNavidromeLibraryIndex()
+        .then((index) => {
+          libraryIndexScanStatus = {
+            ...scan,
+            completedAt: new Date().toISOString(),
+            index,
+            state: "succeeded"
+          };
+        })
+        .catch((error) => {
+          libraryIndexScanStatus = {
+            ...scan,
+            completedAt: new Date().toISOString(),
+            error: errorMessage(error),
+            state: "failed"
+          };
+        })
+        .finally(() => {
+          activeLibraryIndexScan = null;
+          resolve();
+        });
+    }, 0);
+  });
   void activeLibraryIndexScan;
 
   return libraryIndexScanStatus;

@@ -630,13 +630,31 @@ export default function Home() {
         await refreshLibraryMatches();
       }
     } catch (error) {
+      if (isGatewayTimeoutError(error)) {
+        const index = libraryIndex ?? {
+          stale: true,
+          trackCount: 0
+        };
+
+        scanStarted = true;
+        applyLibraryIndexResponse({
+          index,
+          scan: {
+            index,
+            startedAt: new Date().toISOString(),
+            state: "running"
+          }
+        });
+        return;
+      }
+
       setRequestError(errorMessage(error));
     } finally {
       if (!scanStarted) {
         setIsScanningLibrary(false);
       }
     }
-  }, [applyLibraryIndexResponse, refreshLibraryMatches]);
+  }, [applyLibraryIndexResponse, libraryIndex, refreshLibraryMatches]);
 
   const organizeLibraryMatches = useCallback(async () => {
     if (!tracks.length) {
@@ -1057,6 +1075,11 @@ export default function Home() {
         }
       } catch (error) {
         if (!cancelled) {
+          if (isGatewayTimeoutError(error)) {
+            setIsScanningLibrary(true);
+            return;
+          }
+
           setRequestError(errorMessage(error));
           setLibraryIndexScan(null);
           setIsScanningLibrary(false);
@@ -2732,6 +2755,12 @@ function responseErrorMessage(
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+function isGatewayTimeoutError(error: unknown) {
+  const message = errorMessage(error);
+
+  return message.includes("(HTTP 504") || message.includes("Gateway Time-out");
 }
 
 function truncateResponseText(value: string) {
