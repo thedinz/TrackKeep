@@ -502,6 +502,27 @@ button {
   width: 100%;
 }
 
+.search-box textarea {
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  line-height: 1.35;
+  min-height: 112px;
+  min-width: 0;
+  outline: none;
+  padding: 10px 0;
+  resize: vertical;
+  width: 100%;
+}
+
+.search-box.multiline {
+  align-items: start;
+}
+
+.search-box.multiline svg {
+  margin-top: 12px;
+}
+
 .lookup-form {
   display: grid;
   gap: 10px;
@@ -599,6 +620,20 @@ button {
   font-size: 0.68rem;
   font-weight: 900;
   gap: 4px;
+  line-height: 1;
+  padding: 4px 7px;
+}
+
+.playlist-unavailable-badge {
+  align-items: center;
+  background: rgba(255, 194, 87, 0.12);
+  border: 1px solid rgba(255, 194, 87, 0.34);
+  border-radius: 999px;
+  color: var(--amber);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  font-weight: 900;
   line-height: 1;
   padding: 4px 7px;
 }

@@ -17,6 +17,21 @@ SpotifyBU's source layer should follow the same broad shape as spotDL while keep
 8. Record the album folder mapping in `.spotifybu/album-folders.json`.
 9. Tag the file and let Navidrome scan it.
 
+## Spotify Playlist Access
+
+SpotifyBU uses Spotify's official playlist item API for direct playlist backup.
+Spotify may return `403 Forbidden` for followed playlist items when the connected
+Spotify user does not own or collaborate on that playlist. In that case,
+SpotifyBU can show playlist metadata but cannot receive the ordered track list
+from Spotify's playlist endpoint.
+
+The supported fallback is the `Track list` source type. Users can paste Spotify
+song URLs, URIs, or IDs from a playlist export or copied track list. SpotifyBU
+then resolves those songs through Spotify's track metadata endpoint and feeds the
+result into the same Navidrome matching, provider search, and backup workflow.
+This avoids scraping Spotify pages or pretending the playlist permission limit
+does not exist.
+
 ## spotDL Reference
 
 spotDL is useful as a product and architecture reference because it separates Spotify metadata from audio sourcing. Its published package description says it finds Spotify playlist songs on YouTube and downloads them with album art, lyrics, and metadata.
