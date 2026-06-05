@@ -96,7 +96,7 @@ type NavidromeIndexSkip = {
   relativePath: string;
 };
 
-type SourceKind = "album" | "playlist" | "track";
+type SourceKind = "album" | "playlist" | "track" | "track-list";
 
 type ResolvedSource = {
   externalUrl?: string;
@@ -172,6 +172,7 @@ type PlaylistSummary = {
   imageUrl?: string;
   name: string;
   owner: string;
+  ownerId?: string;
   public: boolean | null;
   tracksTotal: number;
 };
@@ -221,7 +222,7 @@ type ResolveResponse = {
   libraryMatches: LibraryMatch[];
   source: ResolvedSource;
   tracks: BackupTrack[];
-  type: "album" | "track";
+  type: "album" | "track" | "track-list";
 };
 
 type LibraryIndexResponse = {
@@ -470,14 +471,37 @@ export default function Home() {
 
     try {
       const response = await fetchJson<PlaylistResponse>("/api/spotify/playlists");
+      const firstReadablePlaylist = response.playlists.find((playlist) =>
+        canReadPlaylistTracks(playlist, session?.user?.id)
+      );
+
       setPlaylists(response.playlists);
-      setSelectedPlaylistId((current) => current ?? response.playlists[0]?.id ?? null);
+      setSelectedPlaylistId((current) => {
+        if (
+          current &&
+          response.playlists.some(
+            (playlist) =>
+              playlist.id === current &&
+              canReadPlaylistTracks(playlist, session?.user?.id)
+          )
+        ) {
+          return current;
+        }
+
+        return firstReadablePlaylist?.id ?? null;
+      });
+
+      if (response.playlists.length && session?.user?.id && !firstReadablePlaylist) {
+        setRequestError(
+          "Spotify only exposes playlist tracks for playlists owned by or collaborated on by the connected Spotify user."
+        );
+      }
     } catch (error) {
       setRequestError(errorMessage(error));
     } finally {
       setIsLoadingPlaylists(false);
     }
-  }, []);
+  }, [session?.user?.id]);
 
   const loadNavidromeStatus = useCallback(async () => {
     try {
@@ -1675,6 +1699,7 @@ export default function Home() {
                   <option value="playlist">User playlist</option>
                   <option value="album">Album</option>
                   <option value="track">Song</option>
+                  <option value="track-list">Track list</option>
                 </select>
               </label>
 
@@ -1696,19 +1721,31 @@ export default function Home() {
                     void resolveCatalogSource();
                   }}
                 >
-                  <label className="search-box">
-                    <Search size={18} />
-                    <input
-                      aria-label={`Spotify ${sourceKindLabel(sourceKind)} URL`}
-                      onChange={(event) => setLookupInput(event.target.value)}
-                      placeholder={
-                        sourceKind === "album"
-                          ? "Spotify album URL or ID"
-                          : "Spotify song URL or ID"
-                      }
-                      value={lookupInput}
-                    />
-                  </label>
+                  {sourceKind === "track-list" ? (
+                    <label className="search-box multiline">
+                      <Search size={18} />
+                      <textarea
+                        aria-label="Spotify track list"
+                        onChange={(event) => setLookupInput(event.target.value)}
+                        placeholder="Spotify song URLs, URIs, or IDs"
+                        value={lookupInput}
+                      />
+                    </label>
+                  ) : (
+                    <label className="search-box">
+                      <Search size={18} />
+                      <input
+                        aria-label={`Spotify ${sourceKindLabel(sourceKind)} URL`}
+                        onChange={(event) => setLookupInput(event.target.value)}
+                        placeholder={
+                          sourceKind === "album"
+                            ? "Spotify album URL or ID"
+                            : "Spotify song URL or ID"
+                        }
+                        value={lookupInput}
+                      />
+                    </label>
+                  )}
                   <button
                     className="command"
                     disabled={!lookupInput.trim() || isResolvingSource}
@@ -1727,41 +1764,60 @@ export default function Home() {
 
             {sourceKind === "playlist" ? (
               <div className="playlist-list">
-                {filteredPlaylists.map((playlist) => (
-                  <button
-                    className={`playlist-button ${
-                      playlist.id === selectedPlaylistId ? "active" : ""
-                    }`}
-                    key={playlist.id}
-                    onClick={() => selectPlaylist(playlist.id)}
-                    type="button"
-                  >
-                    <span className="playlist-art">
-                      {playlist.imageUrl ? (
-                        <img alt="" src={playlist.imageUrl} />
-                      ) : (
-                        <Music2 size={22} />
-                      )}
-                    </span>
-                    <span className="playlist-meta">
-                      <span className="playlist-title-row">
-                        <span className="playlist-name">{playlist.name}</span>
-                        {playlistBackupStatuses[playlist.id]?.backedUp ? (
-                          <span
-                            className="playlist-backed-up-badge"
-                            title="All tracks in this playlist are backed up"
-                          >
-                            <CheckCircle2 size={14} />
-                            Backed up
-                          </span>
-                        ) : null}
+                {filteredPlaylists.map((playlist) => {
+                  const playlistReadable = canReadPlaylistTracks(
+                    playlist,
+                    session?.user?.id
+                  );
+
+                  return (
+                    <button
+                      className={`playlist-button ${
+                        playlist.id === selectedPlaylistId ? "active" : ""
+                      }`}
+                      key={playlist.id}
+                      onClick={() => selectPlaylist(playlist.id)}
+                      title={
+                        playlistReadable
+                          ? undefined
+                          : "Spotify only exposes tracks for owned or collaborative playlists"
+                      }
+                      type="button"
+                    >
+                      <span className="playlist-art">
+                        {playlist.imageUrl ? (
+                          <img alt="" src={playlist.imageUrl} />
+                        ) : (
+                          <Music2 size={22} />
+                        )}
                       </span>
-                      <span className="playlist-count">
-                        {numberFormatter.format(playlist.tracksTotal)} tracks
+                      <span className="playlist-meta">
+                        <span className="playlist-title-row">
+                          <span className="playlist-name">{playlist.name}</span>
+                          {!playlistReadable ? (
+                            <span
+                              className="playlist-unavailable-badge"
+                              title="Spotify only exposes tracks for owned or collaborative playlists"
+                            >
+                              Limited
+                            </span>
+                          ) : playlistBackupStatuses[playlist.id]?.backedUp ? (
+                            <span
+                              className="playlist-backed-up-badge"
+                              title="All tracks in this playlist are backed up"
+                            >
+                              <CheckCircle2 size={14} />
+                              Backed up
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className="playlist-count">
+                          {numberFormatter.format(playlist.tracksTotal)} tracks
+                        </span>
                       </span>
-                    </span>
-                  </button>
-                ))}
+                    </button>
+                  );
+                })}
               </div>
             ) : (
               <div className="source-preview">
@@ -1783,8 +1839,11 @@ export default function Home() {
                   </>
                 ) : (
                   <span className="muted">
-                    Paste a Spotify {sourceKindLabel(sourceKind).toLowerCase()} URL
-                    or ID to preview its Navidrome target.
+                    {sourceKind === "track-list"
+                      ? "Paste Spotify song URLs, URIs, or IDs to preview Navidrome targets."
+                      : `Paste a Spotify ${sourceKindLabel(
+                          sourceKind
+                        ).toLowerCase()} URL or ID to preview its Navidrome target.`}
                   </span>
                 )}
               </div>
@@ -2797,6 +2856,17 @@ function formatDuration(durationMs: number) {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+function canReadPlaylistTracks(
+  playlist: PlaylistSummary,
+  currentUserId?: string
+) {
+  return (
+    !currentUserId ||
+    playlist.ownerId === currentUserId ||
+    playlist.collaborative
+  );
+}
+
 function getPlaylistBackupStatus(
   tracks: BackupTrack[],
   libraryMatches: LibraryMatch[]
@@ -2912,6 +2982,10 @@ function sourceKindLabel(sourceKind: SourceKind) {
 
   if (sourceKind === "track") {
     return "Song";
+  }
+
+  if (sourceKind === "track-list") {
+    return "Track list";
   }
 
   return "User playlist";
