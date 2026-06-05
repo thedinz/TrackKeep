@@ -1065,6 +1065,12 @@ button {
   padding: 12px;
 }
 
+.backup-workflow:focus-visible {
+  border-color: rgba(37, 230, 109, 0.5);
+  outline: 2px solid rgba(37, 230, 109, 0.2);
+  outline-offset: 2px;
+}
+
 .backup-workflow-header {
   align-items: flex-start;
   border-bottom: 1px solid var(--line);
