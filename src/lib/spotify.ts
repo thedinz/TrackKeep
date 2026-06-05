@@ -1,4 +1,5 @@
 import { getAppBaseUrl } from "./app-url";
+import { appendDiagnosticLog, diagnosticError } from "./diagnostics";
 
 export type SpotifyTokenSet = {
   access_token: string;
@@ -17,9 +18,9 @@ type SpotifyTokenResponse = {
 };
 
 type SpotifyPaging<T> = {
-  items: T[];
-  next: string | null;
-  total: number;
+  items?: Array<T | null>;
+  next?: string | null;
+  total?: number;
 };
 
 type SpotifyImage = {
@@ -38,6 +39,7 @@ type SpotifyArtist = {
 };
 
 type SpotifyAlbumSummaryObject = {
+  album_type?: string;
   artists?: SpotifyArtist[];
   external_urls?: SpotifyExternalUrls;
   id?: string;
@@ -78,23 +80,23 @@ type SpotifyAlbumTrackObject = {
 };
 
 type SpotifyAlbumObject = SpotifyAlbumSummaryObject & {
-  tracks: SpotifyPaging<SpotifyAlbumTrackObject>;
+  tracks?: SpotifyPaging<SpotifyAlbumTrackObject>;
 };
 
 type SpotifyPlaylistObject = {
-  collaborative: boolean;
+  collaborative?: boolean;
   description?: string;
   external_urls?: SpotifyExternalUrls;
-  id: string;
+  id?: string;
   images?: SpotifyImage[];
-  name: string;
+  name?: string;
   owner?: {
     display_name?: string;
     id?: string;
   };
-  public: boolean | null;
-  tracks: {
-    total: number;
+  public?: boolean | null;
+  tracks?: {
+    total?: number;
   };
 };
 
@@ -123,6 +125,7 @@ export type PlaylistSummary = {
 };
 
 export type AlbumSummary = {
+  albumType?: string;
   artists: string[];
   artistIds: string[];
   externalUrl?: string;
@@ -141,6 +144,8 @@ export type BackupTrack = {
   albumId?: string;
   albumImageUrl?: string;
   albumReleaseDate?: string;
+  albumTracksTotal?: number;
+  albumType?: string;
   artists: string[];
   artistIds: string[];
   discNumber?: number;
@@ -174,6 +179,24 @@ export const SPOTIFY_SCOPES = [
   "playlist-read-collaborative",
   "user-library-read"
 ];
+
+const playlistSummaryFields = [
+  "collaborative",
+  "description",
+  "external_urls",
+  "id",
+  "images",
+  "name",
+  "owner(display_name,id)",
+  "public",
+  "tracks(total)"
+].join(",");
+
+const userPlaylistsFields = [
+  `items(${playlistSummaryFields})`,
+  "next",
+  "total"
+].join(",");
 
 export function getSpotifyClientId() {
   const clientId = process.env.SPOTIFY_CLIENT_ID;
@@ -266,33 +289,18 @@ export async function getCurrentUser(tokenSet: SpotifyTokenSet) {
 export async function getUserPlaylists(tokenSet: SpotifyTokenSet) {
   const playlists = await getAllPages<SpotifyPlaylistObject>(
     tokenSet,
-    "/me/playlists?limit=50"
+    `/me/playlists?limit=50&fields=${encodeURIComponent(userPlaylistsFields)}`
+  );
+  const hydratedPlaylists = await hydrateMissingPlaylistTotals(
+    tokenSet,
+    playlists
   );
 
-  return playlists.map(mapPlaylist);
+  return hydratedPlaylists.map(mapPlaylist).filter((playlist) => playlist.id);
 }
 
 export async function getPlaylist(tokenSet: SpotifyTokenSet, playlistId: string) {
-  const fields = [
-    "collaborative",
-    "description",
-    "external_urls",
-    "id",
-    "images",
-    "name",
-    "owner(display_name,id)",
-    "public",
-    "tracks(total)"
-  ].join(",");
-
-  return mapPlaylist(
-    await spotifyFetch<SpotifyPlaylistObject>(
-      tokenSet,
-      `/playlists/${encodeURIComponent(playlistId)}?fields=${encodeURIComponent(
-        fields
-      )}`
-    )
-  );
+  return mapPlaylist(await fetchPlaylistSummary(tokenSet, playlistId));
 }
 
 export async function getPlaylistTracks(
@@ -300,7 +308,7 @@ export async function getPlaylistTracks(
   playlistId: string
 ) {
   const fields = [
-    "items(added_at,track(id,name,type,uri,duration_ms,explicit,external_ids(isrc),external_urls(spotify),album(id,name,release_date,images),artists(id,name)))",
+    "items(added_at,track(id,name,type,uri,duration_ms,explicit,external_ids(isrc),external_urls(spotify),album(id,name,album_type,release_date,total_tracks,images),artists(id,name)))",
     "next",
     "total"
   ].join(",");
@@ -501,8 +509,12 @@ async function getAllPages<T>(tokenSet: SpotifyTokenSet, path: string) {
 
   while (nextUrl) {
     const page: SpotifyPaging<T> = await spotifyFetch(tokenSet, nextUrl);
-    items.push(...page.items);
-    nextUrl = page.next;
+    const pageItems = Array.isArray(page.items)
+      ? page.items.filter((item): item is T => item !== null)
+      : [];
+
+    items.push(...pageItems);
+    nextUrl = page.next || null;
   }
 
   return items;
@@ -510,22 +522,116 @@ async function getAllPages<T>(tokenSet: SpotifyTokenSet, path: string) {
 
 function mapPlaylist(playlist: SpotifyPlaylistObject) {
   return {
-    collaborative: playlist.collaborative,
+    collaborative: Boolean(playlist.collaborative),
     description: playlist.description ?? "",
     externalUrl: playlist.external_urls?.spotify,
-    id: playlist.id,
+    id: playlist.id ?? "",
     imageUrl: firstImageUrl(playlist.images),
-    name: playlist.name,
+    name: playlist.name ?? "Untitled playlist",
     owner: playlist.owner?.display_name || playlist.owner?.id || "Spotify",
-    public: playlist.public,
-    tracksTotal: playlist.tracks.total
+    public: playlist.public ?? null,
+    tracksTotal: playlist.tracks?.total ?? 0
   } satisfies PlaylistSummary;
+}
+
+async function hydrateMissingPlaylistTotals(
+  tokenSet: SpotifyTokenSet,
+  playlists: SpotifyPlaylistObject[]
+) {
+  const missingTrackTotalPlaylists = playlists.filter(
+    (playlist): playlist is SpotifyPlaylistObject & { id: string } =>
+      Boolean(playlist.id) && !hasPlaylistTrackTotal(playlist)
+  );
+
+  if (!missingTrackTotalPlaylists.length) {
+    return playlists;
+  }
+
+  await appendDiagnosticLog("spotify.playlists.missing_track_totals", {
+    count: missingTrackTotalPlaylists.length,
+    examples: missingTrackTotalPlaylists.slice(0, 8).map((playlist) => ({
+      id: playlist.id,
+      name: playlist.name ?? "Untitled playlist",
+      trackKeys: playlist.tracks ? Object.keys(playlist.tracks) : []
+    }))
+  });
+
+  const hydratedEntries = await mapWithConcurrency(
+    missingTrackTotalPlaylists,
+    5,
+    async (playlist) => {
+      try {
+        return {
+          id: playlist.id,
+          playlist: await fetchPlaylistSummary(tokenSet, playlist.id)
+        };
+      } catch (error) {
+        await appendDiagnosticLog("spotify.playlists.hydrate_failed", {
+          error: diagnosticError(error),
+          playlistId: playlist.id,
+          playlistName: playlist.name ?? "Untitled playlist"
+        });
+
+        return null;
+      }
+    }
+  );
+  const hydratedById = new Map(
+    hydratedEntries
+      .filter(
+        (entry): entry is { id: string; playlist: SpotifyPlaylistObject } =>
+          Boolean(entry)
+      )
+      .map((entry) => [entry.id, entry.playlist])
+  );
+
+  return playlists.map((playlist) =>
+    playlist.id && hydratedById.has(playlist.id)
+      ? {
+          ...playlist,
+          ...hydratedById.get(playlist.id)
+        }
+      : playlist
+  );
+}
+
+function hasPlaylistTrackTotal(playlist: SpotifyPlaylistObject) {
+  return typeof playlist.tracks?.total === "number";
+}
+
+async function fetchPlaylistSummary(
+  tokenSet: SpotifyTokenSet,
+  playlistId: string
+) {
+  return spotifyFetch<SpotifyPlaylistObject>(
+    tokenSet,
+    `/playlists/${encodeURIComponent(playlistId)}?fields=${encodeURIComponent(
+      playlistSummaryFields
+    )}`
+  );
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>
+) {
+  const results: R[] = [];
+
+  for (let index = 0; index < items.length; index += concurrency) {
+    results.push(
+      ...(await Promise.all(items.slice(index, index + concurrency).map(mapper)))
+    );
+  }
+
+  return results;
 }
 
 function mapAlbum(album: SpotifyAlbumObject) {
   const artists = album.artists ?? [];
 
   return {
+    albumType: album.album_type,
     artists: artists.map((artist) => artist.name),
     artistIds: artists
       .map((artist) => artist.id)
@@ -535,7 +641,7 @@ function mapAlbum(album: SpotifyAlbumObject) {
     imageUrl: firstImageUrl(album.images),
     name: album.name ?? "Unknown album",
     releaseDate: album.release_date,
-    tracksTotal: album.total_tracks ?? album.tracks.total
+    tracksTotal: album.total_tracks ?? album.tracks?.total ?? 0
   } satisfies AlbumSummary;
 }
 
@@ -561,6 +667,8 @@ function mapTrackObject(
     albumId: album?.id,
     albumImageUrl: firstImageUrl(album?.images),
     albumReleaseDate: album?.release_date,
+    albumTracksTotal: album?.total_tracks,
+    albumType: album?.album_type,
     artists: artists.map((artist) => artist.name),
     artistIds: artists
       .map((artist) => artist.id)

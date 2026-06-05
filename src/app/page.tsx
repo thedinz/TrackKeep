@@ -19,7 +19,7 @@ import {
   Settings,
   ShieldCheck
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   SOURCE_PROVIDER_CATALOG,
   type ProviderRiskLevel,
@@ -185,6 +185,8 @@ type BackupTrack = {
   albumId?: string;
   albumImageUrl?: string;
   albumReleaseDate?: string;
+  albumTracksTotal?: number;
+  albumType?: string;
   artists: string[];
   artistIds?: string[];
   discNumber?: number;
@@ -344,6 +346,7 @@ const mediaSourceProviders: readonly SourceProviderCatalogEntry[] =
   );
 
 export default function Home() {
+  const missingBackupActionsRef = useRef<HTMLDivElement | null>(null);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [spotifyAuthConfig, setSpotifyAuthConfig] =
@@ -758,6 +761,30 @@ export default function Home() {
       setIsSearchingProvider(false);
     }
   }, []);
+
+  const scrollToMissingBackupActions = useCallback(() => {
+    const actionsElement = missingBackupActionsRef.current;
+
+    if (!actionsElement) {
+      return;
+    }
+
+    actionsElement.scrollIntoView({
+      behavior: "smooth",
+      block: "start"
+    });
+    actionsElement.focus({
+      preventScroll: true
+    });
+  }, []);
+
+  const openMissingBackupActions = useCallback(
+    async (track: BackupTrack) => {
+      scrollToMissingBackupActions();
+      await searchProviderTrack(track);
+    },
+    [scrollToMissingBackupActions, searchProviderTrack]
+  );
 
   const searchSelectedProviderTrack = useCallback(async () => {
     const selectedTrack = tracks.find(
@@ -1748,7 +1775,7 @@ export default function Home() {
                   }`}
                   disabled={!canOrganizeLibrary || isOrganizingLibrary}
                   onClick={() => void organizeLibraryMatches()}
-                  title="Move matched files into Artist - Album folders"
+                  title="Move matched files into Lidarr-style folders"
                   type="button"
                 >
                   {isOrganizingLibrary ? (
@@ -1854,7 +1881,12 @@ export default function Home() {
               ) : null}
 
               {!isLoadingTracks && activeSource ? (
-                <div className="provider-download backup-workflow">
+                <div
+                  aria-label="Missing backup actions"
+                  className="provider-download backup-workflow"
+                  ref={missingBackupActionsRef}
+                  tabIndex={-1}
+                >
                   <div className="backup-workflow-header">
                     <div>
                       <span className="stat-label">Missing backup actions</span>
@@ -2199,7 +2231,7 @@ export default function Home() {
                             {renderLibraryMatch(
                               libraryMatch,
                               libraryIndex,
-                              () => void searchProviderTrack(track),
+                              () => void openMissingBackupActions(track),
                               isSearchingProvider ||
                                 isDownloadingProvider ||
                                 isDownloadingBulkProvider

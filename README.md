@@ -1,10 +1,10 @@
 # SpotifyBU
 
-SpotifyBU is a Docker-first web app for turning a Spotify library into a local, Navidrome-ready backup. It connects to a user's Spotify account, reads playlists, resolves Spotify song/album metadata, checks which songs are already backed up locally, stages missing tracks into stable Navidrome folders such as `Artist - Album`, and exports backup metadata.
+SpotifyBU is a Docker-first web app for turning a Spotify library into a local, Navidrome-ready backup. It connects to a user's Spotify account, reads playlists, resolves Spotify song/album metadata, checks which songs are already backed up locally, stages missing tracks into Lidarr-compatible Navidrome folders, and exports backup metadata.
 
 The point is not to replace Navidrome search. Navidrome already tells you what is in Navidrome. SpotifyBU uses Spotify as the source-of-truth list, uses Navidrome matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
 
-Current stable release: `1.1.3`. It includes the web UI, local app login, Spotify OAuth, playlist/song/album metadata reads, Navidrome library checks, folder planning, library indexing, matched-file organization, Navidrome playlist creation, Docker packaging, and automatic provider sourcing inspired by spotDL.
+Current stable release: `1.1.4`. It includes the web UI, local app login, Spotify OAuth, playlist/song/album metadata reads, Navidrome library checks, Lidarr-compatible folder planning, library indexing, matched-file organization, Navidrome playlist creation, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
 SpotifyBU can source audio from files already present in the mounted Navidrome music library and can search YouTube first, then JioSaavn, for missing Spotify tracks. Single-track backup lets the user review provider candidates before downloading. Bulk playlist backup is intentionally more automated: after the user chooses quality, accepts the provider warnings, and starts the job, SpotifyBU searches each missing track, chooses the highest-scoring candidate, and stages the final file into the configured Navidrome library. Provider downloads show authorization and bulk-risk warnings, preserve provenance, and stage files only into the configured Navidrome library.
 
@@ -21,10 +21,10 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - JSON and CSV metadata exports
 - Navidrome library folder status checks
 - Navidrome library indexing for local backup coverage checks
-- Navidrome folder planning using `Artist - Album`
+- Navidrome folder planning using Lidarr-style artist, album, and track paths
 - Backup coverage counts for backed-up and missing Spotify tracks
 - Track backup table with one-click provider search for missing tracks
-- Matched-file organization into planned Navidrome album folders
+- Matched-file organization into Lidarr-compatible Navidrome album folders
 - Create or update matching Navidrome playlists from backed-up Spotify playlist tracks
 - Stable album-folder logging for staged download jobs
 - Spotify title, artist, album, and album-cover tagging for staged provider downloads
@@ -52,13 +52,13 @@ The test image built from the `dev` branch is:
 ghcr.io/thedinz/spotifybu:dev
 ```
 
-Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds use prerelease versions such as `1.1.0-dev.9`; stable releases use normal version tags such as `1.1.3`.
+Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.1.0-dev.12`; stable releases use normal version tags such as `1.1.4`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
 
-For the exact v1.1.3 release, pin one of these tags:
+For the exact v1.1.4 release, pin one of these tags:
 
 ```text
-ghcr.io/thedinz/spotifybu:v1.1.3
-ghcr.io/thedinz/spotifybu:1.1.3
+ghcr.io/thedinz/spotifybu:v1.1.4
+ghcr.io/thedinz/spotifybu:1.1.4
 ghcr.io/thedinz/spotifybu:1.1
 ```
 
@@ -78,7 +78,6 @@ services:
     ports:
       - "3000:3000"
     environment:
-      GIT_BRANCH: main
       NAVIDROME_LIBRARY_PATH: /music
       NAVIDROME_URL: http://host.docker.internal:4533
       NAVIDROME_USERNAME: your-navidrome-username
@@ -95,7 +94,7 @@ volumes:
   spotifybu_config:
 ```
 
-For testing the `dev` branch, change the image to `ghcr.io/thedinz/spotifybu:dev` and set `GIT_BRANCH=dev`.
+For testing the `dev` branch, change the image to `ghcr.io/thedinz/spotifybu:dev`.
 
 Then start it:
 
@@ -133,7 +132,7 @@ Set these values before starting the app:
 | --- | --- | --- |
 | `SPOTIFYBU_IMAGE` | No | Docker image tag to run. The checked-in Docker example defaults to `ghcr.io/thedinz/spotifybu:dev` for testing. Use `ghcr.io/thedinz/spotifybu:latest` for stable installs. |
 | `SPOTIFYBU_PORT` | No | Host port for the web UI. Defaults to `3000`. |
-| `NEXT_PUBLIC_APP_URL` | Yes | Public URL for SpotifyBU. Must match the Spotify redirect base URL. |
+| `NEXT_PUBLIC_APP_URL` | No | Public URL for SpotifyBU. Set this for reverse-proxy installs. If blank, SpotifyBU derives it from `X-Forwarded-Host`/`X-Forwarded-Proto` or the request host. |
 | `SPOTIFYBU_APP_SECRET` | Yes | Long random value used to sign SpotifyBU's own login sessions. This is not your Spotify app Client Secret. |
 | `SPOTIFYBU_SECURE_COOKIES` | No | Set `true` for HTTPS reverse-proxy installs. Defaults to `false` in the Docker example for Unraid-style HTTP installs. |
 | `NAVIDROME_MUSIC_PATH` | Yes | Host path to the music folder Navidrome scans. |
@@ -145,6 +144,8 @@ Set these values before starting the app:
 Inside the container:
 
 - `/config` stores SpotifyBU settings and changed login credentials.
+- `/config/logs/spotifybu.log` stores focused JSON-line diagnostics for Spotify
+  route failures and unusual Spotify playlist payloads.
 - `/music` is the mounted Navidrome music library.
 - `NAVIDROME_LIBRARY_PATH` is set to `/music`.
 - `SPOTIFYBU_CONFIG_DIR` is set to `/config`.
@@ -168,6 +169,13 @@ NEXT_PUBLIC_APP_URL=https://spotifybu.example.com
 SPOTIFYBU_SECURE_COOKIES=true
 ```
 
+For reverse-proxy installs, setting `NEXT_PUBLIC_APP_URL` is recommended. You
+can leave it blank only when your proxy forwards the original host and scheme
+with `X-Forwarded-Host` and `X-Forwarded-Proto`. After signing in to SpotifyBU,
+check the Connect Spotify screen and copy the redirect URI it shows into the
+Spotify Developer Dashboard. If that URI shows the wrong host or scheme, set
+`NEXT_PUBLIC_APP_URL` to the exact public base URL.
+
 The HTTPS endpoint does not have to expose SpotifyBU broadly to the internet.
 It only has to be reachable by the browser doing the Spotify login. Common
 options are an internal HTTPS reverse proxy with local DNS, a reverse proxy with
@@ -182,13 +190,12 @@ NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000
 SPOTIFYBU_SECURE_COOKIES=false
 ```
 
-Then add this Spotify redirect URI:
+Then add the Spotify redirect URI shown on SpotifyBU's Connect Spotify screen.
+When `NEXT_PUBLIC_APP_URL` is set, it will be:
 
 ```text
 <NEXT_PUBLIC_APP_URL>/api/auth/callback
 ```
-
-SpotifyBU also honors standard `X-Forwarded-Host` and `X-Forwarded-Proto` headers when `NEXT_PUBLIC_APP_URL` is not set, but setting `NEXT_PUBLIC_APP_URL` is recommended for reverse-proxy installs because Spotify OAuth redirect URIs must be exact.
 
 Your proxy should forward the original host and scheme. For most proxies, that means passing `X-Forwarded-Host` and `X-Forwarded-Proto` to the container.
 
@@ -199,7 +206,8 @@ Your proxy should forward the original host and scheme. For most proxies, that m
 3. Leave the Spotify app's Client Secret out of SpotifyBU. SpotifyBU uses
    Authorization Code with PKCE, which exchanges the login code with
    `client_id` and `code_verifier` instead of `client_secret`.
-4. Add this redirect URI to the Spotify app:
+4. Add the redirect URI shown on SpotifyBU's Connect Spotify screen to the
+   Spotify app. When `NEXT_PUBLIC_APP_URL` is set, the URI is:
 
    ```text
    <NEXT_PUBLIC_APP_URL>/api/auth/callback
@@ -251,9 +259,15 @@ Provider downloads stage temporary files under:
 /music/.spotifybu/tmp/provider-downloads
 ```
 
-Finished files are moved into their final `Artist - Album` folder before the response completes. If a download, move, or conversion fails, leftover staging files stay on the mounted music volume rather than the container filesystem. After 10 minutes of provider-download idleness, SpotifyBU removes stale staging files older than 10 minutes old.
+Finished files are moved into their final Lidarr-style `Artist/Artist - Album Type - Release Year - Album/0103 - Track` path before the response completes. If a download, move, or conversion fails, leftover staging files stay on the mounted music volume rather than the container filesystem. After 10 minutes of provider-download idleness, SpotifyBU removes stale staging files older than 10 minutes old.
 
 Navidrome still needs read access to the same host folder and a scan/watch configuration that sees new files.
+
+### Organize Matched Files
+
+After a library scan, the Organize action compares matched local files against the same Lidarr-style artist, album, and track naming format used for new SpotifyBU downloads. It moves or renames loose files, older SpotifyBU folder layouts, and other matched tracks that are not already in the expected structure. Files already inside a compatible Lidarr-shaped artist/album folder for the same release are left alone, so Lidarr should not suddenly see missing albums just because SpotifyBU organized a playlist.
+
+Running Organize before backing up missing files is recommended, but not required. It gives SpotifyBU a clean library view first, can repair older organize runs, and reduces the chance of downloading a track that already exists under a messy path. If you skip it, new provider downloads still stage into the Lidarr-compatible layout.
 
 SpotifyBU's Library Index scan reads the mounted music folder directly. It does
 not need a Navidrome username or password for that local index. If
@@ -318,6 +332,17 @@ Then open:
 http://127.0.0.1:3000
 ```
 
+For repeatable Windows/PowerShell verification, run:
+
+```powershell
+.\scripts\verify.ps1
+```
+
+The script bootstraps a portable Node.js 22 runtime into the ignored `.tools`
+folder when needed, installs locked dependencies with `npm ci`, then runs
+`npm run typecheck` and `npm run build`. If dependencies are already current,
+use `.\scripts\verify.ps1 -SkipInstall`.
+
 ## Building The Image Locally
 
 To build from source instead of using GHCR:
@@ -348,7 +373,7 @@ docker run --rm -p 3000:3000 \
 - `src/app/api/providers/download/route.ts` starts confirmed single-track provider download jobs.
 - `src/app/api/providers/download/status/[jobId]/route.ts` reports provider download job status for UI polling.
 - `src/app/api/providers/download/batch/route.ts` supports confirmed throttled provider download queues.
-- `src/app/api/navidrome/library/organize/route.ts` moves matched local files into their planned Navidrome album folders in small batches.
+- `src/app/api/navidrome/library/organize/route.ts` moves or renames matched local files into their planned Lidarr-compatible Navidrome paths in small batches.
 - `src/app/api/spotify/playlists/[playlistId]/navidrome/route.ts` creates or updates a matching Navidrome playlist from backed-up Spotify tracks.
 - `src/lib/session.ts` and `src/lib/server-session.ts` own PKCE cookie and Spotify token-session handling.
 - `.github/workflows/docker-image.yml` publishes GHCR images for `dev`, `main`, and `v*` tags. The `dev` branch publishes `dev`; `main` and version tags publish stable tags such as `latest`.

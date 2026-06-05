@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { appendDiagnosticLog, diagnosticError } from "@/lib/diagnostics";
 import { createOrUpdateNavidromePlaylistFromSpotify } from "@/lib/navidrome";
 import { getSpotifySession, withSessionCookie } from "@/lib/server-session";
 import { getPlaylist, getPlaylistTracks } from "@/lib/spotify";
@@ -43,6 +44,14 @@ export async function POST(_request: Request, context: RouteContext) {
       session
     );
   } catch (error) {
+    const params = await context.params;
+
+    await appendDiagnosticLog("spotify.playlist_navidrome.route_failed", {
+      error: diagnosticError(error),
+      playlistId: params.playlistId,
+      route: "/api/spotify/playlists/[playlistId]/navidrome"
+    });
+
     return withSessionCookie(
       NextResponse.json(
         {
