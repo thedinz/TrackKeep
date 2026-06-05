@@ -4,7 +4,7 @@ SpotifyBU is a Docker-first web app for turning a Spotify library into a local, 
 
 The point is not to replace Navidrome search. Navidrome already tells you what is in Navidrome. SpotifyBU uses Spotify as the source-of-truth list, uses Navidrome matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
 
-Current stable release: `1.1.1`. It includes the web UI, local app login, Spotify OAuth, playlist/song/album metadata reads, Navidrome library checks, folder planning, library indexing, matched-file organization, Navidrome playlist creation, Docker packaging, and automatic provider sourcing inspired by spotDL.
+Current stable release: `1.1.4`. It includes the web UI, local app login, Spotify OAuth, playlist/song/album metadata reads, Navidrome library checks, Lidarr-compatible folder planning, library indexing, matched-file organization, Navidrome playlist creation, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
 SpotifyBU can source audio from files already present in the mounted Navidrome music library and can search YouTube first, then JioSaavn, for missing Spotify tracks. Single-track backup lets the user review provider candidates before downloading. Bulk playlist backup is intentionally more automated: after the user chooses quality, accepts the provider warnings, and starts the job, SpotifyBU searches each missing track, chooses the highest-scoring candidate, and stages the final file into the configured Navidrome library. Provider downloads show authorization and bulk-risk warnings, preserve provenance, and stage files only into the configured Navidrome library.
 
@@ -52,13 +52,13 @@ The test image built from the `dev` branch is:
 ghcr.io/thedinz/spotifybu:dev
 ```
 
-Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds use prerelease versions such as `1.1.0-dev.12`; stable releases use normal version tags such as `1.1.1`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
+Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.1.0-dev.12`; stable releases use normal version tags such as `1.1.4`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
 
-For the exact v1.1.1 release, pin one of these tags:
+For the exact v1.1.4 release, pin one of these tags:
 
 ```text
-ghcr.io/thedinz/spotifybu:v1.1.1
-ghcr.io/thedinz/spotifybu:1.1.1
+ghcr.io/thedinz/spotifybu:v1.1.4
+ghcr.io/thedinz/spotifybu:1.1.4
 ghcr.io/thedinz/spotifybu:1.1
 ```
 
@@ -262,6 +262,12 @@ Provider downloads stage temporary files under:
 Finished files are moved into their final Lidarr-style `Artist/Artist - Album Type - Release Year - Album/0103 - Track` path before the response completes. If a download, move, or conversion fails, leftover staging files stay on the mounted music volume rather than the container filesystem. After 10 minutes of provider-download idleness, SpotifyBU removes stale staging files older than 10 minutes old.
 
 Navidrome still needs read access to the same host folder and a scan/watch configuration that sees new files.
+
+### Organize Matched Files
+
+After a library scan, the Organize action compares matched local files against the same Lidarr-style artist, album, and track naming format used for new SpotifyBU downloads. It moves or renames loose files, older SpotifyBU folder layouts, and other matched tracks that are not already in the expected structure. Files already inside a compatible Lidarr-shaped artist/album folder for the same release are left alone, so Lidarr should not suddenly see missing albums just because SpotifyBU organized a playlist.
+
+Running Organize before backing up missing files is recommended, but not required. It gives SpotifyBU a clean library view first, can repair older organize runs, and reduces the chance of downloading a track that already exists under a messy path. If you skip it, new provider downloads still stage into the Lidarr-compatible layout.
 
 SpotifyBU's Library Index scan reads the mounted music folder directly. It does
 not need a Navidrome username or password for that local index. If
