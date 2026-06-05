@@ -843,9 +843,14 @@ export async function organizeNavidromeMatchedTracks(
       (!trackPositionFilter || trackPositionFilter.has(match.trackPosition))
   );
   const batchCandidates = moveCandidates.slice(0, maxMoves);
-  const occupiedRelativePaths = new Set(
-    currentIndex.tracks.map((track) => normalizeRelativePathKey(track.relativePath))
+  let updatedTracks = currentIndex.tracks.map((track) => ({ ...track }));
+  const tracksByRelativePath = new Map(
+    updatedTracks.map((track) => [
+      normalizeRelativePathKey(track.relativePath),
+      track
+    ])
   );
+  const occupiedRelativePaths = new Set(tracksByRelativePath.keys());
   let movedCount = 0;
   let skippedCount = 0;
 
@@ -856,13 +861,16 @@ export async function organizeNavidromeMatchedTracks(
       continue;
     }
 
-    const sourcePath = absoluteLibraryPath(libraryPath, matchedTrack.relativePath);
+    const sourceRelativePathKey = normalizeRelativePathKey(matchedTrack.relativePath);
+    const indexedTrack = tracksByRelativePath.get(sourceRelativePathKey) ?? matchedTrack;
+    const sourcePath = absoluteLibraryPath(libraryPath, indexedTrack.relativePath);
     const targetRelativePath = await nextAvailableRelativeTrackPath({
       desiredRelativePath: match.recommendedRelativePath,
       libraryPath,
       occupiedRelativePaths,
-      originalRelativePath: matchedTrack.relativePath
+      originalRelativePath: indexedTrack.relativePath
     });
+    const targetRelativePathKey = normalizeRelativePathKey(targetRelativePath);
     const targetPath = absoluteLibraryPath(libraryPath, targetRelativePath);
     const targetDirectory = relativeDirectoryName(targetRelativePath);
 
@@ -870,11 +878,22 @@ export async function organizeNavidromeMatchedTracks(
 
     try {
       await rename(sourcePath, targetPath);
-      occupiedRelativePaths.delete(normalizeRelativePathKey(matchedTrack.relativePath));
-      occupiedRelativePaths.add(normalizeRelativePathKey(targetRelativePath));
-      matchedTrack.fileName = path.posix.basename(targetRelativePath);
-      matchedTrack.relativePath = targetRelativePath;
-      matchedTrack.relativeDirectory = relativeDirectoryName(targetRelativePath);
+      const movedTrack = {
+        ...indexedTrack,
+        fileName: path.posix.basename(targetRelativePath),
+        relativeDirectory: targetDirectory,
+        relativePath: targetRelativePath
+      } satisfies NavidromeIndexedTrack;
+
+      updatedTracks = updatedTracks.map((track) =>
+        normalizeRelativePathKey(track.relativePath) === sourceRelativePathKey
+          ? movedTrack
+          : track
+      );
+      tracksByRelativePath.delete(sourceRelativePathKey);
+      tracksByRelativePath.set(targetRelativePathKey, movedTrack);
+      occupiedRelativePaths.delete(sourceRelativePathKey);
+      occupiedRelativePaths.add(targetRelativePathKey);
       movedCount += 1;
     } catch {
       skippedCount += 1;
@@ -883,7 +902,10 @@ export async function organizeNavidromeMatchedTracks(
 
   const updatedIndex = {
     ...currentIndex,
-    generatedAt: new Date().toISOString()
+    generatedAt: new Date().toISOString(),
+    tracks: updatedTracks.sort((left, right) =>
+      left.relativePath.localeCompare(right.relativePath)
+    )
   } satisfies NavidromeLibraryIndex;
 
   await writeNavidromeLibraryIndex(updatedIndex);
@@ -1929,45 +1951,103 @@ function findIndexedTrackMatch(
   const artists = normalizedSpotifyArtists(track);
 
   if (trackIsrc) {
-    const match = lookup.isrcMatches
-      .get(trackIsrc)
-      ?.find((candidate) => hasArtistOverlap(artists, candidate.artistKeys));
+    const match = bestIndexedTrackMatch(
+      track,
+      lookup.isrcMatches
+        .get(trackIsrc)
+        ?.filter((candidate) => hasArtistOverlap(artists, candidate.artistKeys)),
+      "isrc"
+    );
 
     if (match) {
-      return {
-        matchedBy: "isrc" as const,
-        track: match.track
-      };
+      return match;
     }
   }
 
-  const metadataMatch = lookup.metadataMatches
-    .get(navidromeMatchLookupKey(title, album))
-    ?.find((candidate) => hasArtistOverlap(artists, candidate.artistKeys));
+  const metadataMatch = bestIndexedTrackMatch(
+    track,
+    lookup.metadataMatches
+      .get(navidromeMatchLookupKey(title, album))
+      ?.filter((candidate) => hasArtistOverlap(artists, candidate.artistKeys)),
+    "metadata"
+  );
 
   if (metadataMatch) {
-    return {
-      matchedBy: "metadata" as const,
-      track: metadataMatch.track
-    };
+    return metadataMatch;
   }
 
-  const durationMatch = lookup.titleMatches
-    .get(title)
-    ?.find(
-      (candidate) =>
-        hasArtistOverlap(artists, candidate.artistKeys) &&
-        durationCloseEnough(track.durationMs, candidate.track.durationMs)
-    );
+  const durationMatch = bestIndexedTrackMatch(
+    track,
+    lookup.titleMatches
+      .get(title)
+      ?.filter(
+        (candidate) =>
+          hasArtistOverlap(artists, candidate.artistKeys) &&
+          durationCloseEnough(track.durationMs, candidate.track.durationMs)
+      ),
+    "duration"
+  );
 
   if (durationMatch) {
-    return {
-      matchedBy: "duration" as const,
-      track: durationMatch.track
-    };
+    return durationMatch;
   }
 
   return null;
+}
+
+function bestIndexedTrackMatch(
+  track: BackupTrack,
+  candidates: NavidromeTrackLookupEntry[] | undefined,
+  matchedBy: "duration" | "isrc" | "metadata"
+) {
+  const bestCandidate = candidates
+    ?.map((candidate) => ({
+      candidate,
+      score: indexedTrackMatchScore(track, candidate.track)
+    }))
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        left.candidate.track.relativePath.localeCompare(
+          right.candidate.track.relativePath
+        )
+    )[0]?.candidate;
+
+  return bestCandidate
+    ? {
+        matchedBy,
+        track: bestCandidate.track
+      }
+    : null;
+}
+
+function indexedTrackMatchScore(
+  track: BackupTrack,
+  indexedTrack: NavidromeIndexedTrack
+) {
+  const organizationPlan = buildTrackOrganizationPlan(track, indexedTrack);
+  let score = 0;
+
+  if (!organizationPlan.needsMove) {
+    score += 1000;
+  }
+
+  if (
+    normalizeRelativePathKey(indexedTrack.relativeDirectory) ===
+    normalizeRelativePathKey(organizationPlan.expectedFolder)
+  ) {
+    score += 100;
+  }
+
+  if (durationCloseEnough(track.durationMs, indexedTrack.durationMs)) {
+    score += 10;
+  }
+
+  if (normalizeText(track.album) === normalizeText(indexedTrack.album)) {
+    score += 5;
+  }
+
+  return score;
 }
 
 type NavidromeTrackLookup = {
