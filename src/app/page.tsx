@@ -45,6 +45,10 @@ type AppInfo = {
   version: string;
 };
 
+type AppAuthStatus = {
+  authenticated: boolean;
+};
+
 type SpotifyAuthConfigResponse = {
   appBaseUrl: string;
   redirectUri: string;
@@ -942,6 +946,7 @@ export default function Home() {
   );
 
   useEffect(() => {
+    let cancelled = false;
     const params = new URLSearchParams(window.location.search);
     const error = params.get("error");
 
@@ -951,10 +956,41 @@ export default function Home() {
     }
 
     void loadAppInfo();
-    void loadSpotifyAuthConfig();
-    void loadLibraryIndex();
-    void loadSession();
-    void loadNavidromeStatus();
+
+    async function loadAuthenticatedStartupData() {
+      try {
+        const appSession = await fetchJson<AppAuthStatus>("/api/app-auth/session");
+
+        if (cancelled) {
+          return;
+        }
+
+        if (!appSession.authenticated) {
+          redirectToLogin();
+          return;
+        }
+      } catch {
+        if (!cancelled) {
+          redirectToLogin();
+        }
+        return;
+      }
+
+      if (cancelled) {
+        return;
+      }
+
+      void loadSpotifyAuthConfig();
+      void loadLibraryIndex();
+      void loadSession();
+      void loadNavidromeStatus();
+    }
+
+    void loadAuthenticatedStartupData();
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     loadAppInfo,
     loadLibraryIndex,
@@ -2493,6 +2529,17 @@ export default function Home() {
       </footer>
     </main>
   );
+}
+
+function redirectToLogin() {
+  const nextPath = `${window.location.pathname}${window.location.search}`;
+  const params = new URLSearchParams();
+
+  if (nextPath && nextPath !== "/" && !nextPath.startsWith("//")) {
+    params.set("next", nextPath);
+  }
+
+  window.location.href = params.size ? `/login?${params}` : "/login";
 }
 
 async function fetchJson<T>(url: string) {

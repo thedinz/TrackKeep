@@ -1467,6 +1467,10 @@ async function navidromeApiRequest(
   });
 
   if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new NavidromeApiError(navidromeAuthFailureMessage(), 40);
+    }
+
     throw new Error(`Navidrome API returned HTTP ${response.status}.`);
   }
 
@@ -1479,7 +1483,7 @@ async function navidromeApiRequest(
 
   if (subsonicResponse.status !== "ok") {
     throw new NavidromeApiError(
-      subsonicResponse.error?.message ?? "Navidrome API request failed.",
+      navidromeApiErrorMessage(subsonicResponse.error),
       subsonicResponse.error?.code
     );
   }
@@ -1508,7 +1512,25 @@ function isNavidromeAuthError(error: unknown) {
 }
 
 function errorMessage(error: unknown) {
+  if (isNavidromeAuthError(error)) {
+    return navidromeAuthFailureMessage();
+  }
+
   return error instanceof Error ? error.message : "Unknown error.";
+}
+
+function navidromeApiErrorMessage(error?: { message?: string }) {
+  const message = error?.message?.trim();
+
+  if (!message || /^forbidden$/i.test(message)) {
+    return navidromeAuthFailureMessage();
+  }
+
+  return message;
+}
+
+function navidromeAuthFailureMessage() {
+  return "Navidrome rejected the configured API credentials. Check NAVIDROME_USERNAME and NAVIDROME_PASSWORD.";
 }
 
 async function findAudioFiles(libraryPath: string) {

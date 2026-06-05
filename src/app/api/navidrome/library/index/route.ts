@@ -11,17 +11,44 @@ export const runtime = "nodejs";
 export const maxDuration = 900;
 
 export async function GET() {
-  return NextResponse.json(
-    {
-      index: await getNavidromeLibraryIndexSummary(),
-      scan: getNavidromeLibraryIndexScanStatus()
-    },
-    {
-      headers: {
-        "Cache-Control": "no-store"
+  try {
+    return NextResponse.json(
+      {
+        index: await getNavidromeLibraryIndexSummary(),
+        scan: getNavidromeLibraryIndexScanStatus()
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store"
+        }
       }
-    }
-  );
+    );
+  } catch (error) {
+    const scan = getNavidromeLibraryIndexScanStatus();
+
+    return NextResponse.json(
+      {
+        index: getCachedNavidromeLibraryIndexSummary() ?? {
+          stale: true,
+          trackCount: 0
+        },
+        scan: {
+          ...scan,
+          completedAt: scan.completedAt ?? new Date().toISOString(),
+          error:
+            error instanceof Error
+              ? error.message
+              : "SpotifyBU could not read the Navidrome library index.",
+          state: "failed"
+        }
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store"
+        }
+      }
+    );
+  }
 }
 
 export async function POST() {
