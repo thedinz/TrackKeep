@@ -323,6 +323,17 @@ Then open:
 http://127.0.0.1:3000
 ```
 
+For repeatable Windows/PowerShell verification, run:
+
+```powershell
+.\scripts\verify.ps1
+```
+
+The script bootstraps a portable Node.js 22 runtime into the ignored `.tools`
+folder when needed, installs locked dependencies with `npm ci`, then runs
+`npm run typecheck` and `npm run build`. If dependencies are already current,
+use `.\scripts\verify.ps1 -SkipInstall`.
+
 ## Building The Image Locally
 
 To build from source instead of using GHCR:
