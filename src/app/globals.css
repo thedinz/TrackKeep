@@ -1266,6 +1266,36 @@ button {
   overflow-wrap: anywhere;
 }
 
+.provider-candidate-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.provider-inline-button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: #b9ffd0;
+  display: inline-flex;
+  font-size: 0.82rem;
+  font-weight: 800;
+  gap: 5px;
+  min-height: 0;
+  padding: 0;
+}
+
+.provider-inline-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.provider-manual-source {
+  display: grid;
+  gap: 8px;
+}
+
 .provider-download .provider-success {
   background: rgba(37, 230, 109, 0.1);
   border: 1px solid rgba(37, 230, 109, 0.36);

@@ -9,6 +9,7 @@ import {
   FileJson,
   FileText,
   HardDrive,
+  Link2,
   ListMusic,
   Loader2,
   LogIn,
@@ -343,6 +344,7 @@ const libraryOrganizeBatchSize = 10;
 const folderPlanPreviewLimit = 5;
 const downloadEnabledProviderIds = new Set(["jiosaavn", "youtube"]);
 const providerSearchOrder = ["youtube", "jiosaavn"] as const;
+const singleTrackProviderSearchLimit = 8;
 const providerDownloadPollIntervalMs = 2500;
 const maxProviderDownloadPollAttempts = 720;
 const mediaSourceProviders: readonly SourceProviderCatalogEntry[] =
@@ -401,6 +403,9 @@ export default function Home() {
   >([]);
   const [selectedProviderCandidateId, setSelectedProviderCandidateId] =
     useState("");
+  const [manualProviderSourceUrl, setManualProviderSourceUrl] = useState("");
+  const [isManualProviderSourceOpen, setIsManualProviderSourceOpen] =
+    useState(false);
   const [downloadRightsConfirmed, setDownloadRightsConfirmed] = useState(false);
   const [downloadBulkRiskAccepted, setDownloadBulkRiskAccepted] = useState(false);
   const [providerDownloadMessage, setProviderDownloadMessage] =
@@ -438,6 +443,8 @@ export default function Home() {
     setProviderDownloadStatusLabel(null);
     setProviderCandidates([]);
     setSelectedProviderCandidateId("");
+    setManualProviderSourceUrl("");
+    setIsManualProviderSourceOpen(false);
     setDownloadRightsConfirmed(false);
     setDownloadBulkRiskAccepted(false);
   }, []);
@@ -806,12 +813,14 @@ export default function Home() {
     setProviderDownloadMessage(null);
     setProviderDownloadStatusLabel(null);
     setRequestError(null);
+    setManualProviderSourceUrl("");
+    setIsManualProviderSourceOpen(false);
 
     try {
       const response = await postJson<ProviderSearchResponse>(
         "/api/providers/search",
         {
-          limit: 4,
+          limit: singleTrackProviderSearchLimit,
           providerIds: providerSearchOrder,
           track
         }
@@ -876,6 +885,20 @@ export default function Home() {
     tracks
   ]);
 
+  const toggleManualProviderSource = useCallback(() => {
+    const nextIsOpen = !isManualProviderSourceOpen;
+
+    setIsManualProviderSourceOpen(nextIsOpen);
+
+    if (!nextIsOpen) {
+      setManualProviderSourceUrl("");
+    }
+
+    setDownloadRightsConfirmed(false);
+    setDownloadBulkRiskAccepted(false);
+    setProviderDownloadMessage(null);
+  }, [isManualProviderSourceOpen]);
+
   const downloadSelectedProviderCandidate = useCallback(async () => {
     const selectedTrack = tracks.find(
       (track) => String(track.position) === downloadTrackPosition
@@ -883,9 +906,38 @@ export default function Home() {
     const selectedCandidate = providerCandidates.find(
       (candidate) => candidate.id === selectedProviderCandidateId
     );
+    const manualSourceUrl = manualProviderSourceUrl.trim();
+    const manualSource = manualSourceUrl
+      ? providerSourceFromUrl(manualSourceUrl)
+      : null;
+    const downloadSource = isManualProviderSourceOpen
+      ? manualSource
+      : selectedCandidate?.url
+        ? {
+            providerId: selectedCandidate.providerId,
+            sourceUrl: selectedCandidate.url
+          }
+        : null;
 
-    if (!selectedTrack || !selectedCandidate?.url) {
-      setRequestError("Choose a provider search result before downloading.");
+    if (!selectedTrack) {
+      setRequestError("Choose a track before downloading.");
+      return;
+    }
+
+    if (isManualProviderSourceOpen && !manualSourceUrl) {
+      setRequestError("Enter a manual source URL before downloading.");
+      return;
+    }
+
+    if (manualSourceUrl && !manualSource) {
+      setRequestError("Enter a YouTube or JioSaavn HTTPS source URL.");
+      return;
+    }
+
+    if (!downloadSource?.sourceUrl) {
+      setRequestError(
+        "Choose a provider search result or enter a manual source URL before downloading."
+      );
       return;
     }
 
@@ -899,11 +951,17 @@ export default function Home() {
         "/api/providers/download",
         {
           bulkRiskAccepted: downloadBulkRiskAccepted,
-          providerId: selectedCandidate.providerId,
+          providerId: downloadSource.providerId,
           quality: downloadQuality,
           rightsConfirmed: downloadRightsConfirmed,
-          selectedReason: `User reviewed SpotifyBU provider search result (${selectedCandidate.title})`,
-          sourceUrl: selectedCandidate.url,
+          selectedReason: isManualProviderSourceOpen
+            ? `User entered a manual ${providerDisplayName(
+                downloadSource.providerId
+              )} source URL`
+            : `User reviewed SpotifyBU provider search result (${
+                selectedCandidate?.title ?? downloadSource.sourceUrl
+              })`,
+          sourceUrl: downloadSource.sourceUrl,
           track: selectedTrack
         }
       );
@@ -926,6 +984,8 @@ export default function Home() {
       setProviderDownloadStatusLabel(null);
       setProviderCandidates([]);
       setSelectedProviderCandidateId("");
+      setManualProviderSourceUrl("");
+      setIsManualProviderSourceOpen(false);
 
       try {
         await refreshLibraryMatches();
@@ -947,6 +1007,8 @@ export default function Home() {
     downloadQuality,
     downloadRightsConfirmed,
     downloadTrackPosition,
+    isManualProviderSourceOpen,
+    manualProviderSourceUrl,
     markDownloadedTrackInLibrary,
     providerCandidates,
     refreshLibraryMatches,
@@ -1309,6 +1371,8 @@ export default function Home() {
     setDownloadTrackPosition(nextDownloadTrackPosition);
     setProviderCandidates([]);
     setSelectedProviderCandidateId("");
+    setManualProviderSourceUrl("");
+    setIsManualProviderSourceOpen(false);
     setDownloadRightsConfirmed(false);
     setDownloadBulkRiskAccepted(false);
     setProviderDownloadMessage(null);
@@ -1331,11 +1395,23 @@ export default function Home() {
   const selectedProviderCandidate = providerCandidates.find(
     (candidate) => candidate.id === selectedProviderCandidateId
   );
+  const manualProviderSourceUrlTrimmed = manualProviderSourceUrl.trim();
+  const manualProviderSource = manualProviderSourceUrlTrimmed
+    ? providerSourceFromUrl(manualProviderSourceUrlTrimmed)
+    : null;
+  const selectedProviderDownloadSource = isManualProviderSourceOpen
+    ? manualProviderSource
+    : selectedProviderCandidate?.url
+      ? {
+          providerId: selectedProviderCandidate.providerId,
+          sourceUrl: selectedProviderCandidate.url
+        }
+      : null;
   const canDownloadProvider =
     Boolean(
       navidromeReady &&
         selectedDownloadTrack &&
-        selectedProviderCandidate?.url &&
+        selectedProviderDownloadSource?.sourceUrl &&
         downloadRightsConfirmed &&
         downloadBulkRiskAccepted
     ) &&
@@ -2089,6 +2165,8 @@ export default function Home() {
                             setDownloadTrackPosition(event.target.value);
                             setProviderCandidates([]);
                             setSelectedProviderCandidateId("");
+                            setManualProviderSourceUrl("");
+                            setIsManualProviderSourceOpen(false);
                             setDownloadRightsConfirmed(false);
                             setDownloadBulkRiskAccepted(false);
                             setProviderDownloadMessage(null);
@@ -2141,6 +2219,8 @@ export default function Home() {
                             }
                             onChange={(event) => {
                               setSelectedProviderCandidateId(event.target.value);
+                              setManualProviderSourceUrl("");
+                              setIsManualProviderSourceOpen(false);
                               setDownloadRightsConfirmed(false);
                               setDownloadBulkRiskAccepted(false);
                               setProviderDownloadMessage(null);
@@ -2172,13 +2252,83 @@ export default function Home() {
                             Match score {selectedProviderCandidate.score.overall}%
                           </span>
                           {selectedProviderCandidate.url ? (
-                            <a
-                              href={selectedProviderCandidate.url}
-                              rel="noreferrer"
-                              target="_blank"
+                            <span className="provider-candidate-actions">
+                              <a
+                                href={selectedProviderCandidate.url}
+                                rel="noreferrer"
+                                target="_blank"
+                              >
+                                Review source
+                              </a>
+                              <button
+                                className="provider-inline-button"
+                                disabled={
+                                  isDownloadingProvider ||
+                                  isDownloadingBulkProvider
+                                }
+                                onClick={toggleManualProviderSource}
+                                type="button"
+                              >
+                                <Link2 size={14} />
+                                {isManualProviderSourceOpen
+                                  ? "Clear manual URL"
+                                  : "Enter URL manually"}
+                              </button>
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <button
+                          className="command secondary"
+                          disabled={
+                            !selectedDownloadTrack ||
+                            isDownloadingProvider ||
+                            isDownloadingBulkProvider
+                          }
+                          onClick={toggleManualProviderSource}
+                          title="Enter a known provider source URL"
+                          type="button"
+                        >
+                          <Link2 size={18} />
+                          {isManualProviderSourceOpen
+                            ? "Clear Manual URL"
+                            : "Enter URL Manually"}
+                        </button>
+                      )}
+                      {isManualProviderSourceOpen ? (
+                        <div className="provider-manual-source">
+                          <label className="provider-field">
+                            <span>Manual source URL</span>
+                            <input
+                              disabled={
+                                isDownloadingProvider ||
+                                isDownloadingBulkProvider
+                              }
+                              onChange={(event) => {
+                                setManualProviderSourceUrl(event.target.value);
+                                setDownloadRightsConfirmed(false);
+                                setDownloadBulkRiskAccepted(false);
+                                setProviderDownloadMessage(null);
+                              }}
+                              placeholder="https://www.youtube.com/watch?v=..."
+                              type="url"
+                              value={manualProviderSourceUrl}
+                            />
+                          </label>
+                          {manualProviderSourceUrlTrimmed ? (
+                            <p
+                              className={
+                                manualProviderSource
+                                  ? "provider-queue-note"
+                                  : "provider-error"
+                              }
                             >
-                              Review source
-                            </a>
+                              {manualProviderSource
+                                ? `Manual source: ${providerDisplayName(
+                                    manualProviderSource.providerId
+                                  )}`
+                                : "Use a YouTube or JioSaavn HTTPS URL."}
+                            </p>
                           ) : null}
                         </div>
                       ) : null}
@@ -3053,6 +3203,48 @@ function bestProviderCandidate(candidates: ProviderSearchCandidate[]) {
         )
       );
     })[0];
+}
+
+function providerSourceFromUrl(sourceUrl: string) {
+  let url: URL;
+
+  try {
+    url = new URL(sourceUrl);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== "https:") {
+    return null;
+  }
+
+  const hostname = url.hostname.toLowerCase();
+
+  if (
+    hostname === "youtube.com" ||
+    hostname === "www.youtube.com" ||
+    hostname === "m.youtube.com" ||
+    hostname === "youtu.be"
+  ) {
+    return {
+      providerId: "youtube",
+      sourceUrl
+    };
+  }
+
+  if (
+    hostname === "jiosaavn.com" ||
+    hostname === "www.jiosaavn.com" ||
+    hostname === "saavn.com" ||
+    hostname === "www.saavn.com"
+  ) {
+    return {
+      providerId: "jiosaavn",
+      sourceUrl
+    };
+  }
+
+  return null;
 }
 
 function wait(milliseconds: number) {
