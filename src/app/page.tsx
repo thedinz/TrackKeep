@@ -51,6 +51,7 @@ type AppInfo = {
 
 type AppAuthStatus = {
   authenticated: boolean;
+  authMode: "external" | "internal";
 };
 
 type SpotifyAuthConfigResponse = {
@@ -454,6 +455,8 @@ export default function Home() {
   const bulkDownloadJobRef = useRef<ProviderBulkDownloadJob | null>(null);
   const refreshedBulkJobIdRef = useRef<string | null>(null);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
+  const [appAuthMode, setAppAuthMode] =
+    useState<AppAuthStatus["authMode"]>("internal");
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [spotifyAuthConfig, setSpotifyAuthConfig] =
     useState<SpotifyAuthConfigResponse | null>(null);
@@ -1235,6 +1238,10 @@ export default function Home() {
           redirectToLogin();
           return;
         }
+
+        setAppAuthMode(
+          appSession.authMode === "external" ? "external" : "internal"
+        );
       } catch {
         if (!cancelled) {
           redirectToLogin();
@@ -1451,6 +1458,7 @@ export default function Home() {
   );
 
   const isConnected = Boolean(session?.authenticated);
+  const externalAuthEnabled = appAuthMode === "external";
   const userInitial = session?.user?.displayName?.charAt(0).toUpperCase() ?? "S";
   const navidromeReady = navidromeStatus?.state === "ready";
   const navidromeApiReady =
@@ -2002,10 +2010,20 @@ export default function Home() {
             Settings
           </a>
 
-          <a className="icon-command" href="/api/app-auth/logout" title="Sign out">
-            <LogOut size={18} />
-            Sign out
-          </a>
+          {externalAuthEnabled ? (
+            <span
+              className="user-chip"
+              title="App sign-out is managed by the external auth provider"
+            >
+              <ShieldCheck size={18} />
+              External auth
+            </span>
+          ) : (
+            <a className="icon-command" href="/api/app-auth/logout" title="Sign out">
+              <LogOut size={18} />
+              Sign out
+            </a>
+          )}
         </div>
       </header>
 

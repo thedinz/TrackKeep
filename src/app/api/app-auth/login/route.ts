@@ -1,7 +1,18 @@
 import { NextResponse } from "next/server";
-import { setAppSessionCookie, verifyAppCredentials } from "@/lib/app-auth";
+import {
+  getAppAuthMode,
+  setAppSessionCookie,
+  verifyAppCredentials
+} from "@/lib/app-auth";
 
 export async function POST(request: Request) {
+  if ((await getAppAuthMode()) === "external") {
+    return NextResponse.json(
+      { error: "Built-in login is disabled because external auth is enabled." },
+      { status: 403 }
+    );
+  }
+
   const body = (await request.json().catch(() => ({}))) as {
     password?: string;
     username?: string;

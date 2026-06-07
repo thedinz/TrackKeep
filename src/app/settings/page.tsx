@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 
 type AppAuthStatus = {
   authenticated: boolean;
+  authMode: "external" | "internal";
   defaultCredentials: boolean;
   username?: string;
 };
@@ -14,7 +15,9 @@ export default function SettingsPage() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingAuthMode, setIsSavingAuthMode] = useState(false);
   const [newPassword, setNewPassword] = useState("");
+  const [authMode, setAuthMode] = useState<"external" | "internal">("internal");
   const [status, setStatus] = useState<AppAuthStatus | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [username, setUsername] = useState("");
@@ -24,6 +27,7 @@ export default function SettingsPage() {
       .then((response) => response.json())
       .then((sessionStatus: AppAuthStatus) => {
         setStatus(sessionStatus);
+        setAuthMode(sessionStatus.authMode);
         setUsername(sessionStatus.username ?? "");
       })
       .catch(() => {
@@ -62,6 +66,7 @@ export default function SettingsPage() {
         setNewPassword("");
         setStatus({
           authenticated: true,
+          authMode: body.authMode === "external" ? "external" : "internal",
           defaultCredentials: false,
           username: body.username
         });
@@ -78,6 +83,58 @@ export default function SettingsPage() {
     },
     [currentPassword, newPassword, username]
   );
+
+  const submitAuthMode = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      setError(null);
+      setSuccess(null);
+      setIsSavingAuthMode(true);
+
+      try {
+        const response = await fetch("/api/app-auth/settings", {
+          body: JSON.stringify({
+            authMode
+          }),
+          headers: {
+            "Content-Type": "application/json"
+          },
+          method: "POST"
+        });
+        const body = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(
+            typeof body.error === "string" ? body.error : "Could not save settings."
+          );
+        }
+
+        setStatus({
+          authenticated: true,
+          authMode: body.authMode === "external" ? "external" : "internal",
+          defaultCredentials: Boolean(body.defaultCredentials),
+          username: body.username
+        });
+        setUsername(typeof body.username === "string" ? body.username : "");
+        setSuccess(
+          body.authMode === "external"
+            ? "External auth enabled. Built-in login is disabled."
+            : "Internal SpotifyBU login enabled."
+        );
+      } catch (settingsError) {
+        setError(
+          settingsError instanceof Error
+            ? settingsError.message
+            : "Could not save settings."
+        );
+      } finally {
+        setIsSavingAuthMode(false);
+      }
+    },
+    [authMode]
+  );
+
+  const internalAuthEnabled = authMode === "internal";
 
   return (
     <main className="app-shell settings-shell">
@@ -105,17 +162,27 @@ export default function SettingsPage() {
             <div className="panel-title">
               <LockKeyhole size={20} />
               <div>
-                <h2>App Login</h2>
-                <p className="muted">Local SpotifyBU credentials</p>
+                <h2>App Authentication</h2>
+                <p className="muted">Internal login or external reverse-proxy auth</p>
               </div>
             </div>
           </div>
 
           <div className="settings-body">
-            {status?.defaultCredentials ? (
+            {status?.defaultCredentials && internalAuthEnabled ? (
               <div className="alert">
                 <LockKeyhole size={18} />
                 <span>You are still using the default admin/admin login.</span>
+              </div>
+            ) : null}
+
+            {!internalAuthEnabled ? (
+              <div className="alert">
+                <LockKeyhole size={18} />
+                <span>
+                  Built-in login is disabled. Make sure Authentik or another
+                  trusted proxy protects SpotifyBU before exposing this app.
+                </span>
               </div>
             ) : null}
 
@@ -133,11 +200,38 @@ export default function SettingsPage() {
               </div>
             ) : null}
 
+            <form className="auth-form" onSubmit={submitAuthMode}>
+              <label className="form-field">
+                <span className="stat-label">Authentication Provider</span>
+                <select
+                  onChange={(event) =>
+                    setAuthMode(
+                      event.target.value === "external" ? "external" : "internal"
+                    )
+                  }
+                  value={authMode}
+                >
+                  <option value="internal">Internal SpotifyBU login</option>
+                  <option value="external">External proxy auth</option>
+                </select>
+              </label>
+
+              <button
+                className="command green"
+                disabled={isSavingAuthMode || authMode === status?.authMode}
+                type="submit"
+              >
+                <Save size={18} />
+                Save auth mode
+              </button>
+            </form>
+
             <form className="auth-form" onSubmit={submitSettings}>
               <label className="form-field">
                 <span className="stat-label">Username</span>
                 <input
                   autoComplete="username"
+                  disabled={!internalAuthEnabled}
                   onChange={(event) => setUsername(event.target.value)}
                   value={username}
                 />
@@ -147,6 +241,7 @@ export default function SettingsPage() {
                 <span className="stat-label">Current Password</span>
                 <input
                   autoComplete="current-password"
+                  disabled={!internalAuthEnabled}
                   onChange={(event) => setCurrentPassword(event.target.value)}
                   placeholder="Current password"
                   type="password"
@@ -158,6 +253,7 @@ export default function SettingsPage() {
                 <span className="stat-label">New Password</span>
                 <input
                   autoComplete="new-password"
+                  disabled={!internalAuthEnabled}
                   onChange={(event) => setNewPassword(event.target.value)}
                   placeholder="At least 8 characters"
                   type="password"
@@ -168,6 +264,7 @@ export default function SettingsPage() {
               <button
                 className="command green"
                 disabled={
+                  !internalAuthEnabled ||
                   isSaving ||
                   !username.trim() ||
                   !currentPassword ||
@@ -176,7 +273,7 @@ export default function SettingsPage() {
                 type="submit"
               >
                 <Save size={18} />
-                Save login
+                Save internal login
               </button>
             </form>
           </div>

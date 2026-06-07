@@ -338,7 +338,8 @@ button {
   gap: 7px;
 }
 
-.form-field input {
+.form-field input,
+.form-field select {
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -348,7 +349,8 @@ button {
   padding: 0 12px;
 }
 
-.form-field input:focus {
+.form-field input:focus,
+.form-field select:focus {
   border-color: var(--spotify-bright);
   box-shadow: 0 0 0 3px rgba(37, 230, 109, 0.12);
 }

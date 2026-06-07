@@ -7,11 +7,15 @@ import { shouldUseSecureCookies } from "./cookies";
 
 export const APP_AUTH_COOKIE = "spotifybu_app_session";
 
+export type AppAuthMode = "external" | "internal";
+
 const defaultUsername = "admin";
 const defaultPassword = "admin";
 const sessionDurationSeconds = 60 * 60 * 24 * 7;
 
 type StoredCredentials = {
+  authMode?: AppAuthMode;
+  defaultCredentials?: boolean;
   password: {
     algorithm: "scrypt";
     hash: string;
@@ -25,10 +29,12 @@ type StoredCredentials = {
 type CredentialState =
   | {
       credentials: StoredCredentials;
+      authMode: AppAuthMode;
       defaultCredentials: false;
       username: string;
     }
   | {
+      authMode: AppAuthMode;
       defaultCredentials: true;
       username: string;
     };
@@ -40,6 +46,7 @@ export type AppAuthSession = {
 
 export type AppAuthStatus = {
   authenticated: boolean;
+  authMode: AppAuthMode;
   defaultCredentials: boolean;
   username?: string;
 };
@@ -58,14 +65,26 @@ export async function getAppAuthStatus() {
   ]);
 
   return {
-    authenticated: Boolean(session),
+    authenticated: credentialState.authMode === "external" || Boolean(session),
+    authMode: credentialState.authMode,
     defaultCredentials: credentialState.defaultCredentials,
-    username: session?.username ?? credentialState.username
+    username:
+      credentialState.authMode === "external"
+        ? "External auth"
+        : session?.username ?? credentialState.username
   } satisfies AppAuthStatus;
+}
+
+export async function getAppAuthMode() {
+  return (await readCredentialState()).authMode;
 }
 
 export async function verifyAppCredentials(username: string, password: string) {
   const credentialState = await readCredentialState();
+
+  if (credentialState.authMode === "external") {
+    return false;
+  }
 
   if (credentialState.defaultCredentials) {
     return username === defaultUsername && password === defaultPassword;
@@ -109,6 +128,8 @@ export async function updateAppCredentials({
 
   const salt = randomBytes(16).toString("base64url");
   const credentials = {
+    authMode: credentialState.authMode,
+    defaultCredentials: false,
     password: {
       algorithm: "scrypt",
       hash: scryptPassword(newPassword, salt),
@@ -122,8 +143,47 @@ export async function updateAppCredentials({
   await writeCredentials(credentials);
 
   return {
+    authMode: credentialState.authMode,
     defaultCredentials: false,
     username: cleanUsername
+  };
+}
+
+export async function updateAppAuthMode(authMode: string) {
+  const nextAuthMode = normalizeAppAuthMode(authMode);
+  const credentialState = await readCredentialState();
+
+  if (credentialState.defaultCredentials) {
+    await writeCredentials({
+      authMode: nextAuthMode,
+      defaultCredentials: true,
+      password: {
+        algorithm: "scrypt",
+        hash: scryptPassword(defaultPassword, "spotifybu-default-password"),
+        salt: "spotifybu-default-password"
+      },
+      updatedAt: new Date().toISOString(),
+      username: defaultUsername,
+      version: 1
+    });
+
+    return {
+      authMode: nextAuthMode,
+      defaultCredentials: true,
+      username: defaultUsername
+    };
+  }
+
+  await writeCredentials({
+    ...credentialState.credentials,
+    authMode: nextAuthMode,
+    updatedAt: new Date().toISOString()
+  });
+
+  return {
+    authMode: nextAuthMode,
+    defaultCredentials: false,
+    username: credentialState.username
   };
 }
 
@@ -207,7 +267,20 @@ async function readCredentialState(): Promise<CredentialState> {
       throw new Error("Invalid app auth credential file.");
     }
 
+    const authMode = credentials.authMode
+      ? normalizeAppAuthMode(credentials.authMode)
+      : getDefaultAppAuthMode();
+
+    if (credentials.defaultCredentials) {
+      return {
+        authMode,
+        defaultCredentials: true,
+        username: credentials.username
+      };
+    }
+
     return {
+      authMode,
       credentials,
       defaultCredentials: false,
       username: credentials.username
@@ -215,6 +288,7 @@ async function readCredentialState(): Promise<CredentialState> {
   } catch (error) {
     if (isNodeError(error) && error.code === "ENOENT") {
       return {
+        authMode: getDefaultAppAuthMode(),
         defaultCredentials: true,
         username: defaultUsername
       };
@@ -222,6 +296,14 @@ async function readCredentialState(): Promise<CredentialState> {
 
     throw error;
   }
+}
+
+function normalizeAppAuthMode(value?: string): AppAuthMode {
+  return value === "external" ? "external" : "internal";
+}
+
+function getDefaultAppAuthMode(): AppAuthMode {
+  return normalizeAppAuthMode(process.env.SPOTIFYBU_AUTH_MODE?.trim());
 }
 
 async function writeCredentials(credentials: StoredCredentials) {
