@@ -9,23 +9,41 @@ type AppInfo = {
   version: string;
 };
 
+type AppAuthStatus = {
+  authenticated: boolean;
+  authMode: "external" | "internal";
+};
+
 export default function LoginPage() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
+  const [appAuthStatus, setAppAuthStatus] = useState<AppAuthStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [password, setPassword] = useState("");
   const [username, setUsername] = useState("");
 
   useEffect(() => {
-    void fetch("/api/app-info")
-      .then((response) => response.json())
-      .then(setAppInfo)
-      .catch(() =>
-        setAppInfo({
+    void Promise.all([
+      fetch("/api/app-info")
+        .then((response) => response.json())
+        .catch(() => ({
           branch: "unknown",
           version: "unknown"
-        })
-      );
+        })),
+      fetch("/api/app-auth/session")
+        .then((response) => response.json())
+        .catch(() => ({
+          authenticated: false,
+          authMode: "internal"
+        }))
+    ]).then(([nextAppInfo, nextAuthStatus]) => {
+      setAppInfo(nextAppInfo);
+      setAppAuthStatus({
+        authenticated: Boolean(nextAuthStatus.authenticated),
+        authMode:
+          nextAuthStatus.authMode === "external" ? "external" : "internal"
+      });
+    });
   }, []);
 
   const submitLogin = useCallback(
@@ -66,6 +84,7 @@ export default function LoginPage() {
     },
     [password, username]
   );
+  const externalAuthEnabled = appAuthStatus?.authMode === "external";
 
   return (
     <main className="auth-shell">
@@ -88,42 +107,56 @@ export default function LoginPage() {
           </div>
         ) : null}
 
-        <form className="auth-form" onSubmit={submitLogin}>
-          <label className="form-field">
-            <span className="stat-label">Username</span>
-            <input
-              autoComplete="username"
-              onChange={(event) => setUsername(event.target.value)}
-              placeholder="admin"
-              value={username}
-            />
-          </label>
+        {externalAuthEnabled ? (
+          <div className="auth-note">
+            <Music2 size={18} />
+            <span>
+              External auth is enabled. The built-in SpotifyBU login form is
+              disabled.
+            </span>
+          </div>
+        ) : (
+          <>
+            <form className="auth-form" onSubmit={submitLogin}>
+              <label className="form-field">
+                <span className="stat-label">Username</span>
+                <input
+                  autoComplete="username"
+                  onChange={(event) => setUsername(event.target.value)}
+                  placeholder="admin"
+                  value={username}
+                />
+              </label>
 
-          <label className="form-field">
-            <span className="stat-label">Password</span>
-            <input
-              autoComplete="current-password"
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="admin"
-              type="password"
-              value={password}
-            />
-          </label>
+              <label className="form-field">
+                <span className="stat-label">Password</span>
+                <input
+                  autoComplete="current-password"
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="admin"
+                  type="password"
+                  value={password}
+                />
+              </label>
 
-          <button
-            className="command green"
-            disabled={isSubmitting || !username || !password}
-            type="submit"
-          >
-            <LogIn size={18} />
-            Sign in
-          </button>
-        </form>
+              <button
+                className="command green"
+                disabled={isSubmitting || !username || !password}
+                type="submit"
+              >
+                <LogIn size={18} />
+                Sign in
+              </button>
+            </form>
 
-        <div className="auth-note">
-          <Music2 size={18} />
-          <span>Default login is admin/admin. Change it in Settings after signing in.</span>
-        </div>
+            <div className="auth-note">
+              <Music2 size={18} />
+              <span>
+                Default login is admin/admin. Change it in Settings after signing in.
+              </span>
+            </div>
+          </>
+        )}
       </section>
 
       <footer className="app-footer auth-footer">

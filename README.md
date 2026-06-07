@@ -4,7 +4,7 @@ SpotifyBU is a Docker-first web app for turning a Spotify library into a local, 
 
 The point is not to replace Navidrome search. Navidrome already tells you what is in Navidrome. SpotifyBU uses Spotify as the source-of-truth list, uses Navidrome matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
 
-Current stable release: `1.2.0`. It includes the web UI, local app login, Spotify OAuth, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, Navidrome library checks, Lidarr-compatible folder planning, library indexing, matched-file organization, Navidrome playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
+Current stable release: `1.2.1`. It includes the web UI, local or external-proxy app auth, Spotify OAuth, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, Navidrome library checks, Lidarr-compatible folder planning, library indexing, matched-file organization, Navidrome playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
 SpotifyBU can source audio from files already present in the mounted Navidrome music library and can search YouTube first, then JioSaavn, for missing Spotify tracks. Single-track backup lets the user review provider candidates before downloading. Bulk playlist backup now starts with a dry-run candidate preview, then runs as a resumable background job with cancel and retry controls. Provider downloads show authorization and bulk-risk warnings, preserve provenance, and stage files only into the configured Navidrome library.
 
@@ -12,6 +12,7 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 
 - Spotify OAuth using Authorization Code with PKCE
 - Local SpotifyBU login with default `admin/admin` credentials
+- Settings page for switching between internal login and external reverse-proxy auth
 - Settings page for changing the SpotifyBU app username and password
 - Playlist listing with private and collaborative playlist scopes
 - Playlist rail badges for playlists known to be fully backed up
@@ -54,13 +55,13 @@ The test image built from the `dev` branch is:
 ghcr.io/thedinz/spotifybu:dev
 ```
 
-Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.2.0-dev.1`; stable releases use normal version tags such as `1.2.0`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
+Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.2.1-dev.1`; stable releases use normal version tags such as `1.2.1`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
 
-For the exact v1.2.0 release, pin one of these tags:
+For the exact v1.2.1 release, pin one of these tags:
 
 ```text
-ghcr.io/thedinz/spotifybu:v1.2.0
-ghcr.io/thedinz/spotifybu:1.2.0
+ghcr.io/thedinz/spotifybu:v1.2.1
+ghcr.io/thedinz/spotifybu:1.2.1
 ghcr.io/thedinz/spotifybu:1.2
 ```
 
@@ -86,6 +87,7 @@ services:
       NAVIDROME_PASSWORD: your-navidrome-password
       NEXT_PUBLIC_APP_URL: http://127.0.0.1:3000
       SPOTIFYBU_APP_SECRET: change-this-to-a-long-random-value
+      SPOTIFYBU_AUTH_MODE: internal
       SPOTIFYBU_CONFIG_DIR: /config
       SPOTIFY_CLIENT_ID: your-spotify-client-id
     volumes:
@@ -117,7 +119,8 @@ Username: admin
 Password: admin
 ```
 
-After signing in, open Settings and change the login.
+After signing in, open Settings and change the login or switch app access to an
+external auth provider.
 
 ## Docker Environment
 
@@ -138,6 +141,7 @@ Set these values before starting the app:
 | `SPOTIFYBU_APP_SECRET` | Yes | Long random value used to sign SpotifyBU's own login sessions. This is not your Spotify app Client Secret. |
 | `SPOTIFYBU_DATABASE_PATH` | No | Optional SQLite path. Defaults to `<SPOTIFYBU_CONFIG_DIR>/spotifybu.sqlite`. |
 | `SPOTIFYBU_SECURE_COOKIES` | No | Set `true` for HTTPS reverse-proxy installs. Defaults to `false` in the Docker example for Unraid-style HTTP installs. |
+| `SPOTIFYBU_AUTH_MODE` | No | Set `external` when Authentik or another trusted reverse proxy protects SpotifyBU. Defaults to `internal`, which keeps the built-in login page enabled. |
 | `NAVIDROME_MUSIC_PATH` | Yes | Host path to the music folder Navidrome scans. |
 | `SPOTIFY_CLIENT_ID` | Yes | Spotify app Client ID. SpotifyBU uses Authorization Code with PKCE, so it does not use or ask for the Spotify Client Secret. |
 | `NAVIDROME_URL` | No | Navidrome URL as seen by the container. Defaults to `http://host.docker.internal:4533`. |
@@ -179,6 +183,17 @@ with `X-Forwarded-Host` and `X-Forwarded-Proto`. After signing in to SpotifyBU,
 check the Connect Spotify screen and copy the redirect URI it shows into the
 Spotify Developer Dashboard. If that URI shows the wrong host or scheme, set
 `NEXT_PUBLIC_APP_URL` to the exact public base URL.
+
+If your reverse proxy also handles user authentication, open Settings and set
+Authentication Provider to `External proxy auth`, or start the container with:
+
+```text
+SPOTIFYBU_AUTH_MODE=external
+```
+
+External auth mode disables SpotifyBU's built-in login form and treats requests
+that reach the app as already authenticated. Only use it behind a trusted proxy
+such as Authentik, Authelia, or another access-control layer.
 
 The HTTPS endpoint does not have to expose SpotifyBU broadly to the internet.
 It only has to be reachable by the browser doing the Spotify login. Common
@@ -386,7 +401,7 @@ docker run --rm -p 3000:3000 \
 
 ## Architecture
 
-- `src/lib/app-auth.ts` owns the local SpotifyBU web login, session cookie signing, and persisted credential updates.
+- `src/lib/app-auth.ts` owns internal/external app auth mode, local SpotifyBU web login, session cookie signing, and persisted credential updates.
 - `src/lib/database.ts` opens the local SQLite database under `SPOTIFYBU_CONFIG_DIR`.
 - `src/lib/backup-store.ts` persists deduplicated playlist metadata backup snapshots.
 - `src/lib/spotify.ts` owns Spotify API calls and export shaping.
