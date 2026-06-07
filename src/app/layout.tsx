@@ -3,7 +3,11 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "SpotifyBU",
-  description: "Back up Spotify playlist metadata and prepare authorized media backups."
+  description: "Back up Spotify playlist metadata and prepare authorized media backups.",
+  icons: {
+    icon: "/icon.svg",
+    shortcut: "/icon.svg"
+  }
 };
 
 export default function RootLayout({

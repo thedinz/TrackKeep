@@ -21,6 +21,7 @@ import {
   upsertNavidromeLibraryIndexTrack,
   type NavidromeLibraryIndexSummary
 } from "@/lib/navidrome";
+import { getSpotifyBuDatabase } from "@/lib/database";
 import type { BackupTrack } from "@/lib/spotify";
 import {
   SOURCE_PROVIDER_CATALOG,
@@ -54,6 +55,21 @@ export type ProviderDownloadJobStatus =
   | "queued"
   | "running";
 
+export type ProviderBulkDownloadJobStatus =
+  | "cancelled"
+  | "cancelling"
+  | "completed"
+  | "failed"
+  | "queued"
+  | "running";
+
+export type ProviderBulkDownloadItemStatus =
+  | "cancelled"
+  | "completed"
+  | "downloading"
+  | "failed"
+  | "pending";
+
 export type ProviderDownloadJobSnapshot = {
   createdAt: string;
   diagnosticId: string;
@@ -69,6 +85,21 @@ export type ProviderDownloadJobSnapshot = {
   };
   status: ProviderDownloadJobStatus;
   updatedAt: string;
+};
+
+export type ProviderBulkCandidatePreviewItem = {
+  candidate?: SourceCandidate;
+  candidates: SourceCandidate[];
+  errors: ProviderSearchResult["errors"];
+  track: BackupTrack;
+};
+
+export type ProviderBulkCandidatePreviewResult = {
+  downloadableCount: number;
+  failedCount: number;
+  generatedAt: string;
+  items: ProviderBulkCandidatePreviewItem[];
+  totalCount: number;
 };
 
 type ProviderCandidateSearchOutcome =
@@ -96,6 +127,8 @@ export type AuthorizedProviderDownloadRequest = {
 };
 
 export type AuthorizedProviderDownloadBatchItem = {
+  candidateScore?: number;
+  candidateTitle?: string;
   format?: string;
   providerId: string;
   quality?: string;
@@ -105,6 +138,17 @@ export type AuthorizedProviderDownloadBatchItem = {
 };
 
 export type AuthorizedProviderDownloadBatchRequest = {
+  bulkRiskAccepted: boolean;
+  chunkPauseMs?: number;
+  chunkSize?: number;
+  delayMs?: number;
+  format?: string;
+  items: AuthorizedProviderDownloadBatchItem[];
+  quality?: string;
+  rightsConfirmed: boolean;
+};
+
+export type AuthorizedProviderBulkDownloadRequest = {
   bulkRiskAccepted: boolean;
   chunkPauseMs?: number;
   chunkSize?: number;
@@ -147,6 +191,43 @@ export type AuthorizedProviderDownloadBatchResult = {
   totalCount: number;
 };
 
+export type ProviderBulkDownloadJobItemSnapshot = {
+  candidateScore?: number;
+  candidateTitle?: string;
+  completedAt?: string;
+  download?: AuthorizedProviderDownloadResult;
+  error?: string;
+  providerId: string;
+  selectedReason?: string;
+  sourceUrl: string;
+  startedAt?: string;
+  status: ProviderBulkDownloadItemStatus;
+  track: BackupTrack;
+};
+
+export type ProviderBulkDownloadJobSnapshot = {
+  cancelRequestedAt?: string;
+  completedAt?: string;
+  completedCount: number;
+  createdAt: string;
+  diagnosticId: string;
+  failedCount: number;
+  id: string;
+  items: ProviderBulkDownloadJobItemSnapshot[];
+  pendingCount: number;
+  request: {
+    chunkPauseMs: number;
+    chunkSize: number;
+    delayMs: number;
+    format: DownloadFormat;
+    quality: DownloadQuality;
+  };
+  runningCount: number;
+  status: ProviderBulkDownloadJobStatus;
+  totalCount: number;
+  updatedAt: string;
+};
+
 type ProviderDownloadLog = {
   downloads: ProviderDownloadLogEntry[];
   updatedAt: string;
@@ -169,6 +250,22 @@ type ProviderDownloadJobRecord = {
   requestSummary: ProviderDownloadJobSnapshot["request"];
   status: ProviderDownloadJobStatus;
   updatedAt: string;
+};
+
+type ProviderBulkDownloadJobRecord = {
+  cancelRequestedAt?: string;
+  completedAt?: string;
+  createdAt: string;
+  diagnosticId: string;
+  id: string;
+  items: ProviderBulkDownloadJobItemSnapshot[];
+  request: ProviderBulkDownloadJobSnapshot["request"];
+  status: ProviderBulkDownloadJobStatus;
+  updatedAt: string;
+};
+
+type ProviderBulkDownloadJobRow = {
+  snapshot_json: string;
 };
 
 type ProviderDownloadAttemptStatus = "completed" | "failed" | "started";
@@ -266,6 +363,8 @@ const stagingRootSegments = [".spotifybu", "tmp", "provider-downloads"];
 const idleCleanupDelayMs = 10 * 60 * 1000;
 const defaultYtDlpJsRuntime = "node";
 const providerDownloadJobs = new Map<string, ProviderDownloadJobRecord>();
+const providerBulkDownloadJobs = new Map<string, ProviderBulkDownloadJobRecord>();
+const activeProviderBulkDownloadJobs = new Set<string>();
 let idleCleanupTimer: ReturnType<typeof setTimeout> | null = null;
 let activeDownloadOperations = 0;
 
@@ -328,6 +427,159 @@ export async function searchProviderCandidates(
     errors,
     providerOrder
   };
+}
+
+export async function previewProviderBulkDownloadCandidates({
+  limit,
+  providerIds,
+  tracks
+}: {
+  limit?: number;
+  providerIds?: string[];
+  tracks: BackupTrack[];
+}) {
+  if (!Array.isArray(tracks) || !tracks.length) {
+    throw new Error("Send Spotify tracks before previewing provider candidates.");
+  }
+
+  if (tracks.length > maxBatchItems) {
+    throw new Error(`Bulk previews are limited to ${maxBatchItems} tracks.`);
+  }
+
+  tracks.forEach(validateTrack);
+
+  const items = await mapWithConcurrency(tracks, 3, async (track) => {
+    try {
+      const search = await searchProviderCandidates({
+        limit: clampPositiveInteger(limit, 4, 1, 12),
+        providerIds,
+        track
+      });
+
+      return {
+        candidate: bestProviderCandidate(search.candidates),
+        candidates: search.candidates,
+        errors: search.errors,
+        track
+      } satisfies ProviderBulkCandidatePreviewItem;
+    } catch (error) {
+      return {
+        candidates: [],
+        errors: [
+          {
+            error: errorMessage(error),
+            providerId: "youtube"
+          }
+        ],
+        track
+      } satisfies ProviderBulkCandidatePreviewItem;
+    }
+  });
+  const downloadableCount = items.filter((item) => item.candidate?.url).length;
+
+  return {
+    downloadableCount,
+    failedCount: items.length - downloadableCount,
+    generatedAt: new Date().toISOString(),
+    items,
+    totalCount: items.length
+  } satisfies ProviderBulkCandidatePreviewResult;
+}
+
+export function startProviderBulkDownloadJob(
+  request: AuthorizedProviderBulkDownloadRequest
+) {
+  const job = buildProviderBulkDownloadJob(request);
+
+  providerBulkDownloadJobs.set(job.id, job);
+  persistProviderBulkDownloadJob(job);
+  scheduleProviderBulkDownloadJob(job.id);
+
+  return snapshotProviderBulkDownloadJob(job);
+}
+
+export function getProviderBulkDownloadJobSnapshot(jobId: string) {
+  const job = getProviderBulkDownloadJob(jobId);
+
+  return job ? snapshotProviderBulkDownloadJob(job) : null;
+}
+
+export function cancelProviderBulkDownloadJob(jobId: string) {
+  const job = getProviderBulkDownloadJob(jobId);
+
+  if (!job) {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  job.cancelRequestedAt = job.cancelRequestedAt ?? now;
+  job.updatedAt = now;
+
+  if (job.status === "queued") {
+    job.status = "cancelled";
+    job.completedAt = now;
+    job.items = job.items.map((item) =>
+      item.status === "completed"
+        ? item
+        : {
+            ...item,
+            completedAt: item.completedAt ?? now,
+            status: "cancelled"
+          }
+    );
+  } else if (job.status === "running") {
+    job.status = "cancelling";
+  }
+
+  persistProviderBulkDownloadJob(job);
+
+  return snapshotProviderBulkDownloadJob(job);
+}
+
+export function retryProviderBulkDownloadJob(jobId: string) {
+  const job = getProviderBulkDownloadJob(jobId);
+
+  if (!job) {
+    return null;
+  }
+
+  if (activeProviderBulkDownloadJobs.has(job.id)) {
+    return snapshotProviderBulkDownloadJob(job);
+  }
+
+  const now = new Date().toISOString();
+  let retryCount = 0;
+
+  job.items = job.items.map((item) => {
+    if (item.status === "completed") {
+      return item;
+    }
+
+    retryCount += 1;
+
+    return {
+      candidateScore: item.candidateScore,
+      candidateTitle: item.candidateTitle,
+      providerId: item.providerId,
+      selectedReason: item.selectedReason,
+      sourceUrl: item.sourceUrl,
+      status: "pending",
+      track: item.track
+    } satisfies ProviderBulkDownloadJobItemSnapshot;
+  });
+
+  if (!retryCount) {
+    return snapshotProviderBulkDownloadJob(job);
+  }
+
+  job.cancelRequestedAt = undefined;
+  job.completedAt = undefined;
+  job.status = "queued";
+  job.updatedAt = now;
+  persistProviderBulkDownloadJob(job);
+  scheduleProviderBulkDownloadJob(job.id);
+
+  return snapshotProviderBulkDownloadJob(job);
 }
 
 export async function downloadAuthorizedProviderBatch(
@@ -697,6 +949,200 @@ async function runProviderDownloadJob(jobId: string) {
   }
 }
 
+function buildProviderBulkDownloadJob(
+  request: AuthorizedProviderBulkDownloadRequest
+): ProviderBulkDownloadJobRecord {
+  if (!request.rightsConfirmed) {
+    throw new Error("Confirm you are authorized to download these tracks first.");
+  }
+
+  if (!request.bulkRiskAccepted) {
+    throw new Error("Accept the provider and bulk-download risk warning first.");
+  }
+
+  if (!Array.isArray(request.items) || !request.items.length) {
+    throw new Error("Add previewed provider candidates before starting bulk backup.");
+  }
+
+  if (request.items.length > maxBatchItems) {
+    throw new Error(`Bulk queues are limited to ${maxBatchItems} tracks.`);
+  }
+
+  const format = normalizeDownloadFormat(request.format);
+  const quality = normalizeDownloadQuality(request.quality);
+  const chunkSize = clampPositiveInteger(request.chunkSize, 5, 1, 20);
+  const delayMs = clampPositiveInteger(request.delayMs, 4000, 1000, 120000);
+  const chunkPauseMs = clampPositiveInteger(
+    request.chunkPauseMs,
+    60000,
+    5000,
+    600000
+  );
+  const now = new Date().toISOString();
+  const diagnosticId = providerDownloadDiagnosticId();
+  const items = request.items.map((item) => {
+    validateTrack(item.track);
+    const providerId = assertDownloadProvider(item.providerId);
+    const source = resolveProviderSource(providerId, item.sourceUrl);
+
+    return {
+      candidateScore: item.candidateScore,
+      candidateTitle: item.candidateTitle,
+      providerId,
+      selectedReason:
+        item.selectedReason ??
+        "SpotifyBU queued a previewed provider candidate for bulk backup",
+      sourceUrl: source.sourceUrl,
+      status: "pending",
+      track: item.track
+    } satisfies ProviderBulkDownloadJobItemSnapshot;
+  });
+
+  return {
+    createdAt: now,
+    diagnosticId,
+    id: providerBulkDownloadJobId(),
+    items,
+    request: {
+      chunkPauseMs,
+      chunkSize,
+      delayMs,
+      format,
+      quality
+    },
+    status: "queued",
+    updatedAt: now
+  } satisfies ProviderBulkDownloadJobRecord;
+}
+
+function scheduleProviderBulkDownloadJob(jobId: string) {
+  setTimeout(() => {
+    void runProviderBulkDownloadJob(jobId);
+  }, 0);
+}
+
+async function runProviderBulkDownloadJob(jobId: string) {
+  const job = getProviderBulkDownloadJob(jobId);
+
+  if (!job || activeProviderBulkDownloadJobs.has(jobId)) {
+    return;
+  }
+
+  if (job.status !== "queued" && job.status !== "failed") {
+    return;
+  }
+
+  activeProviderBulkDownloadJobs.add(jobId);
+  job.status = "running";
+  job.updatedAt = new Date().toISOString();
+  persistProviderBulkDownloadJob(job);
+
+  console.info("[spotifybu.provider-download] bulk job running", {
+    diagnosticId: job.diagnosticId,
+    jobId,
+    totalCount: job.items.length
+  });
+
+  try {
+    for (let index = 0; index < job.items.length; index += 1) {
+      const item = job.items[index];
+
+      if (job.cancelRequestedAt) {
+        markRemainingBulkItemsCancelled(job);
+        break;
+      }
+
+      if (item.status === "completed") {
+        continue;
+      }
+
+      item.status = "downloading";
+      item.startedAt = new Date().toISOString();
+      item.error = undefined;
+      item.download = undefined;
+      job.updatedAt = item.startedAt;
+      persistProviderBulkDownloadJob(job);
+
+      try {
+        item.download = await downloadAuthorizedProviderTrack({
+          bulkRiskAccepted: true,
+          diagnosticId: `${job.diagnosticId}-${item.track.position}`,
+          format: job.request.format,
+          providerId: item.providerId,
+          quality: job.request.quality,
+          rightsConfirmed: true,
+          selectedReason: item.selectedReason,
+          sourceUrl: item.sourceUrl,
+          track: item.track
+        });
+        item.status = "completed";
+        item.completedAt = new Date().toISOString();
+      } catch (error) {
+        item.error = errorMessage(error);
+        item.status = "failed";
+        item.completedAt = new Date().toISOString();
+      }
+
+      job.updatedAt = item.completedAt;
+      persistProviderBulkDownloadJob(job);
+
+      if (job.cancelRequestedAt) {
+        markRemainingBulkItemsCancelled(job);
+        break;
+      }
+
+      const isLastRunnableItem = !job.items
+        .slice(index + 1)
+        .some((nextItem) => nextItem.status !== "completed");
+
+      if (!isLastRunnableItem) {
+        const isChunkBoundary = (index + 1) % job.request.chunkSize === 0;
+        await sleep(isChunkBoundary ? job.request.chunkPauseMs : job.request.delayMs);
+      }
+    }
+
+    finalizeProviderBulkDownloadJob(job);
+    persistProviderBulkDownloadJob(job);
+  } finally {
+    activeProviderBulkDownloadJobs.delete(jobId);
+  }
+}
+
+function markRemainingBulkItemsCancelled(job: ProviderBulkDownloadJobRecord) {
+  const now = new Date().toISOString();
+
+  job.items = job.items.map((item) =>
+    item.status === "completed" || item.status === "failed"
+      ? item
+      : {
+          ...item,
+          completedAt: item.completedAt ?? now,
+          status: "cancelled"
+        }
+  );
+  job.status = "cancelled";
+  job.completedAt = now;
+  job.updatedAt = now;
+}
+
+function finalizeProviderBulkDownloadJob(job: ProviderBulkDownloadJobRecord) {
+  const counts = providerBulkDownloadJobCounts(job);
+  const now = new Date().toISOString();
+
+  if (job.cancelRequestedAt || counts.cancelledCount) {
+    job.status = "cancelled";
+  } else if (counts.failedCount) {
+    job.status = "failed";
+  } else if (counts.completedCount === job.items.length) {
+    job.status = "completed";
+  } else {
+    job.status = "failed";
+  }
+
+  job.completedAt = now;
+  job.updatedAt = now;
+}
+
 function snapshotProviderDownloadJob(
   job: ProviderDownloadJobRecord
 ): ProviderDownloadJobSnapshot {
@@ -710,6 +1156,156 @@ function snapshotProviderDownloadJob(
     status: job.status,
     updatedAt: job.updatedAt
   };
+}
+
+function snapshotProviderBulkDownloadJob(
+  job: ProviderBulkDownloadJobRecord
+): ProviderBulkDownloadJobSnapshot {
+  const counts = providerBulkDownloadJobCounts(job);
+
+  return {
+    cancelRequestedAt: job.cancelRequestedAt,
+    completedAt: job.completedAt,
+    completedCount: counts.completedCount,
+    createdAt: job.createdAt,
+    diagnosticId: job.diagnosticId,
+    failedCount: counts.failedCount,
+    id: job.id,
+    items: job.items,
+    pendingCount: counts.pendingCount,
+    request: job.request,
+    runningCount: counts.runningCount,
+    status: job.status,
+    totalCount: job.items.length,
+    updatedAt: job.updatedAt
+  };
+}
+
+function providerBulkDownloadJobCounts(job: ProviderBulkDownloadJobRecord) {
+  const completedCount = job.items.filter(
+    (item) => item.status === "completed"
+  ).length;
+  const failedCount = job.items.filter((item) => item.status === "failed").length;
+  const runningCount = job.items.filter(
+    (item) => item.status === "downloading"
+  ).length;
+  const cancelledCount = job.items.filter(
+    (item) => item.status === "cancelled"
+  ).length;
+  const pendingCount = job.items.length - completedCount - failedCount - runningCount - cancelledCount;
+
+  return {
+    cancelledCount,
+    completedCount,
+    failedCount,
+    pendingCount,
+    runningCount
+  };
+}
+
+function getProviderBulkDownloadJob(jobId: string) {
+  const memoryJob = providerBulkDownloadJobs.get(jobId);
+
+  if (memoryJob) {
+    return memoryJob;
+  }
+
+  const row = getSpotifyBuDatabase()
+    .prepare(
+      `
+        SELECT snapshot_json
+        FROM provider_bulk_jobs
+        WHERE id = ?
+        LIMIT 1
+      `
+    )
+    .get(jobId) as ProviderBulkDownloadJobRow | undefined;
+
+  if (!row?.snapshot_json) {
+    return null;
+  }
+
+  try {
+    const job = JSON.parse(row.snapshot_json) as ProviderBulkDownloadJobRecord;
+    let shouldResume = false;
+
+    if (!job.id || !Array.isArray(job.items)) {
+      return null;
+    }
+
+    if (job.status === "running" || job.status === "cancelling") {
+      job.status = job.cancelRequestedAt ? "cancelled" : "queued";
+      job.items = job.items.map((item) =>
+        item.status === "downloading"
+          ? {
+              ...item,
+              status: job.cancelRequestedAt ? "cancelled" : "pending"
+            }
+          : item
+      );
+      job.updatedAt = new Date().toISOString();
+      persistProviderBulkDownloadJob(job);
+      shouldResume = job.status === "queued";
+    }
+
+    providerBulkDownloadJobs.set(job.id, job);
+
+    if (shouldResume) {
+      scheduleProviderBulkDownloadJob(job.id);
+    }
+
+    return job;
+  } catch {
+    return null;
+  }
+}
+
+function persistProviderBulkDownloadJob(job: ProviderBulkDownloadJobRecord) {
+  providerBulkDownloadJobs.set(job.id, job);
+  getSpotifyBuDatabase()
+    .prepare(
+      `
+        INSERT INTO provider_bulk_jobs (
+          id,
+          status,
+          diagnostic_id,
+          created_at,
+          updated_at,
+          snapshot_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO UPDATE SET
+          status = excluded.status,
+          diagnostic_id = excluded.diagnostic_id,
+          updated_at = excluded.updated_at,
+          snapshot_json = excluded.snapshot_json
+      `
+    )
+    .run(
+      job.id,
+      job.status,
+      job.diagnosticId,
+      job.createdAt,
+      job.updatedAt,
+      JSON.stringify(job)
+    );
+}
+
+function bestProviderCandidate(candidates: SourceCandidate[]) {
+  return candidates
+    .filter((candidate) => candidate.url)
+    .sort((left, right) => {
+      const scoreDelta = right.score.overall - left.score.overall;
+
+      if (scoreDelta) {
+        return scoreDelta;
+      }
+
+      return (
+        defaultProviderSearchOrder.indexOf(left.providerId as DownloadProviderId) -
+        defaultProviderSearchOrder.indexOf(right.providerId as DownloadProviderId)
+      );
+    })[0];
 }
 
 function summarizeProviderDownloadJobRequest(
@@ -1218,6 +1814,34 @@ function sleep(ms: number) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>
+) {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index]);
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      {
+        length: Math.min(concurrency, items.length)
+      },
+      () => worker()
+    )
+  );
+
+  return results;
 }
 
 function validateTrack(track: BackupTrack) {
@@ -1870,6 +2494,12 @@ function providerDownloadDiagnosticId() {
 
 function providerDownloadJobId() {
   return `pdj-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+}
+
+function providerBulkDownloadJobId() {
+  return `pdbj-${Date.now().toString(36)}-${Math.random()
     .toString(36)
     .slice(2, 8)}`;
 }

@@ -16,7 +16,8 @@ export async function proxy(request: NextRequest) {
   const isPublicPath =
     publicPaths.has(pathname) ||
     pathname.startsWith("/_next/") ||
-    pathname === "/favicon.ico";
+    pathname === "/favicon.ico" ||
+    pathname === "/icon.svg";
   const authenticated = await verifySessionCookie(
     request.cookies.get(appAuthCookie)?.value
   );
@@ -47,7 +48,7 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"]
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg).*)"]
 };
 
 async function verifySessionCookie(value?: string) {
