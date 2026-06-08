@@ -419,9 +419,24 @@ type ProviderBulkDownloadJob = {
   updatedAt: string;
 };
 
-type ProviderBulkPreviewResponse = {
-  preview: ProviderBulkCandidatePreview;
+type ProviderBulkPreviewProgressEvent = {
+  completedCount: number;
+  failedCount: number;
+  totalCount: number;
+  trackLabel?: string;
+  type: "progress";
 };
+
+type ProviderBulkPreviewStreamEvent =
+  | ProviderBulkPreviewProgressEvent
+  | {
+      preview: ProviderBulkCandidatePreview;
+      type: "complete";
+    }
+  | {
+      error: string;
+      type: "error";
+    };
 
 type ProviderBulkDownloadResponse = {
   diagnosticId?: string;
@@ -1625,21 +1640,29 @@ export default function Home() {
     setRequestError(null);
 
     try {
-      const response = await postJson<ProviderBulkPreviewResponse>(
-        "/api/providers/download/bulk/preview",
+      const preview = await postProviderBulkPreviewStream(
         {
           limit: 4,
           providerIds: providerSearchOrder,
           tracks: downloadTrackOptions
+        },
+        (progress) => {
+          setBulkDownloadProgress({
+            completedCount: progress.completedCount,
+            failedCount: progress.failedCount,
+            phase: "Dry run",
+            totalCount: progress.totalCount,
+            trackLabel: progress.trackLabel ?? "Checking provider matches"
+          });
         }
       );
 
-      setBulkCandidatePreview(response.preview);
+      setBulkCandidatePreview(preview);
       setBulkDownloadProgress(null);
       setBulkDownloadMessage(
         `Dry run selected candidates for ${numberFormatter.format(
-          response.preview.downloadableCount
-        )} of ${numberFormatter.format(response.preview.totalCount)} missing tracks.`
+          preview.downloadableCount
+        )} of ${numberFormatter.format(preview.totalCount)} missing tracks.`
       );
     } catch (error) {
       setBulkDownloadProgress(null);
@@ -3320,6 +3343,159 @@ async function postJson<T>(url: string, body: unknown) {
   });
 
   return responseJson<T>(response);
+}
+
+async function postProviderBulkPreviewStream(
+  body: unknown,
+  onProgress: (event: ProviderBulkPreviewProgressEvent) => void
+): Promise<ProviderBulkCandidatePreview> {
+  const response = await fetch("/api/providers/download/bulk/preview", {
+    body: JSON.stringify({
+      ...(isRecord(body) ? body : {}),
+      stream: true
+    }),
+    cache: "no-store",
+    headers: {
+      Accept: "application/x-ndjson",
+      "Content-Type": "application/json"
+    },
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    await responseJson<never>(response);
+    throw new Error("Provider preview request failed.");
+  }
+
+  if (!response.body) {
+    throw new Error("Provider preview did not return progress updates.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pendingText = "";
+  const streamState: {
+    preview: ProviderBulkCandidatePreview | null;
+  } = {
+    preview: null
+  };
+
+  const handleLine = (line: string) => {
+    const event = parseProviderBulkPreviewStreamEvent(line);
+
+    if (event.type === "progress") {
+      onProgress(event);
+      return;
+    }
+
+    if (event.type === "complete") {
+      streamState.preview = event.preview;
+      return;
+    }
+
+    throw new Error(event.error || "SpotifyBU could not preview candidates.");
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    pendingText += decoder.decode(value, {
+      stream: true
+    });
+    pendingText = consumeProviderBulkPreviewLines(pendingText, handleLine);
+  }
+
+  pendingText += decoder.decode();
+  consumeProviderBulkPreviewLines(pendingText, handleLine, true);
+
+  if (!streamState.preview) {
+    throw new Error("Provider preview finished without candidate results.");
+  }
+
+  return streamState.preview;
+}
+
+function consumeProviderBulkPreviewLines(
+  pendingText: string,
+  handleLine: (line: string) => void,
+  consumeRemainder = false
+) {
+  let lineBreakIndex = pendingText.indexOf("\n");
+
+  while (lineBreakIndex !== -1) {
+    const line = pendingText.slice(0, lineBreakIndex).trim();
+
+    if (line) {
+      handleLine(line);
+    }
+
+    pendingText = pendingText.slice(lineBreakIndex + 1);
+    lineBreakIndex = pendingText.indexOf("\n");
+  }
+
+  if (consumeRemainder) {
+    const line = pendingText.trim();
+
+    if (line) {
+      handleLine(line);
+    }
+
+    return "";
+  }
+
+  return pendingText;
+}
+
+function parseProviderBulkPreviewStreamEvent(
+  line: string
+): ProviderBulkPreviewStreamEvent {
+  const parsed = JSON.parse(line) as unknown;
+
+  if (!isRecord(parsed)) {
+    throw new Error("Provider preview returned an invalid progress update.");
+  }
+
+  if (parsed.type === "progress") {
+    return {
+      completedCount: numericStreamValue(parsed.completedCount),
+      failedCount: numericStreamValue(parsed.failedCount),
+      totalCount: numericStreamValue(parsed.totalCount),
+      trackLabel:
+        typeof parsed.trackLabel === "string" ? parsed.trackLabel : undefined,
+      type: "progress"
+    };
+  }
+
+  if (parsed.type === "complete" && isRecord(parsed.preview)) {
+    return {
+      preview: parsed.preview as unknown as ProviderBulkCandidatePreview,
+      type: "complete"
+    };
+  }
+
+  if (parsed.type === "error") {
+    return {
+      error:
+        typeof parsed.error === "string"
+          ? parsed.error
+          : "SpotifyBU could not preview candidates.",
+      type: "error"
+    };
+  }
+
+  throw new Error("Provider preview returned an unknown progress update.");
+}
+
+function numericStreamValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 async function waitForProviderDownload(

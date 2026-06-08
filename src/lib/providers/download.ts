@@ -102,6 +102,13 @@ export type ProviderBulkCandidatePreviewResult = {
   totalCount: number;
 };
 
+export type ProviderBulkCandidatePreviewProgress = {
+  completedCount: number;
+  failedCount: number;
+  item: ProviderBulkCandidatePreviewItem;
+  totalCount: number;
+};
+
 type ProviderCandidateSearchOutcome =
   | {
       candidates: SourceCandidate[];
@@ -431,10 +438,12 @@ export async function searchProviderCandidates(
 
 export async function previewProviderBulkDownloadCandidates({
   limit,
+  onProgress,
   providerIds,
   tracks
 }: {
   limit?: number;
+  onProgress?: (progress: ProviderBulkCandidatePreviewProgress) => void;
   providerIds?: string[];
   tracks: BackupTrack[];
 }) {
@@ -448,32 +457,29 @@ export async function previewProviderBulkDownloadCandidates({
 
   tracks.forEach(validateTrack);
 
+  let completedCount = 0;
+  let failedCount = 0;
   const items = await mapWithConcurrency(tracks, 3, async (track) => {
-    try {
-      const search = await searchProviderCandidates({
-        limit: clampPositiveInteger(limit, 4, 1, 12),
-        providerIds,
-        track
-      });
+    const item = await previewProviderBulkDownloadCandidate({
+      limit,
+      providerIds,
+      track
+    });
 
-      return {
-        candidate: bestProviderCandidate(search.candidates),
-        candidates: search.candidates,
-        errors: search.errors,
-        track
-      } satisfies ProviderBulkCandidatePreviewItem;
-    } catch (error) {
-      return {
-        candidates: [],
-        errors: [
-          {
-            error: errorMessage(error),
-            providerId: "youtube"
-          }
-        ],
-        track
-      } satisfies ProviderBulkCandidatePreviewItem;
+    if (item.candidate?.url) {
+      completedCount += 1;
+    } else {
+      failedCount += 1;
     }
+
+    onProgress?.({
+      completedCount,
+      failedCount,
+      item,
+      totalCount: tracks.length
+    });
+
+    return item;
   });
   const downloadableCount = items.filter((item) => item.candidate?.url).length;
 
@@ -484,6 +490,42 @@ export async function previewProviderBulkDownloadCandidates({
     items,
     totalCount: items.length
   } satisfies ProviderBulkCandidatePreviewResult;
+}
+
+async function previewProviderBulkDownloadCandidate({
+  limit,
+  providerIds,
+  track
+}: {
+  limit?: number;
+  providerIds?: string[];
+  track: BackupTrack;
+}) {
+  try {
+    const search = await searchProviderCandidates({
+      limit: clampPositiveInteger(limit, 4, 1, 12),
+      providerIds,
+      track
+    });
+
+    return {
+      candidate: bestProviderCandidate(search.candidates),
+      candidates: search.candidates,
+      errors: search.errors,
+      track
+    } satisfies ProviderBulkCandidatePreviewItem;
+  } catch (error) {
+    return {
+      candidates: [],
+      errors: [
+        {
+          error: errorMessage(error),
+          providerId: "youtube"
+        }
+      ],
+      track
+    } satisfies ProviderBulkCandidatePreviewItem;
+  }
 }
 
 export function startProviderBulkDownloadJob(
