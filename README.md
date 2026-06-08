@@ -4,7 +4,7 @@ SpotifyBU is a Docker-first web app for turning a Spotify library into a local, 
 
 The point is not to replace Navidrome search. Navidrome already tells you what is in Navidrome. SpotifyBU uses Spotify as the source-of-truth list, uses Navidrome matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
 
-Current stable release: `1.2.1`. It includes the web UI, local or external-proxy app auth, Spotify OAuth, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, Navidrome library checks, Lidarr-compatible folder planning, library indexing, matched-file organization, Navidrome playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
+Current stable release: `1.2.2`. It includes the web UI, local or external-proxy app auth, Spotify OAuth, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, Navidrome library checks, Lidarr-compatible folder planning, library indexing, matched-file organization, Navidrome playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
 SpotifyBU can source audio from files already present in the mounted Navidrome music library and can search YouTube first, then JioSaavn, for missing Spotify tracks. Single-track backup lets the user review provider candidates before downloading. Bulk playlist backup now starts with a dry-run candidate preview, then runs as a resumable background job with cancel and retry controls. Provider downloads show authorization and bulk-risk warnings, preserve provenance, and stage files only into the configured Navidrome library.
 
@@ -34,7 +34,7 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - Source-provider catalog with active YouTube and JioSaavn sourcing plus planned future providers
 - Automatic provider search for missing tracks, with YouTube checked before JioSaavn
 - Reviewed single-track source downloads for YouTube and JioSaavn using `yt-dlp` and background job polling
-- Dry-run bulk candidate previews before provider downloads
+- Dry-run bulk candidate previews with live progress before provider downloads
 - Resumable background bulk playlist jobs with cancellation, retry, per-track waits, chunk pauses, progress reporting, and partial-failure reporting
 - MP3 output with 128 kbps or 320 kbps quality targets
 - Navidrome-volume staging with idle cleanup for abandoned failed download/convert temp files
@@ -55,13 +55,13 @@ The test image built from the `dev` branch is:
 ghcr.io/thedinz/spotifybu:dev
 ```
 
-Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.2.1-dev.1`; stable releases use normal version tags such as `1.2.1`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
+Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.2.2-dev.1`; stable releases use normal version tags such as `1.2.2`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
 
-For the exact v1.2.1 release, pin one of these tags:
+For the exact v1.2.2 release, pin one of these tags:
 
 ```text
-ghcr.io/thedinz/spotifybu:v1.2.1
-ghcr.io/thedinz/spotifybu:1.2.1
+ghcr.io/thedinz/spotifybu:v1.2.2
+ghcr.io/thedinz/spotifybu:1.2.2
 ghcr.io/thedinz/spotifybu:1.2
 ```
 
