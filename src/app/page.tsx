@@ -1941,11 +1941,7 @@ export default function Home() {
     bulkDownloadProgress && bulkDownloadProgress.totalCount
       ? Math.round((bulkProgressFinished / bulkDownloadProgress.totalCount) * 100)
       : 0;
-  const visibleBulkPreviewItems = bulkCandidatePreview?.items.slice(0, 8) ?? [];
-  const hiddenBulkPreviewCount = Math.max(
-    0,
-    (bulkCandidatePreview?.items.length ?? 0) - visibleBulkPreviewItems.length
-  );
+  const visibleBulkPreviewItems = bulkCandidatePreview?.items ?? [];
   const canCancelBulkProviderJob = Boolean(
     bulkDownloadJob && isProviderBulkJobActive(bulkDownloadJob)
   );
@@ -2874,12 +2870,6 @@ export default function Home() {
                               </div>
                             ))}
                           </div>
-                          {hiddenBulkPreviewCount ? (
-                            <p className="download-progress-note">
-                              {numberFormatter.format(hiddenBulkPreviewCount)}{" "}
-                              more previewed tracks
-                            </p>
-                          ) : null}
                         </div>
                       ) : null}
                       <label className="provider-check">
