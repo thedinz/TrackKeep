@@ -16,12 +16,26 @@ export async function proxy(request: NextRequest) {
   const isPublicPath =
     publicPaths.has(pathname) ||
     pathname.startsWith("/_next/") ||
-    pathname === "/favicon.ico";
-  const authenticated = await verifySessionCookie(
+    pathname === "/favicon.ico" ||
+    pathname === "/icon.svg";
+  const needsLoginRedirectCheck = pathname === "/login";
+
+  if (isPublicPath && !needsLoginRedirectCheck) {
+    return NextResponse.next();
+  }
+
+  const cookieAuthenticated = await verifySessionCookie(
     request.cookies.get(appAuthCookie)?.value
   );
+  const appAuthStatus = cookieAuthenticated
+    ? null
+    : await getAppAuthStatus(request);
+  const authenticated =
+    cookieAuthenticated ||
+    appAuthStatus?.authMode === "external" ||
+    Boolean(appAuthStatus?.authenticated);
 
-  if (pathname === "/login" && authenticated) {
+  if (needsLoginRedirectCheck && authenticated) {
     return NextResponse.redirect(getAppUrl(request, "/"));
   }
 
@@ -47,7 +61,7 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"]
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg).*)"]
 };
 
 async function verifySessionCookie(value?: string) {
@@ -78,6 +92,34 @@ async function verifySessionCookie(value?: string) {
     );
   } catch {
     return false;
+  }
+}
+
+async function getAppAuthStatus(request: NextRequest) {
+  try {
+    const sessionUrl = getAppUrl(request, "/api/app-auth/session");
+    const response = await fetch(sessionUrl, {
+      cache: "no-store",
+      headers: {
+        cookie: request.headers.get("cookie") ?? ""
+      }
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const body = (await response.json()) as {
+      authenticated?: boolean;
+      authMode?: string;
+    };
+
+    return {
+      authenticated: Boolean(body.authenticated),
+      authMode: body.authMode === "external" ? "external" : "internal"
+    };
+  } catch {
+    return null;
   }
 }
 

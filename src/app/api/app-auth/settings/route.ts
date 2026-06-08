@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
 import {
-  readAppSession,
+  getAppAuthStatus,
   setAppSessionCookie,
+  updateAppAuthMode,
   updateAppCredentials
 } from "@/lib/app-auth";
 
 export async function POST(request: Request) {
-  const session = await readAppSession();
+  const session = await getAppAuthStatus();
 
-  if (!session) {
+  if (!session.authenticated) {
     return NextResponse.json(
       { error: "Log in before changing settings." },
       { status: 401 }
@@ -16,23 +17,42 @@ export async function POST(request: Request) {
   }
 
   const body = (await request.json().catch(() => ({}))) as {
+    authMode?: string;
     currentPassword?: string;
     newPassword?: string;
     username?: string;
   };
 
   try {
-    const credentials = await updateAppCredentials({
-      currentPassword: body.currentPassword ?? "",
-      newPassword: body.newPassword ?? "",
-      username: body.username ?? ""
-    });
+    const shouldUpdateCredentials = Boolean(
+      body.username || body.currentPassword || body.newPassword
+    );
+    const credentials = shouldUpdateCredentials
+      ? await updateAppCredentials({
+          currentPassword: body.currentPassword ?? "",
+          newPassword: body.newPassword ?? "",
+          username: body.username ?? ""
+        })
+      : null;
+    const authMode = body.authMode
+      ? await updateAppAuthMode(body.authMode)
+      : null;
+    const nextAuthMode =
+      authMode?.authMode ?? credentials?.authMode ?? session.authMode;
+    const username = credentials?.username ?? authMode?.username ?? session.username;
     const response = NextResponse.json({
-      defaultCredentials: credentials.defaultCredentials,
+      authMode: nextAuthMode,
+      defaultCredentials:
+        credentials?.defaultCredentials ??
+        authMode?.defaultCredentials ??
+        session.defaultCredentials,
       ok: true,
-      username: credentials.username
+      username
     });
-    setAppSessionCookie(response, credentials.username);
+
+    if (nextAuthMode === "internal" && username) {
+      setAppSessionCookie(response, username);
+    }
 
     return response;
   } catch (error) {

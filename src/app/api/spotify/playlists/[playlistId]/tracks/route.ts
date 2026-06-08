@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { matchNavidromeTracks, planNavidromeAlbumFolders } from "@/lib/navidrome";
+import { persistPlaylistBackup } from "@/lib/backup-store";
 import { appendDiagnosticLog, diagnosticError } from "@/lib/diagnostics";
 import { getSpotifySession, withSessionCookie } from "@/lib/server-session";
 import { getPlaylist, getPlaylistTracks } from "@/lib/spotify";
@@ -37,11 +38,17 @@ export async function GET(_request: Request, context: RouteContext) {
       planNavidromeAlbumFolders(tracks),
       matchNavidromeTracks(tracks)
     ]);
+    const metadataBackup = persistPlaylistBackup({
+      playlist: playlistWithTrackTotal,
+      source: "playlist-load",
+      tracks
+    });
 
     return withSessionCookie(
       NextResponse.json({
         folderPlans,
         libraryMatches,
+        metadataBackup,
         playlist: playlistWithTrackTotal,
         tracks
       }),

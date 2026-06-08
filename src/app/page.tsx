@@ -9,15 +9,19 @@ import {
   FileJson,
   FileText,
   HardDrive,
+  Link2,
   ListMusic,
   Loader2,
   LogIn,
   LogOut,
   Music2,
+  Play,
   RefreshCw,
+  RotateCcw,
   Search,
   Settings,
-  ShieldCheck
+  ShieldCheck,
+  XCircle
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -47,6 +51,7 @@ type AppInfo = {
 
 type AppAuthStatus = {
   authenticated: boolean;
+  authMode: "external" | "internal";
 };
 
 type SpotifyAuthConfigResponse = {
@@ -182,6 +187,16 @@ type PlaylistBackupStatus = {
   trackCount: number;
 };
 
+type PlaylistMetadataBackup = {
+  exportedAt: string;
+  id: string;
+  playlistId: string;
+  playlistName: string;
+  source: string;
+  trackCount: number;
+  updatedAt: string;
+};
+
 type BackupTrack = {
   addedAt?: string;
   album: string;
@@ -207,12 +222,14 @@ type BackupTrack = {
 };
 
 type PlaylistResponse = {
+  metadataBackups?: Record<string, PlaylistMetadataBackup>;
   playlists: PlaylistSummary[];
 };
 
 type TracksResponse = {
   folderPlans: FolderPlan[];
   libraryMatches: LibraryMatch[];
+  metadataBackup?: PlaylistMetadataBackup | null;
   playlist: PlaylistSummary;
   tracks: BackupTrack[];
 };
@@ -243,7 +260,9 @@ type LibraryOrganizeResponse = LibraryIndexResponse & LibraryMatchesResponse & {
 
 type NavidromePlaylistSyncResponse = {
   navidromePlaylist: {
+    appendedCount?: number;
     matchedCount: number;
+    mode: "append" | "replace";
     name: string;
     playlistId?: string;
     skipped: Array<{
@@ -275,6 +294,21 @@ type ProviderDownloadJobStatus =
   | "failed"
   | "queued"
   | "running";
+
+type ProviderBulkDownloadJobStatus =
+  | "cancelled"
+  | "cancelling"
+  | "completed"
+  | "failed"
+  | "queued"
+  | "running";
+
+type ProviderBulkDownloadItemStatus =
+  | "cancelled"
+  | "completed"
+  | "downloading"
+  | "failed"
+  | "pending";
 
 type ProviderDownloadJob = {
   createdAt: string;
@@ -330,6 +364,85 @@ type ProviderSearchResponse = {
   };
 };
 
+type ProviderBulkCandidatePreviewItem = {
+  candidate?: ProviderSearchCandidate;
+  candidates: ProviderSearchCandidate[];
+  errors: Array<{
+    error: string;
+    providerId: string;
+  }>;
+  track: BackupTrack;
+};
+
+type ProviderBulkCandidatePreview = {
+  downloadableCount: number;
+  failedCount: number;
+  generatedAt: string;
+  items: ProviderBulkCandidatePreviewItem[];
+  totalCount: number;
+};
+
+type ProviderBulkDownloadJobItem = {
+  candidateScore?: number;
+  candidateTitle?: string;
+  completedAt?: string;
+  download?: ProviderDownloadPayload;
+  error?: string;
+  providerId: string;
+  selectedReason?: string;
+  sourceUrl: string;
+  startedAt?: string;
+  status: ProviderBulkDownloadItemStatus;
+  track: BackupTrack;
+};
+
+type ProviderBulkDownloadJob = {
+  cancelRequestedAt?: string;
+  completedAt?: string;
+  completedCount: number;
+  createdAt: string;
+  diagnosticId: string;
+  failedCount: number;
+  id: string;
+  items: ProviderBulkDownloadJobItem[];
+  pendingCount: number;
+  request: {
+    chunkPauseMs: number;
+    chunkSize: number;
+    delayMs: number;
+    format: string;
+    quality: string;
+  };
+  runningCount: number;
+  status: ProviderBulkDownloadJobStatus;
+  totalCount: number;
+  updatedAt: string;
+};
+
+type ProviderBulkPreviewProgressEvent = {
+  completedCount: number;
+  failedCount: number;
+  totalCount: number;
+  trackLabel?: string;
+  type: "progress";
+};
+
+type ProviderBulkPreviewStreamEvent =
+  | ProviderBulkPreviewProgressEvent
+  | {
+      preview: ProviderBulkCandidatePreview;
+      type: "complete";
+    }
+  | {
+      error: string;
+      type: "error";
+    };
+
+type ProviderBulkDownloadResponse = {
+  diagnosticId?: string;
+  job?: ProviderBulkDownloadJob;
+};
+
 type BulkDownloadProgress = {
   completedCount: number;
   failedCount: number;
@@ -343,8 +456,10 @@ const libraryOrganizeBatchSize = 10;
 const folderPlanPreviewLimit = 5;
 const downloadEnabledProviderIds = new Set(["jiosaavn", "youtube"]);
 const providerSearchOrder = ["youtube", "jiosaavn"] as const;
+const singleTrackProviderSearchLimit = 8;
 const providerDownloadPollIntervalMs = 2500;
 const maxProviderDownloadPollAttempts = 720;
+const bulkProviderJobStorageKey = "spotifybu.bulkProviderJobId";
 const mediaSourceProviders: readonly SourceProviderCatalogEntry[] =
   SOURCE_PROVIDER_CATALOG.filter(
     (provider) => downloadEnabledProviderIds.has(provider.id)
@@ -352,7 +467,11 @@ const mediaSourceProviders: readonly SourceProviderCatalogEntry[] =
 
 export default function Home() {
   const missingBackupActionsRef = useRef<HTMLDivElement | null>(null);
+  const bulkDownloadJobRef = useRef<ProviderBulkDownloadJob | null>(null);
+  const refreshedBulkJobIdRef = useRef<string | null>(null);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
+  const [appAuthMode, setAppAuthMode] =
+    useState<AppAuthStatus["authMode"]>("internal");
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [spotifyAuthConfig, setSpotifyAuthConfig] =
     useState<SpotifyAuthConfigResponse | null>(null);
@@ -360,10 +479,15 @@ export default function Home() {
   const [playlistBackupStatuses, setPlaylistBackupStatuses] = useState<
     Record<string, PlaylistBackupStatus>
   >({});
+  const [playlistMetadataBackups, setPlaylistMetadataBackups] = useState<
+    Record<string, PlaylistMetadataBackup>
+  >({});
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [selectedPlaylist, setSelectedPlaylist] = useState<PlaylistSummary | null>(
     null
   );
+  const [selectedMetadataBackup, setSelectedMetadataBackup] =
+    useState<PlaylistMetadataBackup | null>(null);
   const [sourceKind, setSourceKind] = useState<SourceKind>("playlist");
   const [lookupInput, setLookupInput] = useState("");
   const [resolvedSource, setResolvedSource] = useState<ResolvedSource | null>(null);
@@ -387,9 +511,13 @@ export default function Home() {
     useState<string | null>(null);
   const [isCreatingNavidromePlaylist, setIsCreatingNavidromePlaylist] =
     useState(false);
+  const [navidromePlaylistSyncMode, setNavidromePlaylistSyncMode] =
+    useState<"append" | "replace">("replace");
   const [isSearchingProvider, setIsSearchingProvider] = useState(false);
   const [isDownloadingProvider, setIsDownloadingProvider] = useState(false);
   const [isDownloadingBulkProvider, setIsDownloadingBulkProvider] =
+    useState(false);
+  const [isPreviewingBulkProvider, setIsPreviewingBulkProvider] =
     useState(false);
   const [navidromeStatus, setNavidromeStatus] =
     useState<NavidromeLibraryStatus | null>(null);
@@ -401,6 +529,9 @@ export default function Home() {
   >([]);
   const [selectedProviderCandidateId, setSelectedProviderCandidateId] =
     useState("");
+  const [manualProviderSourceUrl, setManualProviderSourceUrl] = useState("");
+  const [isManualProviderSourceOpen, setIsManualProviderSourceOpen] =
+    useState(false);
   const [downloadRightsConfirmed, setDownloadRightsConfirmed] = useState(false);
   const [downloadBulkRiskAccepted, setDownloadBulkRiskAccepted] = useState(false);
   const [providerDownloadMessage, setProviderDownloadMessage] =
@@ -412,10 +543,17 @@ export default function Home() {
   );
   const [bulkDownloadProgress, setBulkDownloadProgress] =
     useState<BulkDownloadProgress | null>(null);
+  const [bulkCandidatePreview, setBulkCandidatePreview] =
+    useState<ProviderBulkCandidatePreview | null>(null);
+  const [bulkDownloadJob, setBulkDownloadJob] =
+    useState<ProviderBulkDownloadJob | null>(null);
   const [libraryOrganizeMessage, setLibraryOrganizeMessage] =
     useState<string | null>(null);
   const [navidromePlaylistMessage, setNavidromePlaylistMessage] =
     useState<string | null>(null);
+  const [navidromePlaylistSkipped, setNavidromePlaylistSkipped] = useState<
+    NavidromePlaylistSyncResponse["navidromePlaylist"]["skipped"]
+  >([]);
 
   const applyLibraryMatches = useCallback(
     (nextTracks: BackupTrack[], nextMatches: LibraryMatch[]) => {
@@ -431,13 +569,21 @@ export default function Home() {
     [selectedPlaylistId, sourceKind]
   );
 
+  useEffect(() => {
+    bulkDownloadJobRef.current = bulkDownloadJob;
+  }, [bulkDownloadJob]);
+
   const clearBackupWorkflowState = useCallback(() => {
     setBulkDownloadMessage(null);
     setBulkDownloadProgress(null);
+    setBulkCandidatePreview(null);
+    setBulkDownloadJob(null);
     setProviderDownloadMessage(null);
     setProviderDownloadStatusLabel(null);
     setProviderCandidates([]);
     setSelectedProviderCandidateId("");
+    setManualProviderSourceUrl("");
+    setIsManualProviderSourceOpen(false);
     setDownloadRightsConfirmed(false);
     setDownloadBulkRiskAccepted(false);
   }, []);
@@ -476,6 +622,7 @@ export default function Home() {
       );
 
       setPlaylists(response.playlists);
+      setPlaylistMetadataBackups(response.metadataBackups ?? {});
       setSelectedPlaylistId((current) => {
         if (
           current &&
@@ -773,15 +920,23 @@ export default function Home() {
 
     setIsCreatingNavidromePlaylist(true);
     setNavidromePlaylistMessage(null);
+    setNavidromePlaylistSkipped([]);
     setRequestError(null);
 
     try {
       const response = await postJson<NavidromePlaylistSyncResponse>(
         `/api/spotify/playlists/${selectedPlaylistId}/navidrome`,
-        {}
+        {
+          mode: navidromePlaylistSyncMode
+        }
       );
       const result = response.navidromePlaylist;
-      const action = result.updated ? "Updated" : "Created";
+      const action =
+        result.mode === "append" && result.updated
+          ? `Appended ${numberFormatter.format(result.appendedCount ?? 0)} tracks to`
+          : result.updated
+            ? "Replaced"
+            : "Created";
       const skipped = result.skippedCount
         ? ` ${numberFormatter.format(result.skippedCount)} unmatched tracks were skipped.`
         : "";
@@ -791,12 +946,13 @@ export default function Home() {
           result.songCount
         )} tracks.${skipped}`
       );
+      setNavidromePlaylistSkipped(result.skipped);
     } catch (error) {
       setRequestError(errorMessage(error));
     } finally {
       setIsCreatingNavidromePlaylist(false);
     }
-  }, [selectedPlaylistId]);
+  }, [navidromePlaylistSyncMode, selectedPlaylistId]);
 
   const searchProviderTrack = useCallback(async (track: BackupTrack) => {
     setDownloadTrackPosition(String(track.position));
@@ -806,12 +962,14 @@ export default function Home() {
     setProviderDownloadMessage(null);
     setProviderDownloadStatusLabel(null);
     setRequestError(null);
+    setManualProviderSourceUrl("");
+    setIsManualProviderSourceOpen(false);
 
     try {
       const response = await postJson<ProviderSearchResponse>(
         "/api/providers/search",
         {
-          limit: 4,
+          limit: singleTrackProviderSearchLimit,
           providerIds: providerSearchOrder,
           track
         }
@@ -876,6 +1034,20 @@ export default function Home() {
     tracks
   ]);
 
+  const toggleManualProviderSource = useCallback(() => {
+    const nextIsOpen = !isManualProviderSourceOpen;
+
+    setIsManualProviderSourceOpen(nextIsOpen);
+
+    if (!nextIsOpen) {
+      setManualProviderSourceUrl("");
+    }
+
+    setDownloadRightsConfirmed(false);
+    setDownloadBulkRiskAccepted(false);
+    setProviderDownloadMessage(null);
+  }, [isManualProviderSourceOpen]);
+
   const downloadSelectedProviderCandidate = useCallback(async () => {
     const selectedTrack = tracks.find(
       (track) => String(track.position) === downloadTrackPosition
@@ -883,9 +1055,38 @@ export default function Home() {
     const selectedCandidate = providerCandidates.find(
       (candidate) => candidate.id === selectedProviderCandidateId
     );
+    const manualSourceUrl = manualProviderSourceUrl.trim();
+    const manualSource = manualSourceUrl
+      ? providerSourceFromUrl(manualSourceUrl)
+      : null;
+    const downloadSource = isManualProviderSourceOpen
+      ? manualSource
+      : selectedCandidate?.url
+        ? {
+            providerId: selectedCandidate.providerId,
+            sourceUrl: selectedCandidate.url
+          }
+        : null;
 
-    if (!selectedTrack || !selectedCandidate?.url) {
-      setRequestError("Choose a provider search result before downloading.");
+    if (!selectedTrack) {
+      setRequestError("Choose a track before downloading.");
+      return;
+    }
+
+    if (isManualProviderSourceOpen && !manualSourceUrl) {
+      setRequestError("Enter a manual source URL before downloading.");
+      return;
+    }
+
+    if (manualSourceUrl && !manualSource) {
+      setRequestError("Enter a YouTube or JioSaavn HTTPS source URL.");
+      return;
+    }
+
+    if (!downloadSource?.sourceUrl) {
+      setRequestError(
+        "Choose a provider search result or enter a manual source URL before downloading."
+      );
       return;
     }
 
@@ -899,11 +1100,17 @@ export default function Home() {
         "/api/providers/download",
         {
           bulkRiskAccepted: downloadBulkRiskAccepted,
-          providerId: selectedCandidate.providerId,
+          providerId: downloadSource.providerId,
           quality: downloadQuality,
           rightsConfirmed: downloadRightsConfirmed,
-          selectedReason: `User reviewed SpotifyBU provider search result (${selectedCandidate.title})`,
-          sourceUrl: selectedCandidate.url,
+          selectedReason: isManualProviderSourceOpen
+            ? `User entered a manual ${providerDisplayName(
+                downloadSource.providerId
+              )} source URL`
+            : `User reviewed SpotifyBU provider search result (${
+                selectedCandidate?.title ?? downloadSource.sourceUrl
+              })`,
+          sourceUrl: downloadSource.sourceUrl,
           track: selectedTrack
         }
       );
@@ -926,6 +1133,8 @@ export default function Home() {
       setProviderDownloadStatusLabel(null);
       setProviderCandidates([]);
       setSelectedProviderCandidateId("");
+      setManualProviderSourceUrl("");
+      setIsManualProviderSourceOpen(false);
 
       try {
         await refreshLibraryMatches();
@@ -947,6 +1156,8 @@ export default function Home() {
     downloadQuality,
     downloadRightsConfirmed,
     downloadTrackPosition,
+    isManualProviderSourceOpen,
+    manualProviderSourceUrl,
     markDownloadedTrackInLibrary,
     providerCandidates,
     refreshLibraryMatches,
@@ -987,12 +1198,14 @@ export default function Home() {
     clearBackupWorkflowState();
     setRequestError(null);
     setNavidromePlaylistMessage(null);
+    setNavidromePlaylistSkipped([]);
     setResolvedSource(null);
     setTracks([]);
     setFolderPlans([]);
     setShowAllFolderPlans(false);
     setLibraryMatches([]);
     setSelectedPlaylist(null);
+    setSelectedMetadataBackup(null);
   }, [clearBackupWorkflowState]);
 
   const selectPlaylist = useCallback(
@@ -1000,6 +1213,7 @@ export default function Home() {
       if (playlistId !== selectedPlaylistId) {
         setLibraryOrganizeMessage(null);
         setNavidromePlaylistMessage(null);
+        setNavidromePlaylistSkipped([]);
         clearBackupWorkflowState();
         setRequestError(null);
         setSelectedPlaylist(null);
@@ -1007,6 +1221,7 @@ export default function Home() {
         setFolderPlans([]);
         setShowAllFolderPlans(false);
         setLibraryMatches([]);
+        setSelectedMetadataBackup(null);
       }
 
       setSelectedPlaylistId(playlistId);
@@ -1038,6 +1253,10 @@ export default function Home() {
           redirectToLogin();
           return;
         }
+
+        setAppAuthMode(
+          appSession.authMode === "external" ? "external" : "internal"
+        );
       } catch {
         if (!cancelled) {
           redirectToLogin();
@@ -1138,10 +1357,13 @@ export default function Home() {
 
     if (!selectedPlaylistId) {
       setSelectedPlaylist(null);
+      setSelectedMetadataBackup(null);
       setTracks([]);
       setFolderPlans([]);
       setShowAllFolderPlans(false);
       setLibraryMatches([]);
+      setNavidromePlaylistMessage(null);
+      setNavidromePlaylistSkipped([]);
       clearBackupWorkflowState();
       return;
     }
@@ -1153,9 +1375,11 @@ export default function Home() {
       setIsLoadingTracks(true);
       setLibraryOrganizeMessage(null);
       setNavidromePlaylistMessage(null);
+      setNavidromePlaylistSkipped([]);
       clearBackupWorkflowState();
       setRequestError(null);
       setSelectedPlaylist(null);
+      setSelectedMetadataBackup(null);
       setTracks([]);
       setFolderPlans([]);
       setShowAllFolderPlans(false);
@@ -1171,6 +1395,13 @@ export default function Home() {
           setTracks(response.tracks);
           setFolderPlans(response.folderPlans);
           setLibraryMatches(response.libraryMatches);
+          setSelectedMetadataBackup(response.metadataBackup ?? null);
+          if (response.metadataBackup) {
+            setPlaylistMetadataBackups((current) => ({
+              ...current,
+              [playlistId]: response.metadataBackup as PlaylistMetadataBackup
+            }));
+          }
           setPlaylistBackupStatuses((current) => ({
             ...current,
             [playlistId]: getPlaylistBackupStatus(
@@ -1242,6 +1473,7 @@ export default function Home() {
   );
 
   const isConnected = Boolean(session?.authenticated);
+  const externalAuthEnabled = appAuthMode === "external";
   const userInitial = session?.user?.displayName?.charAt(0).toUpperCase() ?? "S";
   const navidromeReady = navidromeStatus?.state === "ready";
   const navidromeApiReady =
@@ -1309,9 +1541,23 @@ export default function Home() {
     setDownloadTrackPosition(nextDownloadTrackPosition);
     setProviderCandidates([]);
     setSelectedProviderCandidateId("");
+    setManualProviderSourceUrl("");
+    setIsManualProviderSourceOpen(false);
     setDownloadRightsConfirmed(false);
     setDownloadBulkRiskAccepted(false);
     setProviderDownloadMessage(null);
+    const currentBulkDownloadJob = bulkDownloadJobRef.current;
+
+    if (
+      !currentBulkDownloadJob ||
+      !isProviderBulkJobActive(currentBulkDownloadJob)
+    ) {
+      setBulkCandidatePreview(null);
+    }
+    if (!currentBulkDownloadJob) {
+      setBulkDownloadMessage(null);
+      setBulkDownloadProgress(null);
+    }
   }, [downloadTrackOptions, downloadTrackPosition]);
   const canOrganizeLibrary =
     navidromeReady && tracks.length > 0 && moveNeededCount > 0;
@@ -1331,28 +1577,158 @@ export default function Home() {
   const selectedProviderCandidate = providerCandidates.find(
     (candidate) => candidate.id === selectedProviderCandidateId
   );
+  const manualProviderSourceUrlTrimmed = manualProviderSourceUrl.trim();
+  const manualProviderSource = manualProviderSourceUrlTrimmed
+    ? providerSourceFromUrl(manualProviderSourceUrlTrimmed)
+    : null;
+  const selectedProviderDownloadSource = isManualProviderSourceOpen
+    ? manualProviderSource
+    : selectedProviderCandidate?.url
+      ? {
+          providerId: selectedProviderCandidate.providerId,
+          sourceUrl: selectedProviderCandidate.url
+        }
+      : null;
   const canDownloadProvider =
     Boolean(
       navidromeReady &&
         selectedDownloadTrack &&
-        selectedProviderCandidate?.url &&
+        selectedProviderDownloadSource?.sourceUrl &&
         downloadRightsConfirmed &&
         downloadBulkRiskAccepted
     ) &&
     !isSearchingProvider &&
     !isDownloadingProvider &&
-    !isDownloadingBulkProvider;
+    !isDownloadingBulkProvider &&
+    !isPreviewingBulkProvider;
   const canDownloadBulkProvider =
+    Boolean(
+      navidromeReady &&
+        bulkCandidatePreview?.downloadableCount &&
+        downloadRightsConfirmed &&
+        downloadBulkRiskAccepted &&
+        !isDownloadingProvider &&
+        !isSearchingProvider &&
+        !isDownloadingBulkProvider &&
+        !isPreviewingBulkProvider
+    );
+  const canPreviewBulkProvider =
     Boolean(
       navidromeReady &&
         downloadTrackOptions.length &&
         !isDownloadingProvider &&
         !isSearchingProvider &&
-        !isDownloadingBulkProvider
+        !isDownloadingBulkProvider &&
+        !isPreviewingBulkProvider
     );
-  const downloadBulkQueue = useCallback(async () => {
+  const previewBulkProviderCandidates = useCallback(async () => {
     if (!downloadTrackOptions.length) {
       setRequestError("Resolve Spotify tracks with missing backups first.");
+      return;
+    }
+
+    setIsPreviewingBulkProvider(true);
+    setBulkCandidatePreview(null);
+    setBulkDownloadMessage(null);
+    setBulkDownloadProgress({
+      completedCount: 0,
+      failedCount: 0,
+      phase: "Dry run",
+      totalCount: downloadTrackOptions.length
+    });
+    setProviderDownloadMessage(null);
+    setRequestError(null);
+
+    try {
+      const preview = await postProviderBulkPreviewStream(
+        {
+          limit: 4,
+          providerIds: providerSearchOrder,
+          tracks: downloadTrackOptions
+        },
+        (progress) => {
+          setBulkDownloadProgress({
+            completedCount: progress.completedCount,
+            failedCount: progress.failedCount,
+            phase: "Dry run",
+            totalCount: progress.totalCount,
+            trackLabel: progress.trackLabel ?? "Checking provider matches"
+          });
+        }
+      );
+
+      setBulkCandidatePreview(preview);
+      setBulkDownloadProgress(null);
+      setBulkDownloadMessage(
+        `Dry run selected candidates for ${numberFormatter.format(
+          preview.downloadableCount
+        )} of ${numberFormatter.format(preview.totalCount)} missing tracks.`
+      );
+    } catch (error) {
+      setBulkDownloadProgress(null);
+      setRequestError(errorMessage(error));
+    } finally {
+      setIsPreviewingBulkProvider(false);
+    }
+  }, [downloadTrackOptions]);
+
+  const applyBulkProviderJob = useCallback(
+    (job: ProviderBulkDownloadJob) => {
+      setBulkDownloadJob(job);
+      setBulkDownloadProgress(providerBulkJobProgress(job));
+      setIsDownloadingBulkProvider(isProviderBulkJobActive(job));
+
+      for (const item of job.items) {
+        if (item.status !== "completed" || !item.download) {
+          continue;
+        }
+
+        if (item.download.libraryIndex) {
+          setLibraryIndex(item.download.libraryIndex);
+        }
+
+        if (item.download.relativePath) {
+          markDownloadedTrackInLibrary(item.track, item.download.relativePath);
+        }
+      }
+
+      if (isProviderBulkJobTerminal(job)) {
+        const bulkMessage = providerBulkJobResultMessage(job);
+
+        setBulkDownloadMessage(bulkMessage);
+
+        try {
+          window.localStorage.removeItem(bulkProviderJobStorageKey);
+        } catch {
+          // Local storage may be unavailable in hardened browser contexts.
+        }
+      }
+    },
+    [markDownloadedTrackInLibrary]
+  );
+
+  const loadBulkProviderJob = useCallback(
+    async (jobId: string) => {
+      const response = await fetchJson<ProviderBulkDownloadResponse>(
+        `/api/providers/download/bulk/${encodeURIComponent(jobId)}`
+      );
+
+      if (!response.job) {
+        throw new Error("Provider bulk job status response was incomplete.");
+      }
+
+      applyBulkProviderJob(response.job);
+
+      return response.job;
+    },
+    [applyBulkProviderJob]
+  );
+
+  const startBulkProviderJob = useCallback(async () => {
+    const items = buildBulkDownloadItems(bulkCandidatePreview);
+
+    if (!items.length) {
+      setRequestError("Run a dry-run preview and choose tracks with candidates first.");
       return;
     }
 
@@ -1361,143 +1737,190 @@ export default function Home() {
     setBulkDownloadProgress({
       completedCount: 0,
       failedCount: 0,
-      phase: "Preparing",
-      totalCount: downloadTrackOptions.length
+      phase: "Queued",
+      totalCount: items.length
     });
-    setProviderDownloadMessage(null);
     setRequestError(null);
 
-    let completedCount = 0;
-    let failedCount = 0;
-    const failedTrackLabels: string[] = [];
-
     try {
-      for (const track of downloadTrackOptions) {
-        const trackLabel = `${track.position}. ${track.name}`;
-
-        setBulkDownloadProgress({
-          completedCount,
-          failedCount,
-          phase: "Searching",
-          totalCount: downloadTrackOptions.length,
-          trackLabel
-        });
-
-        try {
-          const searchResponse = await postJson<ProviderSearchResponse>(
-            "/api/providers/search",
-            {
-              limit: 4,
-              providerIds: providerSearchOrder,
-              track
-            }
-          );
-          const candidate = bestProviderCandidate(
-            searchResponse.search.candidates
-          );
-
-          if (!candidate?.url) {
-            throw new Error("No provider candidate found.");
-          }
-
-          setBulkDownloadProgress({
-            completedCount,
-            failedCount,
-            phase: `Downloading from ${providerDisplayName(
-              candidate.providerId
-            )}`,
-            totalCount: downloadTrackOptions.length,
-            trackLabel
-          });
-
-          const downloadResponse = await postJson<ProviderDownloadResponse>(
-            "/api/providers/download",
-            {
-              bulkRiskAccepted: true,
-              providerId: candidate.providerId,
-              quality: downloadQuality,
-              rightsConfirmed: true,
-              selectedReason: `SpotifyBU automatic bulk download selected ${candidate.title} (${candidate.score.overall}% match)`,
-              sourceUrl: candidate.url,
-              track
-            }
-          );
-          const download = await waitForProviderDownload(
-            downloadResponse,
-            (job) => {
-              setBulkDownloadProgress({
-                completedCount,
-                failedCount,
-                phase: `Downloading from ${providerDisplayName(
-                  candidate.providerId
-                )} (${providerDownloadJobStatusLabel(job.status)})`,
-                totalCount: downloadTrackOptions.length,
-                trackLabel
-              });
-            }
-          );
-
-          if (download.libraryIndex) {
-            setLibraryIndex(download.libraryIndex);
-          }
-
-          if (download.relativePath) {
-            markDownloadedTrackInLibrary(track, download.relativePath);
-          }
-
-          completedCount += 1;
-        } catch (error) {
-          failedCount += 1;
-          failedTrackLabels.push(`${trackLabel}: ${errorMessage(error)}`);
-
-          setBulkDownloadProgress({
-            completedCount,
-            failedCount,
-            phase: "Continuing",
-            totalCount: downloadTrackOptions.length,
-            trackLabel
-          });
+      const response = await postJson<ProviderBulkDownloadResponse>(
+        "/api/providers/download/bulk",
+        {
+          bulkRiskAccepted: downloadBulkRiskAccepted,
+          items,
+          quality: downloadQuality,
+          rightsConfirmed: downloadRightsConfirmed
         }
+      );
+
+      if (!response.job) {
+        throw new Error("Provider bulk job did not return a job.");
       }
 
-      setBulkDownloadProgress({
-        completedCount,
-        failedCount,
-        phase: "Complete",
-        totalCount: downloadTrackOptions.length
-      });
-      const bulkMessage = `Backed up ${completedCount} of ${
-        downloadTrackOptions.length
-      } missing tracks${
-        failedCount
-          ? `; ${failedCount} need review${
-              failedTrackLabels[0] ? ` (${failedTrackLabels[0]})` : ""
-            }`
-          : ""
-      }.`;
-
-      setBulkDownloadMessage(bulkMessage);
-
       try {
-        await refreshLibraryMatches();
-      } catch (error) {
-        setBulkDownloadMessage(
-          `${bulkMessage} SpotifyBU could not refresh the match table automatically (${errorMessage(
-            error
-          )}). Run Scan library after the server settles.`
-        );
+        window.localStorage.setItem(bulkProviderJobStorageKey, response.job.id);
+      } catch {
+        // Local storage may be unavailable in hardened browser contexts.
+      }
+
+      applyBulkProviderJob(response.job);
+    } catch (error) {
+      setIsDownloadingBulkProvider(false);
+      setRequestError(errorMessage(error));
+    }
+  }, [
+    applyBulkProviderJob,
+    bulkCandidatePreview,
+    downloadBulkRiskAccepted,
+    downloadQuality,
+    downloadRightsConfirmed
+  ]);
+
+  const cancelBulkProviderJob = useCallback(async () => {
+    if (!bulkDownloadJob) {
+      return;
+    }
+
+    try {
+      const response = await postJson<ProviderBulkDownloadResponse>(
+        `/api/providers/download/bulk/${encodeURIComponent(bulkDownloadJob.id)}`,
+        {
+          action: "cancel"
+        }
+      );
+
+      if (response.job) {
+        applyBulkProviderJob(response.job);
       }
     } catch (error) {
       setRequestError(errorMessage(error));
-    } finally {
-      setIsDownloadingBulkProvider(false);
     }
-  }, [
-    downloadTrackOptions,
-    downloadQuality,
-    markDownloadedTrackInLibrary,
-    refreshLibraryMatches
-  ]);
+  }, [applyBulkProviderJob, bulkDownloadJob]);
+
+  const retryBulkProviderJob = useCallback(async () => {
+    if (!bulkDownloadJob) {
+      return;
+    }
+
+    setBulkDownloadMessage(null);
+    setRequestError(null);
+
+    try {
+      const response = await postJson<ProviderBulkDownloadResponse>(
+        `/api/providers/download/bulk/${encodeURIComponent(bulkDownloadJob.id)}`,
+        {
+          action: "retry"
+        }
+      );
+
+      if (response.job) {
+        try {
+          window.localStorage.setItem(bulkProviderJobStorageKey, response.job.id);
+        } catch {
+          // Local storage may be unavailable in hardened browser contexts.
+        }
+
+        applyBulkProviderJob(response.job);
+      }
+    } catch (error) {
+      setRequestError(errorMessage(error));
+    }
+  }, [applyBulkProviderJob, bulkDownloadJob]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let storedJobId = "";
+
+    try {
+      storedJobId = window.localStorage.getItem(bulkProviderJobStorageKey) ?? "";
+    } catch {
+      storedJobId = "";
+    }
+
+    if (!storedJobId || bulkDownloadJob?.id === storedJobId) {
+      return;
+    }
+
+    async function restoreBulkJob() {
+      try {
+        const job = await loadBulkProviderJob(storedJobId);
+
+        if (!cancelled && isProviderBulkJobTerminal(job)) {
+          try {
+            window.localStorage.removeItem(bulkProviderJobStorageKey);
+          } catch {
+            // Local storage may be unavailable in hardened browser contexts.
+          }
+        }
+      } catch {
+        try {
+          window.localStorage.removeItem(bulkProviderJobStorageKey);
+        } catch {
+          // Local storage may be unavailable in hardened browser contexts.
+        }
+      }
+    }
+
+    void restoreBulkJob();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bulkDownloadJob?.id, loadBulkProviderJob]);
+
+  useEffect(() => {
+    if (!bulkDownloadJob || isProviderBulkJobTerminal(bulkDownloadJob)) {
+      return;
+    }
+
+    let cancelled = false;
+    const jobId = bulkDownloadJob.id;
+
+    async function pollBulkJob() {
+      try {
+        const job = await loadBulkProviderJob(jobId);
+
+        if (!cancelled && isProviderBulkJobTerminal(job)) {
+          setIsDownloadingBulkProvider(false);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setRequestError(errorMessage(error));
+        }
+      }
+    }
+
+    const intervalId = window.setInterval(() => {
+      void pollBulkJob();
+    }, providerDownloadPollIntervalMs);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [bulkDownloadJob, loadBulkProviderJob]);
+
+  useEffect(() => {
+    if (!bulkDownloadJob || !isProviderBulkJobTerminal(bulkDownloadJob)) {
+      return;
+    }
+
+    if (refreshedBulkJobIdRef.current === bulkDownloadJob.id) {
+      return;
+    }
+
+    refreshedBulkJobIdRef.current = bulkDownloadJob.id;
+
+    void refreshLibraryMatches().catch((error) => {
+      setBulkDownloadMessage(
+        `${providerBulkJobResultMessage(
+          bulkDownloadJob
+        )} SpotifyBU could not refresh the match table automatically (${errorMessage(
+          error
+        )}). Run Scan library after the server settles.`
+      );
+    });
+  }, [bulkDownloadJob, refreshLibraryMatches]);
   const libraryIndexLabel = libraryIndex
     ? libraryIndex.generatedAt
       ? `${numberFormatter.format(libraryIndex.trackCount)} indexed - scanned ${formatShortDate(
@@ -1541,6 +1964,15 @@ export default function Home() {
     bulkDownloadProgress && bulkDownloadProgress.totalCount
       ? Math.round((bulkProgressFinished / bulkDownloadProgress.totalCount) * 100)
       : 0;
+  const visibleBulkPreviewItems = bulkCandidatePreview?.items ?? [];
+  const canCancelBulkProviderJob = Boolean(
+    bulkDownloadJob && isProviderBulkJobActive(bulkDownloadJob)
+  );
+  const canRetryBulkProviderJob = Boolean(
+    bulkDownloadJob &&
+      isProviderBulkJobTerminal(bulkDownloadJob) &&
+      bulkDownloadJob.items.some((item) => item.status !== "completed")
+  );
 
   return (
     <main className="app-shell">
@@ -1597,10 +2029,20 @@ export default function Home() {
             Settings
           </a>
 
-          <a className="icon-command" href="/api/app-auth/logout" title="Sign out">
-            <LogOut size={18} />
-            Sign out
-          </a>
+          {externalAuthEnabled ? (
+            <span
+              className="user-chip"
+              title="App sign-out is managed by the external auth provider"
+            >
+              <ShieldCheck size={18} />
+              External auth
+            </span>
+          ) : (
+            <a className="icon-command" href="/api/app-auth/logout" title="Sign out">
+              <LogOut size={18} />
+              Sign out
+            </a>
+          )}
         </div>
       </header>
 
@@ -1637,6 +2079,29 @@ export default function Home() {
         <div className="alert success">
           <CheckCircle2 size={18} />
           <span>{navidromePlaylistMessage}</span>
+        </div>
+      ) : null}
+
+      {navidromePlaylistSkipped.length ? (
+        <div className="alert skipped-review">
+          <ShieldCheck size={18} />
+          <span>
+            <strong>Skipped tracks</strong>
+            {navidromePlaylistSkipped.slice(0, 8).map((track) => (
+              <span
+                className="skipped-review-row"
+                key={`${track.trackPosition}-${track.trackName}`}
+              >
+                {track.trackPosition}. {track.trackName} - {track.reason}
+              </span>
+            ))}
+            {navidromePlaylistSkipped.length > 8 ? (
+              <span className="skipped-review-row">
+                {numberFormatter.format(navidromePlaylistSkipped.length - 8)}{" "}
+                more skipped tracks
+              </span>
+            ) : null}
+          </span>
         </div>
       ) : null}
 
@@ -1810,6 +2275,16 @@ export default function Home() {
                               Backed up
                             </span>
                           ) : null}
+                          {playlistMetadataBackups[playlist.id] ? (
+                            <span
+                              className="playlist-saved-badge"
+                              title={`Metadata saved ${formatShortDate(
+                                playlistMetadataBackups[playlist.id].exportedAt
+                              )}`}
+                            >
+                              DB saved
+                            </span>
+                          ) : null}
                         </span>
                         <span className="playlist-count">
                           {numberFormatter.format(playlist.tracksTotal)} tracks
@@ -1861,26 +2336,43 @@ export default function Home() {
               </div>
               <div className="detail-actions">
                 {sourceKind === "playlist" ? (
-                  <button
-                    className={`command secondary ${
-                      canCreateNavidromePlaylist ? "" : "disabled"
-                    }`}
-                    disabled={!canCreateNavidromePlaylist}
-                    onClick={() => void createNavidromePlaylist()}
-                    title={
-                      navidromeApiReady
-                        ? "Create or update this playlist in Navidrome"
-                        : "Connect Navidrome API credentials to create playlists"
-                    }
-                    type="button"
-                  >
-                    {isCreatingNavidromePlaylist ? (
-                      <Loader2 className="spin" size={18} />
-                    ) : (
-                      <ListMusic size={18} />
-                    )}
-                    Create in Navidrome
-                  </button>
+                  <>
+                    <label className="sync-mode-control">
+                      <span className="stat-label">Navidrome</span>
+                      <select
+                        disabled={isCreatingNavidromePlaylist}
+                        onChange={(event) =>
+                          setNavidromePlaylistSyncMode(
+                            event.target.value === "append" ? "append" : "replace"
+                          )
+                        }
+                        value={navidromePlaylistSyncMode}
+                      >
+                        <option value="replace">Replace</option>
+                        <option value="append">Append</option>
+                      </select>
+                    </label>
+                    <button
+                      className={`command secondary ${
+                        canCreateNavidromePlaylist ? "" : "disabled"
+                      }`}
+                      disabled={!canCreateNavidromePlaylist}
+                      onClick={() => void createNavidromePlaylist()}
+                      title={
+                        navidromeApiReady
+                          ? "Sync this playlist in Navidrome"
+                          : "Connect Navidrome API credentials to create playlists"
+                      }
+                      type="button"
+                    >
+                      {isCreatingNavidromePlaylist ? (
+                        <Loader2 className="spin" size={18} />
+                      ) : (
+                        <ListMusic size={18} />
+                      )}
+                      Sync Navidrome
+                    </button>
+                  </>
                 ) : null}
                 <a
                   className={`command secondary ${
@@ -1952,6 +2444,16 @@ export default function Home() {
                   <span className="stat-label">{selectedTracksLabel}</span>
                   <span className="stat-value">
                     {numberFormatter.format(tracks.length)}
+                  </span>
+                </span>
+                <span>
+                  <span className="stat-label">Metadata DB</span>
+                  <span className="stat-value metadata-stat">
+                    {selectedMetadataBackup
+                      ? formatShortDate(selectedMetadataBackup.exportedAt)
+                      : sourceKind === "playlist"
+                        ? "Saving"
+                        : "N/A"}
                   </span>
                 </span>
                 <span>
@@ -2089,6 +2591,8 @@ export default function Home() {
                             setDownloadTrackPosition(event.target.value);
                             setProviderCandidates([]);
                             setSelectedProviderCandidateId("");
+                            setManualProviderSourceUrl("");
+                            setIsManualProviderSourceOpen(false);
                             setDownloadRightsConfirmed(false);
                             setDownloadBulkRiskAccepted(false);
                             setProviderDownloadMessage(null);
@@ -2141,6 +2645,8 @@ export default function Home() {
                             }
                             onChange={(event) => {
                               setSelectedProviderCandidateId(event.target.value);
+                              setManualProviderSourceUrl("");
+                              setIsManualProviderSourceOpen(false);
                               setDownloadRightsConfirmed(false);
                               setDownloadBulkRiskAccepted(false);
                               setProviderDownloadMessage(null);
@@ -2172,13 +2678,83 @@ export default function Home() {
                             Match score {selectedProviderCandidate.score.overall}%
                           </span>
                           {selectedProviderCandidate.url ? (
-                            <a
-                              href={selectedProviderCandidate.url}
-                              rel="noreferrer"
-                              target="_blank"
+                            <span className="provider-candidate-actions">
+                              <a
+                                href={selectedProviderCandidate.url}
+                                rel="noreferrer"
+                                target="_blank"
+                              >
+                                Review source
+                              </a>
+                              <button
+                                className="provider-inline-button"
+                                disabled={
+                                  isDownloadingProvider ||
+                                  isDownloadingBulkProvider
+                                }
+                                onClick={toggleManualProviderSource}
+                                type="button"
+                              >
+                                <Link2 size={14} />
+                                {isManualProviderSourceOpen
+                                  ? "Clear manual URL"
+                                  : "Enter URL manually"}
+                              </button>
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <button
+                          className="command secondary"
+                          disabled={
+                            !selectedDownloadTrack ||
+                            isDownloadingProvider ||
+                            isDownloadingBulkProvider
+                          }
+                          onClick={toggleManualProviderSource}
+                          title="Enter a known provider source URL"
+                          type="button"
+                        >
+                          <Link2 size={18} />
+                          {isManualProviderSourceOpen
+                            ? "Clear Manual URL"
+                            : "Enter URL Manually"}
+                        </button>
+                      )}
+                      {isManualProviderSourceOpen ? (
+                        <div className="provider-manual-source">
+                          <label className="provider-field">
+                            <span>Manual source URL</span>
+                            <input
+                              disabled={
+                                isDownloadingProvider ||
+                                isDownloadingBulkProvider
+                              }
+                              onChange={(event) => {
+                                setManualProviderSourceUrl(event.target.value);
+                                setDownloadRightsConfirmed(false);
+                                setDownloadBulkRiskAccepted(false);
+                                setProviderDownloadMessage(null);
+                              }}
+                              placeholder="https://www.youtube.com/watch?v=..."
+                              type="url"
+                              value={manualProviderSourceUrl}
+                            />
+                          </label>
+                          {manualProviderSourceUrlTrimmed ? (
+                            <p
+                              className={
+                                manualProviderSource
+                                  ? "provider-queue-note"
+                                  : "provider-error"
+                              }
                             >
-                              Review source
-                            </a>
+                              {manualProviderSource
+                                ? `Manual source: ${providerDisplayName(
+                                    manualProviderSource.providerId
+                                  )}`
+                                : "Use a YouTube or JioSaavn HTTPS URL."}
+                            </p>
                           ) : null}
                         </div>
                       ) : null}
@@ -2275,20 +2851,116 @@ export default function Home() {
                       ) : null}
                       <button
                         className={`command secondary ${
-                          canDownloadBulkProvider ? "" : "disabled"
+                          canPreviewBulkProvider ? "" : "disabled"
                         }`}
-                        disabled={!canDownloadBulkProvider}
-                        onClick={() => void downloadBulkQueue()}
-                        title="Download all missing playlist tracks"
+                        disabled={!canPreviewBulkProvider}
+                        onClick={() => void previewBulkProviderCandidates()}
+                        title="Preview provider selections without downloading"
                         type="button"
                       >
-                        {isDownloadingBulkProvider ? (
+                        {isPreviewingBulkProvider ? (
                           <Loader2 className="spin" size={18} />
                         ) : (
-                          <Download size={18} />
+                          <Search size={18} />
                         )}
-                        Download Missing Tracks
+                        Preview Candidates
                       </button>
+                      {bulkCandidatePreview ? (
+                        <div className="provider-preview">
+                          <div className="download-progress-meta">
+                            <span>Dry run</span>
+                            <span>
+                              {numberFormatter.format(
+                                bulkCandidatePreview.downloadableCount
+                              )}
+                              /{numberFormatter.format(
+                                bulkCandidatePreview.totalCount
+                              )} ready
+                            </span>
+                          </div>
+                          <div className="provider-preview-list">
+                            {visibleBulkPreviewItems.map((item) => (
+                              <div
+                                className={`provider-preview-item ${
+                                  item.candidate?.url ? "ready" : "failed"
+                                }`}
+                                key={`${item.track.position}-${item.track.id ?? item.track.name}`}
+                              >
+                                <span>
+                                  {item.track.position}. {item.track.name}
+                                </span>
+                                <strong>{bulkPreviewCandidateLabel(item)}</strong>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      <label className="provider-check">
+                        <input
+                          checked={downloadRightsConfirmed}
+                          disabled={
+                            isDownloadingProvider || isDownloadingBulkProvider
+                          }
+                          onChange={(event) =>
+                            setDownloadRightsConfirmed(event.target.checked)
+                          }
+                          type="checkbox"
+                        />
+                        <span>
+                          I am authorized to download these previewed sources.
+                        </span>
+                      </label>
+                      <label className="provider-check">
+                        <input
+                          checked={downloadBulkRiskAccepted}
+                          disabled={
+                            isDownloadingProvider || isDownloadingBulkProvider
+                          }
+                          onChange={(event) =>
+                            setDownloadBulkRiskAccepted(event.target.checked)
+                          }
+                          type="checkbox"
+                        />
+                        <span>
+                          I understand provider throttling and blocking risk.
+                        </span>
+                      </label>
+                      <div className="provider-action-row">
+                        <button
+                          className={`command secondary ${
+                            canDownloadBulkProvider ? "" : "disabled"
+                          }`}
+                          disabled={!canDownloadBulkProvider}
+                          onClick={() => void startBulkProviderJob()}
+                          title="Start a resumable background bulk backup job"
+                          type="button"
+                        >
+                          {isDownloadingBulkProvider ? (
+                            <Loader2 className="spin" size={18} />
+                          ) : (
+                            <Play size={18} />
+                          )}
+                          Start Job
+                        </button>
+                        <button
+                          className="icon-command compact"
+                          disabled={!canCancelBulkProviderJob}
+                          onClick={() => void cancelBulkProviderJob()}
+                          title="Cancel bulk job after the current track"
+                          type="button"
+                        >
+                          <XCircle size={18} />
+                        </button>
+                        <button
+                          className="icon-command compact"
+                          disabled={!canRetryBulkProviderJob}
+                          onClick={() => void retryBulkProviderJob()}
+                          title="Retry unfinished bulk job items"
+                          type="button"
+                        >
+                          <RotateCcw size={18} />
+                        </button>
+                      </div>
                       {bulkDownloadProgress ? (
                         <div
                           aria-live="polite"
@@ -2379,7 +3051,8 @@ export default function Home() {
                               () => void openMissingBackupActions(track),
                               isSearchingProvider ||
                                 isDownloadingProvider ||
-                                isDownloadingBulkProvider
+                                isDownloadingBulkProvider ||
+                                isPreviewingBulkProvider
                             )}
                           </span>
                           <span className="track-cell">
@@ -2670,6 +3343,159 @@ async function postJson<T>(url: string, body: unknown) {
   });
 
   return responseJson<T>(response);
+}
+
+async function postProviderBulkPreviewStream(
+  body: unknown,
+  onProgress: (event: ProviderBulkPreviewProgressEvent) => void
+): Promise<ProviderBulkCandidatePreview> {
+  const response = await fetch("/api/providers/download/bulk/preview", {
+    body: JSON.stringify({
+      ...(isRecord(body) ? body : {}),
+      stream: true
+    }),
+    cache: "no-store",
+    headers: {
+      Accept: "application/x-ndjson",
+      "Content-Type": "application/json"
+    },
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    await responseJson<never>(response);
+    throw new Error("Provider preview request failed.");
+  }
+
+  if (!response.body) {
+    throw new Error("Provider preview did not return progress updates.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pendingText = "";
+  const streamState: {
+    preview: ProviderBulkCandidatePreview | null;
+  } = {
+    preview: null
+  };
+
+  const handleLine = (line: string) => {
+    const event = parseProviderBulkPreviewStreamEvent(line);
+
+    if (event.type === "progress") {
+      onProgress(event);
+      return;
+    }
+
+    if (event.type === "complete") {
+      streamState.preview = event.preview;
+      return;
+    }
+
+    throw new Error(event.error || "SpotifyBU could not preview candidates.");
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    pendingText += decoder.decode(value, {
+      stream: true
+    });
+    pendingText = consumeProviderBulkPreviewLines(pendingText, handleLine);
+  }
+
+  pendingText += decoder.decode();
+  consumeProviderBulkPreviewLines(pendingText, handleLine, true);
+
+  if (!streamState.preview) {
+    throw new Error("Provider preview finished without candidate results.");
+  }
+
+  return streamState.preview;
+}
+
+function consumeProviderBulkPreviewLines(
+  pendingText: string,
+  handleLine: (line: string) => void,
+  consumeRemainder = false
+) {
+  let lineBreakIndex = pendingText.indexOf("\n");
+
+  while (lineBreakIndex !== -1) {
+    const line = pendingText.slice(0, lineBreakIndex).trim();
+
+    if (line) {
+      handleLine(line);
+    }
+
+    pendingText = pendingText.slice(lineBreakIndex + 1);
+    lineBreakIndex = pendingText.indexOf("\n");
+  }
+
+  if (consumeRemainder) {
+    const line = pendingText.trim();
+
+    if (line) {
+      handleLine(line);
+    }
+
+    return "";
+  }
+
+  return pendingText;
+}
+
+function parseProviderBulkPreviewStreamEvent(
+  line: string
+): ProviderBulkPreviewStreamEvent {
+  const parsed = JSON.parse(line) as unknown;
+
+  if (!isRecord(parsed)) {
+    throw new Error("Provider preview returned an invalid progress update.");
+  }
+
+  if (parsed.type === "progress") {
+    return {
+      completedCount: numericStreamValue(parsed.completedCount),
+      failedCount: numericStreamValue(parsed.failedCount),
+      totalCount: numericStreamValue(parsed.totalCount),
+      trackLabel:
+        typeof parsed.trackLabel === "string" ? parsed.trackLabel : undefined,
+      type: "progress"
+    };
+  }
+
+  if (parsed.type === "complete" && isRecord(parsed.preview)) {
+    return {
+      preview: parsed.preview as unknown as ProviderBulkCandidatePreview,
+      type: "complete"
+    };
+  }
+
+  if (parsed.type === "error") {
+    return {
+      error:
+        typeof parsed.error === "string"
+          ? parsed.error
+          : "SpotifyBU could not preview candidates.",
+      type: "error"
+    };
+  }
+
+  throw new Error("Provider preview returned an unknown progress update.");
+}
+
+function numericStreamValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 async function waitForProviderDownload(
@@ -3034,25 +3860,161 @@ function providerDisplayName(providerId: string) {
   );
 }
 
-function bestProviderCandidate(candidates: ProviderSearchCandidate[]) {
-  return candidates
-    .filter((candidate) => candidate.url)
-    .sort((left, right) => {
-      const scoreDelta = right.score.overall - left.score.overall;
+function buildBulkDownloadItems(preview: ProviderBulkCandidatePreview | null) {
+  return (preview?.items ?? [])
+    .filter((item) => item.candidate?.url)
+    .map((item) => ({
+      candidateScore: item.candidate?.score.overall,
+      candidateTitle: item.candidate?.title,
+      providerId: item.candidate?.providerId ?? "",
+      selectedReason: `SpotifyBU dry-run bulk preview selected ${
+        item.candidate?.title ?? "provider candidate"
+      } (${item.candidate?.score.overall ?? 0}% match)`,
+      sourceUrl: item.candidate?.url ?? "",
+      track: item.track
+    }));
+}
 
-      if (scoreDelta) {
-        return scoreDelta;
-      }
+function providerBulkJobProgress(
+  job: ProviderBulkDownloadJob
+): BulkDownloadProgress {
+  const activeItem =
+    job.items.find((item) => item.status === "downloading") ??
+    job.items.find((item) => item.status === "pending");
+  const statusLabel = providerBulkJobStatusLabel(job.status);
 
-      return (
-        providerSearchOrder.indexOf(
-          left.providerId as (typeof providerSearchOrder)[number]
-        ) -
-        providerSearchOrder.indexOf(
-          right.providerId as (typeof providerSearchOrder)[number]
-        )
-      );
-    })[0];
+  return {
+    completedCount: job.completedCount,
+    failedCount: job.failedCount,
+    phase: statusLabel,
+    totalCount: job.totalCount,
+    trackLabel: activeItem
+      ? `${activeItem.track.position}. ${activeItem.track.name}`
+      : job.failedCount
+        ? `${job.failedCount} need review`
+        : undefined
+  };
+}
+
+function providerBulkJobStatusLabel(status: ProviderBulkDownloadJobStatus) {
+  if (status === "cancelled") {
+    return "Cancelled";
+  }
+
+  if (status === "cancelling") {
+    return "Cancelling";
+  }
+
+  if (status === "completed") {
+    return "Complete";
+  }
+
+  if (status === "failed") {
+    return "Needs review";
+  }
+
+  if (status === "queued") {
+    return "Queued";
+  }
+
+  return "Running";
+}
+
+function providerBulkJobResultMessage(job: ProviderBulkDownloadJob) {
+  const cancelledCount = job.items.filter(
+    (item) => item.status === "cancelled"
+  ).length;
+  const firstFailedItem = job.items.find((item) => item.status === "failed");
+
+  if (job.status === "cancelled") {
+    return `Bulk job cancelled after ${numberFormatter.format(
+      job.completedCount
+    )} of ${numberFormatter.format(job.totalCount)} tracks${
+      cancelledCount
+        ? `; ${numberFormatter.format(cancelledCount)} were left unfinished`
+        : ""
+    }.`;
+  }
+
+  return `Backed up ${numberFormatter.format(
+    job.completedCount
+  )} of ${numberFormatter.format(job.totalCount)} previewed tracks${
+    job.failedCount
+      ? `; ${numberFormatter.format(job.failedCount)} need review${
+          firstFailedItem?.error ? ` (${firstFailedItem.error})` : ""
+        }`
+      : ""
+  }.`;
+}
+
+function isProviderBulkJobActive(job: ProviderBulkDownloadJob) {
+  return (
+    job.status === "queued" ||
+    job.status === "running" ||
+    job.status === "cancelling"
+  );
+}
+
+function isProviderBulkJobTerminal(job: ProviderBulkDownloadJob) {
+  return (
+    job.status === "cancelled" ||
+    job.status === "completed" ||
+    job.status === "failed"
+  );
+}
+
+function bulkPreviewCandidateLabel(item: ProviderBulkCandidatePreviewItem) {
+  if (!item.candidate?.url) {
+    return item.errors[0]
+      ? `${providerDisplayName(item.errors[0].providerId)}: ${item.errors[0].error}`
+      : "No candidate found";
+  }
+
+  return `${providerDisplayName(item.candidate.providerId)} - ${
+    item.candidate.title
+  } (${item.candidate.score.overall}%)`;
+}
+
+function providerSourceFromUrl(sourceUrl: string) {
+  let url: URL;
+
+  try {
+    url = new URL(sourceUrl);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== "https:") {
+    return null;
+  }
+
+  const hostname = url.hostname.toLowerCase();
+
+  if (
+    hostname === "youtube.com" ||
+    hostname === "www.youtube.com" ||
+    hostname === "m.youtube.com" ||
+    hostname === "youtu.be"
+  ) {
+    return {
+      providerId: "youtube",
+      sourceUrl
+    };
+  }
+
+  if (
+    hostname === "jiosaavn.com" ||
+    hostname === "www.jiosaavn.com" ||
+    hostname === "saavn.com" ||
+    hostname === "www.saavn.com"
+  ) {
+    return {
+      providerId: "jiosaavn",
+      sourceUrl
+    };
+  }
+
+  return null;
 }
 
 function wait(milliseconds: number) {

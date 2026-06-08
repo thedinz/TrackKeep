@@ -171,7 +171,9 @@ export type NavidromeTrackOrganizationResult = {
 };
 
 export type NavidromePlaylistSyncResult = {
+  appendedCount?: number;
   matchedCount: number;
+  mode: NavidromePlaylistSyncMode;
   name: string;
   playlistId?: string;
   skipped: Array<{
@@ -183,6 +185,8 @@ export type NavidromePlaylistSyncResult = {
   songCount: number;
   updated: boolean;
 };
+
+export type NavidromePlaylistSyncMode = "append" | "replace";
 
 const albumFolderLogSegments = [".spotifybu", "album-folders.json"];
 const libraryIndexSegments = [".spotifybu", "library-index.json"];
@@ -931,7 +935,10 @@ export async function organizeNavidromeMatchedTracks(
 
 export async function createOrUpdateNavidromePlaylistFromSpotify(
   playlist: PlaylistSummary,
-  tracks: BackupTrack[]
+  tracks: BackupTrack[],
+  options: {
+    mode?: NavidromePlaylistSyncMode;
+  } = {}
 ) {
   if (!tracks.length) {
     throw new Error("Load Spotify playlist tracks before creating a Navidrome playlist.");
@@ -939,6 +946,7 @@ export async function createOrUpdateNavidromePlaylistFromSpotify(
 
   await navidromeApiRequest("ping");
 
+  const mode = normalizePlaylistSyncMode(options.mode);
   const matches = await matchNavidromeTracks(tracks);
   const songIds: string[] = [];
   const skipped: NavidromePlaylistSyncResult["skipped"] = [];
@@ -979,6 +987,42 @@ export async function createOrUpdateNavidromePlaylistFromSpotify(
 
   const name = navidromePlaylistName(playlist);
   const existingPlaylist = await findNavidromePlaylistByName(name);
+  const existingSongIds =
+    mode === "append" && existingPlaylist?.id
+      ? await getNavidromePlaylistSongIds(existingPlaylist.id)
+      : [];
+  const existingSongIdSet = new Set(existingSongIds);
+  const appendSongIds =
+    mode === "append"
+      ? songIds.filter((songId) => !existingSongIdSet.has(songId))
+      : songIds;
+
+  if (mode === "append" && existingPlaylist?.id) {
+    if (appendSongIds.length) {
+      await navidromeApiRequest("updatePlaylist", {
+        playlistId: existingPlaylist.id,
+        songIdToAdd: appendSongIds
+      });
+    }
+
+    const updatedPlaylist =
+      (await getNavidromePlaylist(existingPlaylist.id)) ?? existingPlaylist;
+
+    return {
+      appendedCount: appendSongIds.length,
+      matchedCount: songIds.length,
+      mode,
+      name: updatedPlaylist.name ?? name,
+      playlistId: updatedPlaylist.id,
+      skipped,
+      skippedCount: skipped.length,
+      songCount:
+        updatedPlaylist.songCount ??
+        existingSongIds.length + appendSongIds.length,
+      updated: true
+    } satisfies NavidromePlaylistSyncResult;
+  }
+
   const playlistResponse = await navidromeApiRequest("createPlaylist", {
     name,
     ...(existingPlaylist?.id ? { playlistId: existingPlaylist.id } : {}),
@@ -987,7 +1031,9 @@ export async function createOrUpdateNavidromePlaylistFromSpotify(
   const createdPlaylist = playlistResponse.playlist;
 
   return {
+    appendedCount: mode === "append" ? appendSongIds.length : undefined,
     matchedCount: songIds.length,
+    mode,
     name: createdPlaylist?.name ?? name,
     playlistId: createdPlaylist?.id ?? existingPlaylist?.id,
     skipped,
@@ -1259,6 +1305,22 @@ async function findNavidromePlaylistByName(name: string) {
   return playlists.find((playlist) => normalizeText(playlist.name) === nameKey);
 }
 
+async function getNavidromePlaylist(playlistId: string) {
+  const response = await navidromeApiRequest("getPlaylist", {
+    id: playlistId
+  });
+
+  return response.playlist;
+}
+
+async function getNavidromePlaylistSongIds(playlistId: string) {
+  const playlist = await getNavidromePlaylist(playlistId);
+
+  return arrayFrom(playlist?.entry)
+    .map((song) => song.id)
+    .filter((songId): songId is string => Boolean(songId));
+}
+
 async function resolveNavidromeSongId(
   track: BackupTrack,
   matchedTrack: NavidromeIndexedTrack
@@ -1383,6 +1445,12 @@ function navidromePlaylistName(playlist: PlaylistSummary) {
   return playlist.name.trim().slice(0, 120) || `Spotify playlist ${playlist.id}`;
 }
 
+function normalizePlaylistSyncMode(
+  mode?: NavidromePlaylistSyncMode
+): NavidromePlaylistSyncMode {
+  return mode === "append" ? "append" : "replace";
+}
+
 function arrayFrom<T>(value: T[] | T | undefined) {
   if (!value) {
     return [];
@@ -1416,6 +1484,7 @@ type NavidromeSubsonicResponse = {
 };
 
 type NavidromeApiPlaylist = {
+  entry?: NavidromeApiSong[] | NavidromeApiSong;
   id: string;
   name: string;
   songCount?: number;
@@ -1477,8 +1546,12 @@ async function navidromeApiRequest(
   }
 
   const encodedParams = params.toString();
-  const usePost = endpoint === "createPlaylist" || encodedParams.length > 1800;
-  const timeoutMs = endpoint === "createPlaylist" ? 15000 : 5000;
+  const usePost =
+    endpoint === "createPlaylist" ||
+    endpoint === "updatePlaylist" ||
+    encodedParams.length > 1800;
+  const timeoutMs =
+    endpoint === "createPlaylist" || endpoint === "updatePlaylist" ? 15000 : 5000;
 
   if (!usePost) {
     apiUrl.search = encodedParams;

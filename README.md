@@ -4,17 +4,19 @@ SpotifyBU is a Docker-first web app for turning a Spotify library into a local, 
 
 The point is not to replace Navidrome search. Navidrome already tells you what is in Navidrome. SpotifyBU uses Spotify as the source-of-truth list, uses Navidrome matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
 
-Current stable release: `1.1.8`. It includes the web UI, local app login, Spotify OAuth, playlist/song/album/track-list metadata reads, Navidrome library checks, Lidarr-compatible folder planning, library indexing, matched-file organization, Navidrome playlist creation, Docker packaging, and automatic provider sourcing inspired by spotDL.
+Current stable release: `1.2.2`. It includes the web UI, local or external-proxy app auth, Spotify OAuth, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, Navidrome library checks, Lidarr-compatible folder planning, library indexing, matched-file organization, Navidrome playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
-SpotifyBU can source audio from files already present in the mounted Navidrome music library and can search YouTube first, then JioSaavn, for missing Spotify tracks. Single-track backup lets the user review provider candidates before downloading. Bulk playlist backup is intentionally more automated: after the user chooses quality, accepts the provider warnings, and starts the job, SpotifyBU searches each missing track, chooses the highest-scoring candidate, and stages the final file into the configured Navidrome library. Provider downloads show authorization and bulk-risk warnings, preserve provenance, and stage files only into the configured Navidrome library.
+SpotifyBU can source audio from files already present in the mounted Navidrome music library and can search YouTube first, then JioSaavn, for missing Spotify tracks. Single-track backup lets the user review provider candidates before downloading. Bulk playlist backup now starts with a dry-run candidate preview, then runs as a resumable background job with cancel and retry controls. Provider downloads show authorization and bulk-risk warnings, preserve provenance, and stage files only into the configured Navidrome library.
 
 ## Features
 
 - Spotify OAuth using Authorization Code with PKCE
 - Local SpotifyBU login with default `admin/admin` credentials
+- Settings page for switching between internal login and external reverse-proxy auth
 - Settings page for changing the SpotifyBU app username and password
 - Playlist listing with private and collaborative playlist scopes
 - Playlist rail badges for playlists known to be fully backed up
+- SQLite-backed playlist metadata backup snapshots saved under the SpotifyBU config directory
 - Song, album, and pasted track-list metadata lookup from Spotify URLs, URIs, or IDs
 - Playlist track preview
 - Optional Navidrome playlist creation from matched Spotify playlist tracks
@@ -25,14 +27,15 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - Backup coverage counts for backed-up and missing Spotify tracks
 - Track backup table with one-click provider search for missing tracks
 - Matched-file organization into Lidarr-compatible Navidrome album folders
-- Create or update matching Navidrome playlists from backed-up Spotify playlist tracks
+- Replace or append matching Navidrome playlists from backed-up Spotify playlist tracks
+- Skipped-track review after Navidrome playlist sync
 - Stable album-folder logging for staged download jobs
 - Spotify title, artist, album, and album-cover tagging for staged provider downloads
 - Source-provider catalog with active YouTube and JioSaavn sourcing plus planned future providers
 - Automatic provider search for missing tracks, with YouTube checked before JioSaavn
 - Reviewed single-track source downloads for YouTube and JioSaavn using `yt-dlp` and background job polling
-- One-button bulk playlist downloads that automatically choose the best provider match for each missing Spotify track
-- Throttled bulk backup queues with per-track waits, chunk pauses, progress reporting, and partial-failure reporting
+- Dry-run bulk candidate previews with live progress before provider downloads
+- Resumable background bulk playlist jobs with cancellation, retry, per-track waits, chunk pauses, progress reporting, and partial-failure reporting
 - MP3 output with 128 kbps or 320 kbps quality targets
 - Navidrome-volume staging with idle cleanup for abandoned failed download/convert temp files
 - Docker image with Node.js, `ffmpeg`, `yt-dlp`, Python 3, and `pip`
@@ -52,14 +55,14 @@ The test image built from the `dev` branch is:
 ghcr.io/thedinz/spotifybu:dev
 ```
 
-Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.1.0-dev.12`; stable releases use normal version tags such as `1.1.8`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
+Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.2.2-dev.1`; stable releases use normal version tags such as `1.2.2`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
 
-For the exact v1.1.8 release, pin one of these tags:
+For the exact v1.2.2 release, pin one of these tags:
 
 ```text
-ghcr.io/thedinz/spotifybu:v1.1.8
-ghcr.io/thedinz/spotifybu:1.1.8
-ghcr.io/thedinz/spotifybu:1.1
+ghcr.io/thedinz/spotifybu:v1.2.2
+ghcr.io/thedinz/spotifybu:1.2.2
+ghcr.io/thedinz/spotifybu:1.2
 ```
 
 Create a folder for SpotifyBU and save this Compose template as `docker-compose.yml`:
@@ -84,6 +87,7 @@ services:
       NAVIDROME_PASSWORD: your-navidrome-password
       NEXT_PUBLIC_APP_URL: http://127.0.0.1:3000
       SPOTIFYBU_APP_SECRET: change-this-to-a-long-random-value
+      SPOTIFYBU_AUTH_MODE: internal
       SPOTIFYBU_CONFIG_DIR: /config
       SPOTIFY_CLIENT_ID: your-spotify-client-id
     volumes:
@@ -115,7 +119,8 @@ Username: admin
 Password: admin
 ```
 
-After signing in, open Settings and change the login.
+After signing in, open Settings and change the login or switch app access to an
+external auth provider.
 
 ## Docker Environment
 
@@ -134,7 +139,9 @@ Set these values before starting the app:
 | `SPOTIFYBU_PORT` | No | Host port for the web UI. Defaults to `3000`. |
 | `NEXT_PUBLIC_APP_URL` | No | Public URL for SpotifyBU. Set this for reverse-proxy installs. If blank, SpotifyBU derives it from `X-Forwarded-Host`/`X-Forwarded-Proto` or the request host. |
 | `SPOTIFYBU_APP_SECRET` | Yes | Long random value used to sign SpotifyBU's own login sessions. This is not your Spotify app Client Secret. |
+| `SPOTIFYBU_DATABASE_PATH` | No | Optional SQLite path. Defaults to `<SPOTIFYBU_CONFIG_DIR>/spotifybu.sqlite`. |
 | `SPOTIFYBU_SECURE_COOKIES` | No | Set `true` for HTTPS reverse-proxy installs. Defaults to `false` in the Docker example for Unraid-style HTTP installs. |
+| `SPOTIFYBU_AUTH_MODE` | No | Set `external` when Authentik or another trusted reverse proxy protects SpotifyBU. Defaults to `internal`, which keeps the built-in login page enabled. |
 | `NAVIDROME_MUSIC_PATH` | Yes | Host path to the music folder Navidrome scans. |
 | `SPOTIFY_CLIENT_ID` | Yes | Spotify app Client ID. SpotifyBU uses Authorization Code with PKCE, so it does not use or ask for the Spotify Client Secret. |
 | `NAVIDROME_URL` | No | Navidrome URL as seen by the container. Defaults to `http://host.docker.internal:4533`. |
@@ -143,7 +150,8 @@ Set these values before starting the app:
 
 Inside the container:
 
-- `/config` stores SpotifyBU settings and changed login credentials.
+- `/config` stores SpotifyBU settings, changed login credentials, and
+  `spotifybu.sqlite` for persisted metadata backups and bulk job snapshots.
 - `/config/logs/spotifybu.log` stores focused JSON-line diagnostics for Spotify
   route failures and unusual Spotify playlist payloads.
 - `/music` is the mounted Navidrome music library.
@@ -175,6 +183,17 @@ with `X-Forwarded-Host` and `X-Forwarded-Proto`. After signing in to SpotifyBU,
 check the Connect Spotify screen and copy the redirect URI it shows into the
 Spotify Developer Dashboard. If that URI shows the wrong host or scheme, set
 `NEXT_PUBLIC_APP_URL` to the exact public base URL.
+
+If your reverse proxy also handles user authentication, open Settings and set
+Authentication Provider to `External proxy auth`, or start the container with:
+
+```text
+SPOTIFYBU_AUTH_MODE=external
+```
+
+External auth mode disables SpotifyBU's built-in login form and treats requests
+that reach the app as already authenticated. Only use it behind a trusted proxy
+such as Authentik, Authelia, or another access-control layer.
 
 The HTTPS endpoint does not have to expose SpotifyBU broadly to the internet.
 It only has to be reachable by the browser doing the Spotify login. Common
@@ -382,9 +401,11 @@ docker run --rm -p 3000:3000 \
 
 ## Architecture
 
-- `src/lib/app-auth.ts` owns the local SpotifyBU web login, session cookie signing, and persisted credential updates.
+- `src/lib/app-auth.ts` owns internal/external app auth mode, local SpotifyBU web login, session cookie signing, and persisted credential updates.
+- `src/lib/database.ts` opens the local SQLite database under `SPOTIFYBU_CONFIG_DIR`.
+- `src/lib/backup-store.ts` persists deduplicated playlist metadata backup snapshots.
 - `src/lib/spotify.ts` owns Spotify API calls and export shaping.
-- `src/lib/navidrome.ts` owns Navidrome library path checks, safe target directory creation, folder planning, library indexing, local matching, matched-file organization, album-folder logging, and Navidrome playlist creation.
+- `src/lib/navidrome.ts` owns Navidrome library path checks, safe target directory creation, folder planning, library indexing, local matching, matched-file organization, album-folder logging, and Navidrome playlist replace/append sync.
 - `src/lib/providers/types.ts` defines the source-provider contract and provider catalog for matching, downloading, tagging, and provenance.
 - `src/lib/providers/download.ts` searches provider candidates, validates selected provider URLs, calls `yt-dlp`, stages files on the Navidrome volume, tags downloads with Spotify metadata, records provenance, and cleans abandoned staging files after idle.
 - `src/app/api/providers/route.ts` exposes the provider catalog and provider risk/status metadata.
@@ -392,24 +413,25 @@ docker run --rm -p 3000:3000 \
 - `src/app/api/providers/download/route.ts` starts confirmed single-track provider download jobs.
 - `src/app/api/providers/download/status/[jobId]/route.ts` reports provider download job status for UI polling.
 - `src/app/api/providers/download/batch/route.ts` supports confirmed throttled provider download queues.
+- `src/app/api/providers/download/bulk/preview/route.ts` dry-runs provider candidate selection for missing tracks.
+- `src/app/api/providers/download/bulk/route.ts` starts persisted background bulk provider jobs.
+- `src/app/api/providers/download/bulk/[jobId]/route.ts` reports, cancels, and retries bulk provider jobs.
 - `src/app/api/navidrome/library/organize/route.ts` moves or renames matched local files into their planned Lidarr-compatible Navidrome paths in small batches.
-- `src/app/api/spotify/playlists/[playlistId]/navidrome/route.ts` creates or updates a matching Navidrome playlist from backed-up Spotify tracks.
+- `src/app/api/spotify/playlists/[playlistId]/navidrome/route.ts` replaces or appends a matching Navidrome playlist from backed-up Spotify tracks.
 - `src/lib/session.ts` and `src/lib/server-session.ts` own PKCE cookie and Spotify token-session handling.
 - `.github/workflows/docker-image.yml` publishes GHCR images for `dev`, `main`, and `v*` tags. The `dev` branch publishes `dev`; `main` and version tags publish stable tags such as `latest`.
 
 ## Source Providers
 
-spotDL is a useful comparison point: it resolves Spotify metadata to audio candidates from providers such as YouTube Music and then downloads through `yt-dlp`. SpotifyBU keeps a similar provider-oriented shape, but the active automatic sourcing flow intentionally uses direct YouTube search first and JioSaavn second. YouTube Music, Piped, SoundCloud, and Bandcamp remain planned/future provider entries rather than active UI choices. The implemented download path searches provider candidates for a selected missing track, or automatically chooses the highest-scoring candidate for each missing track in a playlist-scale queue, then processes downloads sequentially with configured waits between tracks and longer pauses between chunks.
+spotDL is a useful comparison point: it resolves Spotify metadata to audio candidates from providers such as YouTube Music and then downloads through `yt-dlp`. SpotifyBU keeps a similar provider-oriented shape, but the active automatic sourcing flow intentionally uses direct YouTube search first and JioSaavn second. YouTube Music, Piped, SoundCloud, and Bandcamp remain planned/future provider entries rather than active UI choices. The implemented download path searches provider candidates for a selected missing track, or dry-runs candidate selection for each missing track in a playlist-scale queue before starting a persisted background job with configured waits between tracks and longer pauses between chunks.
 
-Bulk playlist sourcing can trigger provider throttling, captchas, temporary blocks, account action, or service-term issues. SpotifyBU shows those risks before starting large jobs and uses conservative rate limits, chunk pauses, background status polling, partial-failure reporting, and provenance logs. Full cancellation, retry controls, and dry-run previews remain future improvements.
+Bulk playlist sourcing can trigger provider throttling, captchas, temporary blocks, account action, or service-term issues. SpotifyBU shows those risks before starting large jobs and uses conservative rate limits, chunk pauses, background status polling, partial-failure reporting, dry-run previews, cancellation, retry controls, and provenance logs.
 
 See [docs/source-providers.md](docs/source-providers.md).
 
 ## Roadmap
 
-- Persist backups in a database
-- Add resumable background bulk jobs with cancellation and retry controls
-- Add dry-run previews for bulk provider candidate selection
+- Add long-term backup history browsing and restore flows
 - Add owned-file import workflows for music the user already has outside Navidrome
 - Add more provider adapters where the user's authorization model is clear
-- Add deeper Navidrome playlist sync controls, such as replace/append options and skipped-track review
+- Add richer bulk job history filtering and cleanup controls

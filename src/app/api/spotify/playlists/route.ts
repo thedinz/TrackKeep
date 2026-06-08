@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getLatestPlaylistBackupSummaries } from "@/lib/backup-store";
 import { appendDiagnosticLog, diagnosticError } from "@/lib/diagnostics";
 import { getSpotifySession, withSessionCookie } from "@/lib/server-session";
 import { getUserPlaylists } from "@/lib/spotify";
@@ -17,7 +18,14 @@ export async function GET() {
 
   try {
     const playlists = await getUserPlaylists(session.token);
-    return withSessionCookie(NextResponse.json({ playlists }), session);
+    const metadataBackups = getLatestPlaylistBackupSummaries(
+      playlists.map((playlist) => playlist.id)
+    );
+
+    return withSessionCookie(
+      NextResponse.json({ metadataBackups, playlists }),
+      session
+    );
   } catch (error) {
     await appendDiagnosticLog("spotify.playlists.route_failed", {
       error: diagnosticError(error),

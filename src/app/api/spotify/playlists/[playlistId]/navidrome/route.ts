@@ -3,6 +3,7 @@ import { appendDiagnosticLog, diagnosticError } from "@/lib/diagnostics";
 import { createOrUpdateNavidromePlaylistFromSpotify } from "@/lib/navidrome";
 import { getSpotifySession, withSessionCookie } from "@/lib/server-session";
 import { getPlaylist, getPlaylistTracks } from "@/lib/spotify";
+import type { NavidromePlaylistSyncMode } from "@/lib/navidrome";
 
 type RouteContext = {
   params: Promise<{ playlistId: string }> | { playlistId: string };
@@ -11,7 +12,7 @@ type RouteContext = {
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export async function POST(_request: Request, context: RouteContext) {
+export async function POST(request: Request, context: RouteContext) {
   const session = await getSpotifySession();
 
   if (!session.ok) {
@@ -23,12 +24,21 @@ export async function POST(_request: Request, context: RouteContext) {
 
   try {
     const { playlistId } = await context.params;
+    const body = (await request.json().catch(() => null)) as
+      | {
+          mode?: unknown;
+        }
+      | null;
+    const mode: NavidromePlaylistSyncMode =
+      body?.mode === "append" ? "append" : "replace";
     const [playlist, tracks] = await Promise.all([
       getPlaylist(session.token, playlistId),
       getPlaylistTracks(session.token, playlistId)
     ]);
     const navidromePlaylist =
-      await createOrUpdateNavidromePlaylistFromSpotify(playlist, tracks);
+      await createOrUpdateNavidromePlaylistFromSpotify(playlist, tracks, {
+        mode
+      });
 
     return withSessionCookie(
       NextResponse.json(

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { persistPlaylistBackup } from "@/lib/backup-store";
 import { appendDiagnosticLog, diagnosticError } from "@/lib/diagnostics";
 import { getSpotifySession, withSessionCookie } from "@/lib/server-session";
 import {
@@ -39,6 +40,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
             ...playlist,
             tracksTotal: tracks.length
           };
+    persistPlaylistBackup({
+      playlist: playlistWithTrackTotal,
+      source: "export",
+      tracks
+    });
 
     if (format === "csv") {
       const response = new NextResponse(

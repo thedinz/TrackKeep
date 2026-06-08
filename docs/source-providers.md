@@ -85,9 +85,9 @@ The provider catalog lives in `src/lib/providers/types.ts` and is exposed by `/a
 
 ## Bulk Download Risks
 
-SpotifyBU should explain that large playlist jobs can trigger throttling, captchas, temporary service blocks, provider account action, regional failures, or service-term issues. The app should not treat this warning as a substitute for authorization; it should be a preflight confirmation alongside provider configuration, dry-run candidate review, rate limits, retry controls, cancellation, and provenance logging.
+SpotifyBU explains that large playlist jobs can trigger throttling, captchas, temporary service blocks, provider account action, regional failures, or service-term issues. The app does not treat this warning as a substitute for authorization; it is a preflight confirmation alongside provider configuration, dry-run candidate review, rate limits, retry controls, cancellation, and provenance logging.
 
-The current routes intentionally block provider playlists with `--no-playlist` and UI copy. Playlist-scale backups are represented as missing Spotify tracks, processed one item at a time with automatic provider search, conservative throttling, and partial-failure reporting. The app checks YouTube first, then JioSaavn, and skips tracks where no candidate can be found.
+The current routes intentionally block provider playlists with `--no-playlist` and UI copy. Playlist-scale backups are represented as missing Spotify tracks, previewed one item at a time with automatic provider search, and then processed by a persisted background job with conservative throttling, cancellation, retry, and partial-failure reporting. The app checks YouTube first, then JioSaavn, and skips tracks where no candidate can be found.
 
 ## First Provider Candidates
 
