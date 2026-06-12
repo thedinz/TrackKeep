@@ -23,9 +23,9 @@ import {
 } from "@/lib/navidrome";
 import { getSpotifyBuDatabase } from "@/lib/database";
 import type { BackupTrack } from "@/lib/spotify";
+import { scoreProviderCandidate } from "./scoring";
 import {
   SOURCE_PROVIDER_CATALOG,
-  type CandidateScore,
   type SourceCandidate,
   type SourceProviderCatalogEntry
 } from "./types";
@@ -1517,7 +1517,7 @@ function youtubeCandidateFromEntry(
     return null;
   }
 
-  const title = String(entry.title);
+  const title = stripHtmlEntities(String(entry.title));
   const artists = [entry.channel, entry.uploader]
     .filter((value): value is string => Boolean(value))
     .map((value) => stripHtmlEntities(value));
@@ -1525,7 +1525,7 @@ function youtubeCandidateFromEntry(
     typeof entry.duration === "number"
       ? Math.round(entry.duration * 1000)
       : undefined;
-  const score = scoreCandidate(track, {
+  const score = scoreProviderCandidate(track, {
     artists,
     durationMs,
     title
@@ -1540,7 +1540,7 @@ function youtubeCandidateFromEntry(
       ...score,
       overall: Math.max(0, score.overall - index)
     },
-    title: stripHtmlEntities(title),
+    title,
     url: `https://www.youtube.com/watch?v=${videoId}`,
     verified: false
   } satisfies SourceCandidate;
@@ -1568,14 +1568,16 @@ function jioSaavnCandidateFromEntry(
   const durationMs = Number.isFinite(durationSeconds)
     ? Math.round(durationSeconds * 1000)
     : undefined;
-  const score = scoreCandidate(track, {
+  const album = stripHtmlEntities(entry.more_info?.album ?? "");
+  const score = scoreProviderCandidate(track, {
+    album,
     artists,
     durationMs,
     title
   });
 
   return {
-    album: stripHtmlEntities(entry.more_info?.album ?? ""),
+    album,
     artists,
     durationMs,
     id: `jiosaavn:${entry.id ?? index}`,
@@ -1598,76 +1600,6 @@ function providerSearchQuery(track: BackupTrack, suffix?: string) {
   ]
     .filter(Boolean)
     .join(" ");
-}
-
-function scoreCandidate(
-  track: BackupTrack,
-  candidate: {
-    artists: string[];
-    durationMs?: number;
-    title: string;
-  }
-) {
-  const titleScore = textSimilarity(track.name, candidate.title);
-  const artistScore = Math.max(
-    ...track.artists.map((artist) =>
-      textSimilarity(artist, candidate.artists.join(" "))
-    ),
-    0
-  );
-  const durationDeltaMs =
-    typeof candidate.durationMs === "number"
-      ? Math.abs(candidate.durationMs - track.durationMs)
-      : undefined;
-  const durationScore =
-    typeof durationDeltaMs === "number"
-      ? Math.max(0, 100 - Math.round(durationDeltaMs / 1000) * 3)
-      : 50;
-  const overall = Math.round(titleScore * 0.48 + artistScore * 0.34 + durationScore * 0.18);
-
-  return {
-    artistScore,
-    durationDeltaMs,
-    overall,
-    titleScore
-  } satisfies CandidateScore;
-}
-
-function textSimilarity(left: string, right: string) {
-  const leftTokens = tokenSet(left);
-  const rightTokens = tokenSet(right);
-
-  if (!leftTokens.size || !rightTokens.size) {
-    return 0;
-  }
-
-  let intersectionCount = 0;
-
-  for (const token of leftTokens) {
-    if (rightTokens.has(token)) {
-      intersectionCount += 1;
-    }
-  }
-
-  return Math.round(
-    (intersectionCount / new Set([...leftTokens, ...rightTokens]).size) * 100
-  );
-}
-
-function tokenSet(value: string) {
-  return new Set(
-    normalizeSearchText(value)
-      .split(" ")
-      .filter((token) => token.length > 1)
-  );
-}
-
-function normalizeSearchText(value: string) {
-  return stripHtmlEntities(value)
-    .toLowerCase()
-    .replace(/&/g, " and ")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
 }
 
 function splitProviderArtists(value: string) {
