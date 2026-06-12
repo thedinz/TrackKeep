@@ -1,0 +1,20 @@
+# SpotifyBU 1.2.3
+
+SpotifyBU 1.2.3 improves provider candidate selection and makes the
+Navidrome album organization targets easier to understand.
+
+## Changed
+
+- Provider candidate scoring now lives in a shared scoring helper with focused
+  tests, so automatic matching favors better title, artist, and duration
+  signals.
+- The Navidrome folder destination section is now labeled as album
+  organization targets and explains whether tracks are backed up, need
+  organizing, are partly backed up, or still need download targets.
+- Existing backed-up tracks are no longer described as `folder planned` just
+  because the SpotifyBU folder log did not create that folder originally.
+
+## Verified
+
+- TypeScript check passes with `npm run typecheck`.
+- Provider scoring tests pass with `npm test`.
