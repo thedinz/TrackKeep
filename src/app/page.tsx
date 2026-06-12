@@ -126,6 +126,23 @@ type FolderPlan = {
   trackIds: string[];
 };
 
+type FolderPlanDisplayStatus =
+  | "download"
+  | "folder-ready"
+  | "organize"
+  | "partial"
+  | "ready"
+  | "scan";
+
+type FolderPlanSummary = FolderPlan & {
+  backedUpCount: number;
+  countLabel: string;
+  missingCount: number;
+  organizeCount: number;
+  status: FolderPlanDisplayStatus;
+  statusLabel: string;
+};
+
 type IndexedTrack = {
   album?: string;
   albumArtist?: string;
@@ -1507,12 +1524,22 @@ export default function Home() {
   const missingBackupCount = hasUsableLibraryIndex
     ? missingBackupTracks.length
     : 0;
+  const folderPlanSummaries = useMemo(
+    () =>
+      summarizeFolderPlans(
+        folderPlans,
+        tracks,
+        libraryMatchesByPosition,
+        hasUsableLibraryIndex
+      ),
+    [folderPlans, hasUsableLibraryIndex, libraryMatchesByPosition, tracks]
+  );
   const visibleFolderPlans = showAllFolderPlans
-    ? folderPlans
-    : folderPlans.slice(0, folderPlanPreviewLimit);
+    ? folderPlanSummaries
+    : folderPlanSummaries.slice(0, folderPlanPreviewLimit);
   const hiddenFolderPlanCount = Math.max(
     0,
-    folderPlans.length - visibleFolderPlans.length
+    folderPlanSummaries.length - visibleFolderPlans.length
   );
   const backupCoverageLabel = tracks.length
     ? hasUsableLibraryIndex
@@ -2476,17 +2503,21 @@ export default function Home() {
                 </span>
               </div>
 
-              {folderPlans.length ? (
+              {folderPlanSummaries.length ? (
                 <div className="folder-plan-section">
                   <div className="section-heading">
-                    <span className="stat-label">Navidrome folder destinations</span>
+                    <span className="stat-label">Album organization targets</span>
                     <p>
-                      Album folders that matched or newly downloaded tracks will use.
+                      Existing backups, files to organize, and download
+                      destinations by Navidrome album folder.
                     </p>
                   </div>
                   <div className="folder-plan-list">
                     {visibleFolderPlans.map((plan) => (
-                      <div className="folder-plan" key={plan.key}>
+                      <div
+                        className={`folder-plan ${plan.status}`}
+                        key={plan.key}
+                      >
                         <HardDrive size={18} />
                         <span>
                           <span className="folder-plan-name">
@@ -2496,15 +2527,21 @@ export default function Home() {
                             {plan.absolutePath ?? plan.relativePath}
                           </span>
                         </span>
-                        <span className="folder-plan-count">
-                          {numberFormatter.format(plan.trackCount)}{" "}
-                          {plan.trackCount === 1 ? "track" : "tracks"}{" "}
-                          {plan.logged ? "folder mapped" : "folder planned"}
+                        <span className="folder-plan-state">
+                          <span
+                            className={`folder-plan-status ${plan.status}`}
+                          >
+                            {renderFolderPlanStatusIcon(plan.status)}
+                            {plan.statusLabel}
+                          </span>
+                          <span className="folder-plan-count">
+                            {plan.countLabel}
+                          </span>
                         </span>
                       </div>
                     ))}
                   </div>
-                  {folderPlans.length > folderPlanPreviewLimit ? (
+                  {folderPlanSummaries.length > folderPlanPreviewLimit ? (
                     <button
                       className="folder-plan-toggle"
                       onClick={() =>
@@ -3839,6 +3876,180 @@ function providerStatusLabel(status: ProviderStatus) {
   }
 
   return "User-confirmed";
+}
+
+function renderFolderPlanStatusIcon(status: FolderPlanDisplayStatus) {
+  if (status === "ready") {
+    return <CheckCircle2 size={14} />;
+  }
+
+  if (status === "organize") {
+    return <RotateCcw size={14} />;
+  }
+
+  if (status === "scan") {
+    return <Clock3 size={14} />;
+  }
+
+  return <Download size={14} />;
+}
+
+function summarizeFolderPlans(
+  folderPlans: FolderPlan[],
+  tracks: BackupTrack[],
+  libraryMatchesByPosition: Map<number, LibraryMatch>,
+  hasUsableLibraryIndex: boolean
+) {
+  const tracksByAlbumKey = new Map<string, BackupTrack[]>();
+
+  for (const track of tracks) {
+    const key = folderPlanAlbumKey(track);
+    const albumTracks = tracksByAlbumKey.get(key) ?? [];
+
+    albumTracks.push(track);
+    tracksByAlbumKey.set(key, albumTracks);
+  }
+
+  return folderPlans.map((plan) => {
+    const albumTracks = tracksByAlbumKey.get(plan.key) ?? [];
+    const planTrackCount = albumTracks.length || plan.trackCount;
+    const matchedTracks = albumTracks
+      .map((track) => libraryMatchesByPosition.get(track.position))
+      .filter((match): match is LibraryMatch => Boolean(match?.exists));
+    const backedUpCount = hasUsableLibraryIndex ? matchedTracks.length : 0;
+    const organizeCount = hasUsableLibraryIndex
+      ? matchedTracks.filter((match) => match.needsMove).length
+      : 0;
+    const missingCount = hasUsableLibraryIndex
+      ? Math.max(0, planTrackCount - backedUpCount)
+      : 0;
+    const { status, statusLabel } = folderPlanStatus(
+      plan,
+      backedUpCount,
+      missingCount,
+      organizeCount,
+      hasUsableLibraryIndex
+    );
+
+    return {
+      ...plan,
+      backedUpCount,
+      countLabel: folderPlanCountLabel(
+        planTrackCount,
+        backedUpCount,
+        missingCount,
+        organizeCount,
+        hasUsableLibraryIndex
+      ),
+      missingCount,
+      organizeCount,
+      status,
+      statusLabel
+    } satisfies FolderPlanSummary;
+  });
+}
+
+function folderPlanStatus(
+  plan: FolderPlan,
+  backedUpCount: number,
+  missingCount: number,
+  organizeCount: number,
+  hasUsableLibraryIndex: boolean
+): {
+  status: FolderPlanDisplayStatus;
+  statusLabel: string;
+} {
+  if (!hasUsableLibraryIndex) {
+    return {
+      status: "scan",
+      statusLabel: "Scan needed"
+    };
+  }
+
+  if (organizeCount) {
+    return {
+      status: "organize",
+      statusLabel: "Needs organizing"
+    };
+  }
+
+  if (backedUpCount && missingCount) {
+    return {
+      status: "partial",
+      statusLabel: "Partly backed up"
+    };
+  }
+
+  if (backedUpCount) {
+    return {
+      status: "ready",
+      statusLabel: "Backed up here"
+    };
+  }
+
+  if (plan.logged) {
+    return {
+      status: "folder-ready",
+      statusLabel: "Folder ready"
+    };
+  }
+
+  return {
+    status: "download",
+    statusLabel: "Download target"
+  };
+}
+
+function folderPlanCountLabel(
+  trackCount: number,
+  backedUpCount: number,
+  missingCount: number,
+  organizeCount: number,
+  hasUsableLibraryIndex: boolean
+) {
+  if (!hasUsableLibraryIndex) {
+    return trackCountLabel(trackCount);
+  }
+
+  const parts: string[] = [];
+
+  if (backedUpCount) {
+    parts.push(`${numberFormatter.format(backedUpCount)} backed up`);
+  }
+
+  if (organizeCount) {
+    parts.push(`${numberFormatter.format(organizeCount)} to organize`);
+  }
+
+  if (missingCount) {
+    parts.push(`${numberFormatter.format(missingCount)} missing`);
+  }
+
+  return parts.length ? parts.join(", ") : trackCountLabel(trackCount);
+}
+
+function trackCountLabel(trackCount: number) {
+  return `${numberFormatter.format(trackCount)} ${
+    trackCount === 1 ? "track" : "tracks"
+  }`;
+}
+
+function folderPlanAlbumKey(track: BackupTrack) {
+  if (track.albumId) {
+    return `spotify:album:${track.albumId}`;
+  }
+
+  return `spotify:album-name:${stableFolderSlug(
+    `${track.albumArtist || "Unknown Artist"}-${track.album || "Unknown Album"}`
+  )}`;
+}
+
+function stableFolderSlug(value: string) {
+  return value
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function providerRiskLabel(risk: ProviderRiskLevel) {

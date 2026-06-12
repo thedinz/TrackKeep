@@ -777,6 +777,19 @@ button {
   padding: 10px;
 }
 
+.folder-plan.ready {
+  border-color: rgba(37, 230, 109, 0.32);
+}
+
+.folder-plan.organize {
+  border-color: rgba(255, 198, 92, 0.36);
+}
+
+.folder-plan.partial,
+.folder-plan.folder-ready {
+  border-color: rgba(50, 208, 176, 0.34);
+}
+
 .folder-plan-name,
 .folder-plan-path {
   display: block;
@@ -796,7 +809,57 @@ button {
   font-size: 0.78rem;
 }
 
+.folder-plan-state {
+  align-items: end;
+  display: grid;
+  gap: 5px;
+  justify-items: end;
+  min-width: 0;
+}
+
+.folder-plan-status {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 900;
+  gap: 5px;
+  line-height: 1;
+  min-height: 26px;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+.folder-plan-status.ready {
+  background: rgba(37, 230, 109, 0.1);
+  border-color: rgba(37, 230, 109, 0.34);
+  color: #b9ffd0;
+}
+
+.folder-plan-status.organize {
+  background: rgba(255, 198, 92, 0.1);
+  border-color: rgba(255, 198, 92, 0.36);
+  color: #ffe19d;
+}
+
+.folder-plan-status.partial,
+.folder-plan-status.folder-ready {
+  background: rgba(50, 208, 176, 0.1);
+  border-color: rgba(50, 208, 176, 0.34);
+  color: #affff1;
+}
+
+.folder-plan-status.download,
+.folder-plan-status.scan {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
 .folder-plan-count {
+  line-height: 1.25;
+  text-align: right;
   white-space: nowrap;
 }
 
@@ -1595,8 +1658,13 @@ button {
     grid-template-columns: 24px minmax(0, 1fr);
   }
 
-  .folder-plan-count {
+  .folder-plan-state {
     grid-column: 2;
+    justify-items: start;
+  }
+
+  .folder-plan-count {
+    text-align: left;
   }
 
   .track-row {
