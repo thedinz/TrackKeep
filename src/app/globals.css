@@ -782,7 +782,7 @@ button {
 }
 
 .folder-plan.organize {
-  border-color: rgba(255, 198, 92, 0.36);
+  border-color: rgba(255, 92, 92, 0.44);
 }
 
 .folder-plan.partial,
@@ -831,6 +831,15 @@ button {
   white-space: nowrap;
 }
 
+button.folder-plan-status {
+  cursor: pointer;
+}
+
+button.folder-plan-status:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
 .folder-plan-status.ready {
   background: rgba(37, 230, 109, 0.1);
   border-color: rgba(37, 230, 109, 0.34);
@@ -838,9 +847,15 @@ button {
 }
 
 .folder-plan-status.organize {
-  background: rgba(255, 198, 92, 0.1);
-  border-color: rgba(255, 198, 92, 0.36);
-  color: #ffe19d;
+  background: rgba(255, 92, 92, 0.12);
+  border-color: rgba(255, 92, 92, 0.5);
+  color: #ffb7b7;
+}
+
+button.folder-plan-status.organize:hover:not(:disabled) {
+  background: rgba(255, 92, 92, 0.2);
+  border-color: rgba(255, 126, 126, 0.72);
+  color: #ffe0e0;
 }
 
 .folder-plan-status.partial,
@@ -967,11 +982,13 @@ button {
 }
 
 .track-status {
+  align-items: center;
   border: 1px solid var(--line);
   border-radius: 999px;
   display: inline-flex;
   font-size: 0.72rem;
   font-weight: 900;
+  gap: 5px;
   line-height: 1;
   padding: 5px 8px;
   width: max-content;
@@ -1004,9 +1021,15 @@ button {
 }
 
 .track-status.move {
-  background: rgba(243, 184, 75, 0.12);
-  border-color: rgba(243, 184, 75, 0.5);
-  color: #ffe5a6;
+  background: rgba(255, 92, 92, 0.12);
+  border-color: rgba(255, 92, 92, 0.5);
+  color: #ffb7b7;
+}
+
+.track-status.move.actionable:hover:not(:disabled) {
+  background: rgba(255, 92, 92, 0.2);
+  border-color: rgba(255, 126, 126, 0.72);
+  color: #ffe0e0;
 }
 
 .track-status.stale {
