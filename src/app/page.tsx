@@ -139,6 +139,7 @@ type FolderPlanSummary = FolderPlan & {
   countLabel: string;
   missingCount: number;
   organizeCount: number;
+  organizeTrackPositions: number[];
   status: FolderPlanDisplayStatus;
   statusLabel: string;
 };
@@ -524,6 +525,9 @@ export default function Home() {
   const [isResolvingSource, setIsResolvingSource] = useState(false);
   const [isScanningLibrary, setIsScanningLibrary] = useState(false);
   const [isOrganizingLibrary, setIsOrganizingLibrary] = useState(false);
+  const [organizingTrackPositions, setOrganizingTrackPositions] = useState<
+    number[]
+  >([]);
   const [libraryOrganizeProgress, setLibraryOrganizeProgress] =
     useState<string | null>(null);
   const [isCreatingNavidromePlaylist, setIsCreatingNavidromePlaylist] =
@@ -844,12 +848,22 @@ export default function Home() {
     }
   }, [applyLibraryIndexResponse, libraryIndex, refreshLibraryMatches]);
 
-  const organizeLibraryMatches = useCallback(async () => {
+  const organizeLibraryMatches = useCallback(async (
+    requestedTrackPositions?: number[]
+  ) => {
     if (!tracks.length) {
       return;
     }
 
-    setIsOrganizingLibrary(true);
+    const requestedPositions = requestedTrackPositions?.length
+      ? new Set(requestedTrackPositions)
+      : null;
+
+    if (requestedPositions) {
+      setOrganizingTrackPositions([...requestedPositions]);
+    } else {
+      setIsOrganizingLibrary(true);
+    }
     setLibraryOrganizeMessage(null);
     setLibraryOrganizeProgress(null);
     setRequestError(null);
@@ -860,14 +874,19 @@ export default function Home() {
       let totalMovedCount = 0;
       let totalSkippedCount = 0;
       const initialMoveCount = latestLibraryMatches.filter(
-        (match) => match.needsMove
+        (match) =>
+          match.needsMove &&
+          (!requestedPositions || requestedPositions.has(match.trackPosition))
       ).length;
 
       while (true) {
         const batchTrackPositions = latestLibraryMatches
           .filter(
             (match) =>
-              match.needsMove && !attemptedTrackPositions.has(match.trackPosition)
+              match.needsMove &&
+              !attemptedTrackPositions.has(match.trackPosition) &&
+              (!requestedPositions ||
+                requestedPositions.has(match.trackPosition))
           )
           .slice(0, libraryOrganizeBatchSize)
           .map((match) => match.trackPosition);
@@ -906,10 +925,12 @@ export default function Home() {
 
       if (totalMovedCount || totalSkippedCount) {
         const remainingMoveCount = latestLibraryMatches.filter(
-          (match) => match.needsMove
+          (match) =>
+            match.needsMove &&
+            (!requestedPositions || requestedPositions.has(match.trackPosition))
         ).length;
         setLibraryOrganizeMessage(
-          `Organized ${numberFormatter.format(totalMovedCount)} files${
+          `Orginized ${numberFormatter.format(totalMovedCount)} files${
             totalSkippedCount
               ? `; ${numberFormatter.format(totalSkippedCount)} could not be moved`
               : ""
@@ -925,7 +946,11 @@ export default function Home() {
     } catch (error) {
       setRequestError(errorMessage(error));
     } finally {
-      setIsOrganizingLibrary(false);
+      if (requestedPositions) {
+        setOrganizingTrackPositions([]);
+      } else {
+        setIsOrganizingLibrary(false);
+      }
       setLibraryOrganizeProgress(null);
     }
   }, [applyLibraryMatches, libraryMatches, refreshLibraryMatches, tracks]);
@@ -1588,6 +1613,9 @@ export default function Home() {
   }, [downloadTrackOptions, downloadTrackPosition]);
   const canOrganizeLibrary =
     navidromeReady && tracks.length > 0 && moveNeededCount > 0;
+  const organizingTrackPositionSet = new Set(organizingTrackPositions);
+  const isAnyOrganizationRunning =
+    isOrganizingLibrary || organizingTrackPositions.length > 0;
   const canCreateNavidromePlaylist =
     sourceKind === "playlist" &&
     Boolean(selectedPlaylistId) &&
@@ -2437,7 +2465,7 @@ export default function Home() {
                   className={`command secondary ${
                     canOrganizeLibrary ? "" : "disabled"
                   }`}
-                  disabled={!canOrganizeLibrary || isOrganizingLibrary}
+                  disabled={!canOrganizeLibrary || isAnyOrganizationRunning}
                   onClick={() => void organizeLibraryMatches()}
                   title="Move matched files into Lidarr-style folders"
                   type="button"
@@ -2451,7 +2479,7 @@ export default function Home() {
                     ? `Organizing ${
                         libraryOrganizeProgress ?? ""
                       }`.trim()
-                    : "Organize"}
+                    : "Orginize"}
                 </button>
               </div>
             </div>
@@ -2528,12 +2556,39 @@ export default function Home() {
                           </span>
                         </span>
                         <span className="folder-plan-state">
-                          <span
-                            className={`folder-plan-status ${plan.status}`}
-                          >
-                            {renderFolderPlanStatusIcon(plan.status)}
-                            {plan.statusLabel}
-                          </span>
+                          {plan.status === "organize" ? (
+                            <button
+                              className={`folder-plan-status ${plan.status}`}
+                              disabled={isAnyOrganizationRunning}
+                              onClick={() =>
+                                void organizeLibraryMatches(
+                                  plan.organizeTrackPositions
+                                )
+                              }
+                              title={`Orginize files into ${plan.relativePath}`}
+                              type="button"
+                            >
+                              {plan.organizeTrackPositions.some((position) =>
+                                organizingTrackPositionSet.has(position)
+                              ) ? (
+                                <Loader2 className="spin" size={14} />
+                              ) : (
+                                renderFolderPlanStatusIcon(plan.status)
+                              )}
+                              {plan.organizeTrackPositions.some((position) =>
+                                organizingTrackPositionSet.has(position)
+                              )
+                                ? "Orginizing"
+                                : plan.statusLabel}
+                            </button>
+                          ) : (
+                            <span
+                              className={`folder-plan-status ${plan.status}`}
+                            >
+                              {renderFolderPlanStatusIcon(plan.status)}
+                              {plan.statusLabel}
+                            </span>
+                          )}
                           <span className="folder-plan-count">
                             {plan.countLabel}
                           </span>
@@ -3085,11 +3140,20 @@ export default function Home() {
                             {renderLibraryMatch(
                               libraryMatch,
                               libraryIndex,
-                              () => void openMissingBackupActions(track),
-                              isSearchingProvider ||
-                                isDownloadingProvider ||
-                                isDownloadingBulkProvider ||
-                                isPreviewingBulkProvider
+                              {
+                                isOrganizing:
+                                  organizingTrackPositionSet.has(track.position),
+                                onOrganize: () =>
+                                  void organizeLibraryMatches([track.position]),
+                                onSearchMissing: () =>
+                                  void openMissingBackupActions(track),
+                                organizeDisabled: isAnyOrganizationRunning,
+                                searchDisabled:
+                                  isSearchingProvider ||
+                                  isDownloadingProvider ||
+                                  isDownloadingBulkProvider ||
+                                  isPreviewingBulkProvider
+                              }
                             )}
                           </span>
                           <span className="track-cell">
@@ -3749,8 +3813,13 @@ function getPlaylistBackupStatus(
 function renderLibraryMatch(
   match: LibraryMatch | undefined,
   libraryIndex: NavidromeLibraryIndexSummary | null,
-  onSearchMissing?: () => void,
-  searchDisabled = false
+  options: {
+    isOrganizing?: boolean;
+    onOrganize?: () => void;
+    onSearchMissing?: () => void;
+    organizeDisabled?: boolean;
+    searchDisabled?: boolean;
+  } = {}
 ) {
   if (!libraryIndex) {
     return <span className="track-status unindexed">No scan</span>;
@@ -3761,12 +3830,12 @@ function renderLibraryMatch(
   }
 
   if (!match || !match.exists) {
-    if (onSearchMissing) {
+    if (options.onSearchMissing) {
       return (
         <button
           className="track-status missing actionable"
-          disabled={searchDisabled}
-          onClick={onSearchMissing}
+          disabled={options.searchDisabled}
+          onClick={options.onSearchMissing}
           title="Search providers for this track"
           type="button"
         >
@@ -3781,9 +3850,24 @@ function renderLibraryMatch(
   if (match.needsMove) {
     return (
       <span className="track-status-stack">
-        <span className="track-status move">Backed up</span>
+        <button
+          className="track-status move actionable"
+          disabled={options.organizeDisabled}
+          onClick={options.onOrganize}
+          title={`Orginize into ${
+            match.recommendedRelativePath ?? match.expectedFolder
+          }`}
+          type="button"
+        >
+          {options.isOrganizing ? (
+            <Loader2 className="spin" size={13} />
+          ) : (
+            <RotateCcw size={13} />
+          )}
+          {options.isOrganizing ? "Orginizing" : "Orginize"}
+        </button>
         <span className="track-note">
-          Organize into {match.recommendedRelativePath ?? match.expectedFolder}
+          Move to {match.recommendedRelativePath ?? match.expectedFolder}
         </span>
       </span>
     );
@@ -3791,7 +3875,7 @@ function renderLibraryMatch(
 
   return (
     <span className="track-status-stack">
-      <span className="track-status exists">Backed up</span>
+      <span className="track-status exists">Orginized</span>
       <span className="track-note">
         {match.matchedTrack?.relativePath ?? match.matchedBy ?? "Indexed"}
       </span>
@@ -3920,6 +4004,11 @@ function summarizeFolderPlans(
     const organizeCount = hasUsableLibraryIndex
       ? matchedTracks.filter((match) => match.needsMove).length
       : 0;
+    const organizeTrackPositions = hasUsableLibraryIndex
+      ? matchedTracks
+          .filter((match) => match.needsMove)
+          .map((match) => match.trackPosition)
+      : [];
     const missingCount = hasUsableLibraryIndex
       ? Math.max(0, planTrackCount - backedUpCount)
       : 0;
@@ -3943,6 +4032,7 @@ function summarizeFolderPlans(
       ),
       missingCount,
       organizeCount,
+      organizeTrackPositions,
       status,
       statusLabel
     } satisfies FolderPlanSummary;
@@ -3969,7 +4059,7 @@ function folderPlanStatus(
   if (organizeCount) {
     return {
       status: "organize",
-      statusLabel: "Needs organizing"
+      statusLabel: "Orginize"
     };
   }
 
@@ -3983,7 +4073,7 @@ function folderPlanStatus(
   if (backedUpCount) {
     return {
       status: "ready",
-      statusLabel: "Backed up here"
+      statusLabel: "Orginized"
     };
   }
 
