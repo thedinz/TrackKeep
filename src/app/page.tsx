@@ -202,6 +202,7 @@ type PlaylistSummary = {
 
 type PlaylistBackupStatus = {
   backedUp: boolean;
+  missingTrackCount: number;
   trackCount: number;
 };
 
@@ -1482,6 +1483,7 @@ export default function Home() {
 
       if (
         currentStatus?.backedUp === nextStatus.backedUp &&
+        currentStatus.missingTrackCount === nextStatus.missingTrackCount &&
         currentStatus.trackCount === nextStatus.trackCount
       ) {
         return current;
@@ -2289,6 +2291,14 @@ export default function Home() {
                     playlist,
                     session?.user?.id
                   );
+                  const backupStatus = playlistBackupStatuses[playlist.id];
+                  const metadataBackup = playlistMetadataBackups[playlist.id];
+                  const missingBackupTrackCount =
+                    getPlaylistMissingBackupTrackCount(
+                      playlist,
+                      backupStatus,
+                      metadataBackup
+                    );
 
                   return (
                     <button
@@ -2321,7 +2331,17 @@ export default function Home() {
                             >
                               Limited
                             </span>
-                          ) : playlistBackupStatuses[playlist.id]?.backedUp ? (
+                          ) : missingBackupTrackCount > 0 ? (
+                            <span
+                              className="playlist-missing-backup-badge"
+                              title={playlistMissingBackupTitle(
+                                missingBackupTrackCount
+                              )}
+                            >
+                              {numberFormatter.format(missingBackupTrackCount)} not
+                              backed up
+                            </span>
+                          ) : backupStatus?.backedUp ? (
                             <span
                               className="playlist-backed-up-badge"
                               title="All tracks in this playlist are backed up"
@@ -2330,11 +2350,11 @@ export default function Home() {
                               Backed up
                             </span>
                           ) : null}
-                          {playlistMetadataBackups[playlist.id] ? (
+                          {metadataBackup ? (
                             <span
                               className="playlist-saved-badge"
                               title={`Metadata saved ${formatShortDate(
-                                playlistMetadataBackups[playlist.id].exportedAt
+                                metadataBackup.exportedAt
                               )}`}
                             >
                               DB saved
@@ -3801,13 +3821,40 @@ function getPlaylistBackupStatus(
   const matchesByPosition = new Map(
     libraryMatches.map((match) => [match.trackPosition, match] as const)
   );
+  const missingTrackCount = tracks.filter(
+    (track) => !matchesByPosition.get(track.position)?.exists
+  ).length;
 
   return {
-    backedUp:
-      tracks.length > 0 &&
-      tracks.every((track) => matchesByPosition.get(track.position)?.exists),
+    backedUp: tracks.length > 0 && missingTrackCount === 0,
+    missingTrackCount,
     trackCount: tracks.length
   };
+}
+
+function getPlaylistMissingBackupTrackCount(
+  playlist: PlaylistSummary,
+  backupStatus: PlaylistBackupStatus | undefined,
+  metadataBackup: PlaylistMetadataBackup | undefined
+) {
+  if (backupStatus) {
+    return (
+      backupStatus.missingTrackCount +
+      Math.max(0, playlist.tracksTotal - backupStatus.trackCount)
+    );
+  }
+
+  if (!metadataBackup) {
+    return 0;
+  }
+
+  return Math.max(0, playlist.tracksTotal - metadataBackup.trackCount);
+}
+
+function playlistMissingBackupTitle(missingTrackCount: number) {
+  const trackLabel = missingTrackCount === 1 ? "track is" : "tracks are";
+
+  return `${numberFormatter.format(missingTrackCount)} ${trackLabel} not backed up`;
 }
 
 function renderLibraryMatch(
