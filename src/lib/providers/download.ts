@@ -25,6 +25,10 @@ import { getSpotifyBuDatabase } from "@/lib/database";
 import type { BackupTrack } from "@/lib/spotify";
 import { scoreProviderCandidate } from "./scoring";
 import {
+  providerSearchQuery,
+  youtubeProviderSearchQueries
+} from "./search-query";
+import {
   SOURCE_PROVIDER_CATALOG,
   type SourceCandidate,
   type SourceProviderCatalogEntry
@@ -366,6 +370,9 @@ const maxBatchItems = 500;
 const maxProviderDownloadJobs = 100;
 const providerDownloadJobTtlMs = 2 * 60 * 60 * 1000;
 const defaultProviderSearchTimeoutMs = 20000;
+const maxYoutubeSearchResultsPerQuery = 25;
+const minYoutubeSearchResultsPerQuery = 5;
+const confidentYoutubeCandidateScore = 94;
 const stagingRootSegments = [".spotifybu", "tmp", "provider-downloads"];
 const idleCleanupDelayMs = 10 * 60 * 1000;
 const defaultYtDlpJsRuntime = "node";
@@ -1428,13 +1435,39 @@ async function searchYoutubeCandidates(
   track: BackupTrack,
   limit: number
 ): Promise<SourceCandidate[]> {
-  const searchQuery = providerSearchQuery(track, "official audio");
-  const searchResult = await runYtDlpSearch(`ytsearch${limit}:${searchQuery}`);
-  const entries = Array.isArray(searchResult.entries) ? searchResult.entries : [];
+  const perQueryLimit = Math.min(
+    Math.max(limit, minYoutubeSearchResultsPerQuery),
+    maxYoutubeSearchResultsPerQuery
+  );
+  const candidatesById = new Map<string, SourceCandidate>();
 
-  return entries
-    .map((entry, index) => youtubeCandidateFromEntry(track, entry, index))
-    .filter((candidate): candidate is SourceCandidate => Boolean(candidate));
+  for (const searchQuery of youtubeProviderSearchQueries(track)) {
+    const searchResult = await runYtDlpSearch(
+      `ytsearch${perQueryLimit}:${searchQuery}`
+    );
+    const entries = Array.isArray(searchResult.entries)
+      ? searchResult.entries
+      : [];
+
+    entries
+      .map((entry, index) => youtubeCandidateFromEntry(track, entry, index))
+      .filter((candidate): candidate is SourceCandidate => Boolean(candidate))
+      .forEach((candidate) => {
+        rememberBestYoutubeCandidate(candidatesById, candidate);
+      });
+
+    if (
+      candidatesById.size >= limit &&
+      bestCandidateScore(candidatesById.values()) >=
+        confidentYoutubeCandidateScore
+    ) {
+      break;
+    }
+  }
+
+  return [...candidatesById.values()].sort(
+    (left, right) => right.score.overall - left.score.overall
+  );
 }
 
 async function searchJioSaavnCandidates(
@@ -1592,21 +1625,35 @@ function jioSaavnCandidateFromEntry(
   } satisfies SourceCandidate;
 }
 
-function providerSearchQuery(track: BackupTrack, suffix?: string) {
-  return [
-    track.name,
-    track.artists.slice(0, 2).join(" "),
-    suffix
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
 function splitProviderArtists(value: string) {
   return value
     .split(/,|&|;|\band\b/i)
     .map((artist) => artist.trim())
     .filter(Boolean);
+}
+
+function rememberBestYoutubeCandidate(
+  candidatesById: Map<string, SourceCandidate>,
+  candidate: SourceCandidate
+) {
+  const existingCandidate = candidatesById.get(candidate.id);
+
+  if (
+    !existingCandidate ||
+    candidate.score.overall > existingCandidate.score.overall
+  ) {
+    candidatesById.set(candidate.id, candidate);
+  }
+}
+
+function bestCandidateScore(candidates: Iterable<SourceCandidate>) {
+  let bestScore = 0;
+
+  for (const candidate of candidates) {
+    bestScore = Math.max(bestScore, candidate.score.overall);
+  }
+
+  return bestScore;
 }
 
 function stripHtmlEntities(value: string) {

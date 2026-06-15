@@ -102,3 +102,27 @@ test("keeps recording qualifiers meaningful", () => {
   assert.ok(liveScore.titleScore > remixScore.titleScore);
   assert.ok(liveScore.overall > remixScore.overall);
 });
+
+test("prefers the album-matching featured artist recording over a same-title cover", () => {
+  const track = {
+    album: "Church Moments",
+    artists: ["Gateway Worship", "Matthew Harris", "Jessie Harris"],
+    durationMs: 422_000,
+    name: "Open The Eyes Of My Heart"
+  };
+  const coverScore = scoreProviderCandidate(track, {
+    artists: ["7 Hills Worship"],
+    durationMs: 182_000,
+    title: "Open The Eyes Of My Heart | 7 Hills Worship"
+  });
+  const churchMomentsScore = scoreProviderCandidate(track, {
+    artists: ["Gateway Worship"],
+    durationMs: 422_000,
+    title:
+      "Open The Eyes Of My Heart (Church Moments) | feat. Matthew & Jessie Harris | Gateway Worship"
+  });
+
+  assert.ok(churchMomentsScore.overall >= coverScore.overall + 30);
+  assert.ok(churchMomentsScore.albumScore >= 80);
+  assert.equal(churchMomentsScore.artistScore, 100);
+});
