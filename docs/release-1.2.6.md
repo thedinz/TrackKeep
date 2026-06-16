@@ -7,6 +7,9 @@ changes after it was previously backed up.
 
 - Playlist rail status now shows a red `N not backed up` badge when Spotify's
   current playlist total is higher than the latest saved backup snapshot.
+- Playlist rail status now rebuilds saved snapshot coverage against the current
+  Navidrome index on page load, so persisted missing and backed-up badges appear
+  without opening each playlist first.
 - Opened playlists use exact Navidrome match state for their missing backup
   count, so the rail updates from snapshot-based status to precise coverage
   after the playlist loads.

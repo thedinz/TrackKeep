@@ -241,6 +241,7 @@ type BackupTrack = {
 };
 
 type PlaylistResponse = {
+  backupStatuses?: Record<string, PlaylistBackupStatus>;
   metadataBackups?: Record<string, PlaylistMetadataBackup>;
   playlists: PlaylistSummary[];
 };
@@ -645,6 +646,7 @@ export default function Home() {
 
       setPlaylists(response.playlists);
       setPlaylistMetadataBackups(response.metadataBackups ?? {});
+      setPlaylistBackupStatuses(response.backupStatuses ?? {});
       setSelectedPlaylistId((current) => {
         if (
           current &&

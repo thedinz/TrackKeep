@@ -642,7 +642,7 @@ export async function readNavidromeLibraryIndex() {
   }
 }
 
-async function readCurrentNavidromeLibraryIndex() {
+export async function readCurrentNavidromeLibraryIndex() {
   const libraryPath = getNavidromeLibraryPath();
   const index = await readNavidromeLibraryIndex();
 
@@ -1928,7 +1928,7 @@ function splitArtists(value?: string) {
     .filter(Boolean);
 }
 
-function matchNavidromeTracksWithIndex(
+export function matchNavidromeTracksWithIndex(
   tracks: BackupTrack[],
   index: NavidromeLibraryIndex | null
 ) {
