@@ -39,16 +39,12 @@ export function scoreProviderCandidate(
   track: ProviderTrackMetadata,
   candidate: ProviderCandidateMetadata
 ) {
-  const titleScore = titleSimilarity(track.name, candidate.title);
+  const titleScore = titleSimilarity(track.name, candidate.title, track.album);
   const candidateArtistText = candidate.artists.join(" ");
-  const artistScore = Math.max(
-    ...track.artists.map((artist) =>
-      Math.max(
-        textSimilarity(artist, candidateArtistText),
-        metadataSegmentSimilarity(artist, candidate.title)
-      )
-    ),
-    0
+  const artistScore = artistSimilarity(
+    track.artists,
+    candidateArtistText,
+    candidate.title
   );
   const durationDeltaMs =
     typeof candidate.durationMs === "number"
@@ -80,9 +76,33 @@ export function scoreProviderCandidate(
   } satisfies CandidateScore;
 }
 
-function titleSimilarity(trackTitle: string, candidateTitle: string) {
+function titleSimilarity(
+  trackTitle: string,
+  candidateTitle: string,
+  trackAlbum?: string
+) {
   const trackTokens = tokenSet(trackTitle);
+  const contextualEditionTokens = albumEditionTokensIn(trackAlbum);
+  const contextualTrackTokens = contextualEditionTokens.size
+    ? tokenSet(trackTitle, contextualEditionTokens)
+    : new Set<string>();
+  const contextualScore = contextualTrackTokens.size
+    ? Math.min(
+        90,
+        bestTitleSegmentScore(contextualTrackTokens, candidateTitle)
+      )
+    : 0;
 
+  return Math.max(
+    bestTitleSegmentScore(trackTokens, candidateTitle),
+    contextualScore
+  );
+}
+
+function bestTitleSegmentScore(
+  trackTokens: Set<string>,
+  candidateTitle: string
+) {
   return Math.max(
     ...titleSegments(candidateTitle).map((segment) =>
       directionalSimilarity(
@@ -92,6 +112,30 @@ function titleSimilarity(trackTitle: string, candidateTitle: string) {
     ),
     0
   );
+}
+
+function artistSimilarity(
+  trackArtists: string[],
+  candidateArtistText: string,
+  candidateTitle: string
+) {
+  const artistScores = trackArtists.map((artist) =>
+    Math.max(
+      textSimilarity(artist, candidateArtistText),
+      metadataSegmentSimilarity(artist, candidateTitle)
+    )
+  );
+
+  if (!artistScores.length) {
+    return 0;
+  }
+
+  const bestScore = Math.max(...artistScores);
+  const averageScore =
+    artistScores.reduce((total, score) => total + score, 0) /
+    artistScores.length;
+
+  return Math.round(bestScore * 0.6 + averageScore * 0.4);
 }
 
 function albumSimilarity(
@@ -190,6 +234,15 @@ function tokenSet(value: string, ignoredTokens = new Set<string>()) {
   }
 
   return new Set(tokens);
+}
+
+function albumEditionTokensIn(value: string | undefined) {
+  const valueTokens = tokenSet(value ?? "");
+  const matchingTokens = [...albumEditionTokens].filter((token) =>
+    valueTokens.has(token)
+  );
+
+  return new Set(matchingTokens);
 }
 
 function normalizeSearchText(value: string) {

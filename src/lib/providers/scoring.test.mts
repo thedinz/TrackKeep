@@ -22,7 +22,7 @@ test("ranks the matching Victory recording above the shorter alternate recording
   });
 
   assert.ok(victoryRecording.overall >= alternateRecording.overall + 20);
-  assert.equal(victoryRecording.titleScore, 75);
+  assert.equal(victoryRecording.titleScore, 90);
   assert.equal(victoryRecording.albumScore, 100);
 });
 
@@ -124,5 +124,34 @@ test("prefers the album-matching featured artist recording over a same-title cov
 
   assert.ok(churchMomentsScore.overall >= coverScore.overall + 30);
   assert.ok(churchMomentsScore.albumScore >= 80);
-  assert.equal(churchMomentsScore.artistScore, 100);
+  assert.ok(churchMomentsScore.artistScore >= 90);
+});
+
+test("prefers a matching featured artist over a same-channel live alternate", () => {
+  const track = {
+    album: "Elohim (Live)",
+    artists: ["Bethel Music", "Noah Paul Harrison"],
+    durationMs: 446_000,
+    name: "Elohim - Live"
+  };
+  const alternateFeaturedArtistScore = scoreProviderCandidate(track, {
+    artists: ["Bethel Music"],
+    durationMs: 448_000,
+    title: "Elohim (Live From Church) - @BethelMusic , Aubree Archibeck"
+  });
+  const matchingFeaturedArtistScore = scoreProviderCandidate(track, {
+    artists: ["Bethel Music"],
+    durationMs: 446_000,
+    title: "Elohim - Bethel Music, Noah Paul Harrison"
+  });
+
+  assert.ok(
+    matchingFeaturedArtistScore.overall >
+      alternateFeaturedArtistScore.overall
+  );
+  assert.ok(
+    matchingFeaturedArtistScore.artistScore >
+      alternateFeaturedArtistScore.artistScore
+  );
+  assert.equal(matchingFeaturedArtistScore.albumScore, 100);
 });

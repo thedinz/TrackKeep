@@ -1,8 +1,23 @@
 import { NextResponse } from "next/server";
-import { getLatestPlaylistBackupSummaries } from "@/lib/backup-store";
+import {
+  getLatestPlaylistBackupSnapshots,
+  getLatestPlaylistBackupSummaries
+} from "@/lib/backup-store";
 import { appendDiagnosticLog, diagnosticError } from "@/lib/diagnostics";
+import {
+  getNavidromeLibraryPath,
+  matchNavidromeTracksWithIndex,
+  readCurrentNavidromeLibraryIndex,
+  type NavidromeTrackMatch
+} from "@/lib/navidrome";
 import { getSpotifySession, withSessionCookie } from "@/lib/server-session";
-import { getUserPlaylists } from "@/lib/spotify";
+import { getUserPlaylists, type BackupTrack } from "@/lib/spotify";
+
+type PlaylistBackupStatus = {
+  backedUp: boolean;
+  missingTrackCount: number;
+  trackCount: number;
+};
 
 export const runtime = "nodejs";
 
@@ -18,12 +33,12 @@ export async function GET() {
 
   try {
     const playlists = await getUserPlaylists(session.token);
-    const metadataBackups = getLatestPlaylistBackupSummaries(
-      playlists.map((playlist) => playlist.id)
-    );
+    const playlistIds = playlists.map((playlist) => playlist.id);
+    const metadataBackups = getLatestPlaylistBackupSummaries(playlistIds);
+    const backupStatuses = await getPersistedPlaylistBackupStatuses(playlistIds);
 
     return withSessionCookie(
-      NextResponse.json({ metadataBackups, playlists }),
+      NextResponse.json({ backupStatuses, metadataBackups, playlists }),
       session
     );
   } catch (error) {
@@ -45,4 +60,50 @@ export async function GET() {
       session
     );
   }
+}
+
+async function getPersistedPlaylistBackupStatuses(playlistIds: string[]) {
+  const libraryPath = getNavidromeLibraryPath();
+  const index = await readCurrentNavidromeLibraryIndex().catch(async (error) => {
+    await appendDiagnosticLog("spotify.playlists.backup_status_failed", {
+      error: diagnosticError(error),
+      route: "/api/spotify/playlists"
+    });
+
+    return null;
+  });
+
+  if (!libraryPath || !index || index.libraryPath !== libraryPath) {
+    return {};
+  }
+
+  const snapshots = getLatestPlaylistBackupSnapshots(playlistIds);
+
+  return Object.fromEntries(
+    Object.values(snapshots).map((snapshot) => [
+      snapshot.playlistId,
+      getPlaylistBackupStatus(
+        snapshot.tracks,
+        matchNavidromeTracksWithIndex(snapshot.tracks, index)
+      )
+    ])
+  ) as Record<string, PlaylistBackupStatus>;
+}
+
+function getPlaylistBackupStatus(
+  tracks: BackupTrack[],
+  libraryMatches: NavidromeTrackMatch[]
+): PlaylistBackupStatus {
+  const matchesByPosition = new Map(
+    libraryMatches.map((match) => [match.trackPosition, match] as const)
+  );
+  const missingTrackCount = tracks.filter(
+    (track) => !matchesByPosition.get(track.position)?.exists
+  ).length;
+
+  return {
+    backedUp: tracks.length > 0 && missingTrackCount === 0,
+    missingTrackCount,
+    trackCount: tracks.length
+  };
 }
