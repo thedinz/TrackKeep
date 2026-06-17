@@ -6,6 +6,8 @@ The point is not to replace Navidrome search. Navidrome already tells you what i
 
 Current stable release: `1.2.6`. It includes the web UI, local or external-proxy app auth, Spotify OAuth, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, Navidrome library checks, Lidarr-compatible folder planning, library indexing, matched-file organization, Navidrome playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
+Download the latest stable release from GitHub: https://github.com/thedinz/SpotifyBU/releases/latest
+
 SpotifyBU can source audio from files already present in the mounted Navidrome music library and can search YouTube first, then JioSaavn, for missing Spotify tracks. Single-track backup lets the user review provider candidates before downloading. Bulk playlist backup now starts with a dry-run candidate preview, then runs as a resumable background job with cancel and retry controls. Provider downloads show authorization and bulk-risk warnings, preserve provenance, and stage files only into the configured Navidrome library.
 
 ## Features
