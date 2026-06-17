@@ -280,11 +280,13 @@ type LibraryOrganizeResponse = LibraryIndexResponse & LibraryMatchesResponse & {
 
 type NavidromePlaylistSyncResponse = {
   navidromePlaylist: {
+    addedCount?: number;
     appendedCount?: number;
     matchedCount: number;
-    mode: "append" | "replace";
+    mode: NavidromePlaylistSyncMode;
     name: string;
     playlistId?: string;
+    removedCount?: number;
     skipped: Array<{
       reason: string;
       trackName: string;
@@ -295,6 +297,8 @@ type NavidromePlaylistSyncResponse = {
     updated: boolean;
   };
 };
+
+type NavidromePlaylistSyncMode = "append" | "fullsync" | "replace";
 
 type ProviderDownloadPayload = {
   bytesWritten?: number;
@@ -535,7 +539,7 @@ export default function Home() {
   const [isCreatingNavidromePlaylist, setIsCreatingNavidromePlaylist] =
     useState(false);
   const [navidromePlaylistSyncMode, setNavidromePlaylistSyncMode] =
-    useState<"append" | "replace">("replace");
+    useState<NavidromePlaylistSyncMode>("replace");
   const [isSearchingProvider, setIsSearchingProvider] = useState(false);
   const [isDownloadingProvider, setIsDownloadingProvider] = useState(false);
   const [isDownloadingBulkProvider, setIsDownloadingBulkProvider] =
@@ -979,9 +983,24 @@ export default function Home() {
       const action =
         result.mode === "append" && result.updated
           ? `Appended ${numberFormatter.format(result.appendedCount ?? 0)} tracks to`
+          : result.mode === "fullsync" && result.updated
+            ? "Full synced"
           : result.updated
             ? "Replaced"
             : "Created";
+      const fullSyncDetails =
+        result.mode === "fullsync" && result.updated
+          ? [
+              result.removedCount
+                ? `removed ${numberFormatter.format(result.removedCount)} stale tracks`
+                : "",
+              result.addedCount
+                ? `added ${numberFormatter.format(result.addedCount)} missing tracks`
+                : ""
+            ]
+              .filter(Boolean)
+              .join("; ")
+          : "";
       const skipped = result.skippedCount
         ? ` ${numberFormatter.format(result.skippedCount)} unmatched tracks were skipped.`
         : "";
@@ -989,7 +1008,7 @@ export default function Home() {
       setNavidromePlaylistMessage(
         `${action} Navidrome playlist "${result.name}" with ${numberFormatter.format(
           result.songCount
-        )} tracks.${skipped}`
+        )} tracks.${fullSyncDetails ? ` ${fullSyncDetails}.` : ""}${skipped}`
       );
       setNavidromePlaylistSkipped(result.skipped);
     } catch (error) {
@@ -2420,13 +2439,14 @@ export default function Home() {
                         disabled={isCreatingNavidromePlaylist}
                         onChange={(event) =>
                           setNavidromePlaylistSyncMode(
-                            event.target.value === "append" ? "append" : "replace"
+                            parseNavidromePlaylistSyncMode(event.target.value)
                           )
                         }
                         value={navidromePlaylistSyncMode}
                       >
                         <option value="replace">Replace</option>
                         <option value="append">Append</option>
+                        <option value="fullsync">Full sync</option>
                       </select>
                     </label>
                     <button
@@ -3795,6 +3815,16 @@ function fileNameFromPath(value: string) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+function parseNavidromePlaylistSyncMode(
+  value: string
+): NavidromePlaylistSyncMode {
+  if (value === "append" || value === "fullsync") {
+    return value;
+  }
+
+  return "replace";
 }
 
 function formatDuration(durationMs: number) {

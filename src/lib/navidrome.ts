@@ -171,11 +171,13 @@ export type NavidromeTrackOrganizationResult = {
 };
 
 export type NavidromePlaylistSyncResult = {
+  addedCount?: number;
   appendedCount?: number;
   matchedCount: number;
   mode: NavidromePlaylistSyncMode;
   name: string;
   playlistId?: string;
+  removedCount?: number;
   skipped: Array<{
     reason: string;
     trackName: string;
@@ -186,7 +188,7 @@ export type NavidromePlaylistSyncResult = {
   updated: boolean;
 };
 
-export type NavidromePlaylistSyncMode = "append" | "replace";
+export type NavidromePlaylistSyncMode = "append" | "fullsync" | "replace";
 
 const albumFolderLogSegments = [".spotifybu", "album-folders.json"];
 const libraryIndexSegments = [".spotifybu", "library-index.json"];
@@ -988,7 +990,7 @@ export async function createOrUpdateNavidromePlaylistFromSpotify(
   const name = navidromePlaylistName(playlist);
   const existingPlaylist = await findNavidromePlaylistByName(name);
   const existingSongIds =
-    mode === "append" && existingPlaylist?.id
+    (mode === "append" || mode === "fullsync") && existingPlaylist?.id
       ? await getNavidromePlaylistSongIds(existingPlaylist.id)
       : [];
   const existingSongIdSet = new Set(existingSongIds);
@@ -996,6 +998,31 @@ export async function createOrUpdateNavidromePlaylistFromSpotify(
     mode === "append"
       ? songIds.filter((songId) => !existingSongIdSet.has(songId))
       : songIds;
+
+  if (mode === "fullsync" && existingPlaylist?.id) {
+    const addedCount = countPlaylistSongsAdded(existingSongIds, songIds);
+    const removedCount = countPlaylistSongsRemoved(existingSongIds, songIds);
+
+    if (!orderedSongIdsEqual(existingSongIds, songIds)) {
+      await fullSyncNavidromePlaylist(existingPlaylist.id, existingSongIds, songIds);
+    }
+
+    const updatedPlaylist =
+      (await getNavidromePlaylist(existingPlaylist.id)) ?? existingPlaylist;
+
+    return {
+      addedCount,
+      matchedCount: songIds.length,
+      mode,
+      name: updatedPlaylist.name ?? name,
+      playlistId: updatedPlaylist.id,
+      removedCount,
+      skipped,
+      skippedCount: skipped.length,
+      songCount: updatedPlaylist.songCount ?? songIds.length,
+      updated: true
+    } satisfies NavidromePlaylistSyncResult;
+  }
 
   if (mode === "append" && existingPlaylist?.id) {
     if (appendSongIds.length) {
@@ -1031,16 +1058,42 @@ export async function createOrUpdateNavidromePlaylistFromSpotify(
   const createdPlaylist = playlistResponse.playlist;
 
   return {
+    addedCount: mode === "fullsync" ? songIds.length : undefined,
     appendedCount: mode === "append" ? appendSongIds.length : undefined,
     matchedCount: songIds.length,
     mode,
     name: createdPlaylist?.name ?? name,
     playlistId: createdPlaylist?.id ?? existingPlaylist?.id,
+    removedCount: mode === "fullsync" ? 0 : undefined,
     skipped,
     skippedCount: skipped.length,
     songCount: createdPlaylist?.songCount ?? songIds.length,
     updated: Boolean(existingPlaylist?.id)
   } satisfies NavidromePlaylistSyncResult;
+}
+
+async function fullSyncNavidromePlaylist(
+  playlistId: string,
+  existingSongIds: string[],
+  desiredSongIds: string[]
+) {
+  const songIndexToRemove = existingSongIds
+    .map((_songId, index) => String(index))
+    .reverse();
+
+  if (songIndexToRemove.length) {
+    await navidromeApiRequest("updatePlaylist", {
+      playlistId,
+      songIndexToRemove
+    });
+  }
+
+  if (desiredSongIds.length) {
+    await navidromeApiRequest("updatePlaylist", {
+      playlistId,
+      songIdToAdd: desiredSongIds
+    });
+  }
 }
 
 function sanitizePathSegment(segment: string) {
@@ -1448,7 +1501,51 @@ function navidromePlaylistName(playlist: PlaylistSummary) {
 function normalizePlaylistSyncMode(
   mode?: NavidromePlaylistSyncMode
 ): NavidromePlaylistSyncMode {
-  return mode === "append" ? "append" : "replace";
+  if (mode === "append" || mode === "fullsync") {
+    return mode;
+  }
+
+  return "replace";
+}
+
+function orderedSongIdsEqual(left: string[], right: string[]) {
+  return (
+    left.length === right.length &&
+    left.every((songId, index) => songId === right[index])
+  );
+}
+
+function countPlaylistSongsAdded(existingSongIds: string[], desiredSongIds: string[]) {
+  return countPlaylistSongDifference(desiredSongIds, existingSongIds);
+}
+
+function countPlaylistSongsRemoved(
+  existingSongIds: string[],
+  desiredSongIds: string[]
+) {
+  return countPlaylistSongDifference(existingSongIds, desiredSongIds);
+}
+
+function countPlaylistSongDifference(sourceSongIds: string[], comparisonSongIds: string[]) {
+  const comparisonCounts = new Map<string, number>();
+  let count = 0;
+
+  for (const songId of comparisonSongIds) {
+    comparisonCounts.set(songId, (comparisonCounts.get(songId) ?? 0) + 1);
+  }
+
+  for (const songId of sourceSongIds) {
+    const remainingCount = comparisonCounts.get(songId) ?? 0;
+
+    if (remainingCount > 0) {
+      comparisonCounts.set(songId, remainingCount - 1);
+      continue;
+    }
+
+    count += 1;
+  }
+
+  return count;
 }
 
 function arrayFrom<T>(value: T[] | T | undefined) {

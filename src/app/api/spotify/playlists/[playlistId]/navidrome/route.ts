@@ -29,8 +29,7 @@ export async function POST(request: Request, context: RouteContext) {
           mode?: unknown;
         }
       | null;
-    const mode: NavidromePlaylistSyncMode =
-      body?.mode === "append" ? "append" : "replace";
+    const mode: NavidromePlaylistSyncMode = parsePlaylistSyncMode(body?.mode);
     const [playlist, tracks] = await Promise.all([
       getPlaylist(session.token, playlistId),
       getPlaylistTracks(session.token, playlistId)
@@ -77,4 +76,12 @@ export async function POST(request: Request, context: RouteContext) {
       session
     );
   }
+}
+
+function parsePlaylistSyncMode(mode: unknown): NavidromePlaylistSyncMode {
+  if (mode === "append" || mode === "fullsync") {
+    return mode;
+  }
+
+  return "replace";
 }
