@@ -1470,6 +1470,15 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   padding: 8px;
 }
 
+.provider-failed-list {
+  background: rgba(255, 122, 92, 0.08);
+  border: 1px solid rgba(255, 122, 92, 0.34);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+}
+
 .provider-preview-list {
   display: grid;
   gap: 6px;
@@ -1504,9 +1513,21 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   white-space: nowrap;
 }
 
+.provider-preview-item.failed span,
+.provider-preview-item.failed strong {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .provider-preview-item strong {
   color: var(--ink);
   font-size: 0.8rem;
+}
+
+.provider-preview-item a {
+  color: #ffc4b5;
+  font-weight: 800;
+  overflow-wrap: anywhere;
 }
 
 .provider-download .provider-success {

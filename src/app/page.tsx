@@ -563,6 +563,8 @@ export default function Home() {
   const [downloadBulkRiskAccepted, setDownloadBulkRiskAccepted] = useState(false);
   const [providerDownloadMessage, setProviderDownloadMessage] =
     useState<string | null>(null);
+  const [providerDownloadError, setProviderDownloadError] =
+    useState<string | null>(null);
   const [providerDownloadStatusLabel, setProviderDownloadStatusLabel] =
     useState<string | null>(null);
   const [bulkDownloadMessage, setBulkDownloadMessage] = useState<string | null>(
@@ -606,6 +608,7 @@ export default function Home() {
     setBulkCandidatePreview(null);
     setBulkDownloadJob(null);
     setProviderDownloadMessage(null);
+    setProviderDownloadError(null);
     setProviderDownloadStatusLabel(null);
     setProviderCandidates([]);
     setSelectedProviderCandidateId("");
@@ -1024,6 +1027,7 @@ export default function Home() {
     setProviderCandidates([]);
     setSelectedProviderCandidateId("");
     setProviderDownloadMessage(null);
+    setProviderDownloadError(null);
     setProviderDownloadStatusLabel(null);
     setRequestError(null);
     setManualProviderSourceUrl("");
@@ -1110,6 +1114,7 @@ export default function Home() {
     setDownloadRightsConfirmed(false);
     setDownloadBulkRiskAccepted(false);
     setProviderDownloadMessage(null);
+    setProviderDownloadError(null);
   }, [isManualProviderSourceOpen]);
 
   const downloadSelectedProviderCandidate = useCallback(async () => {
@@ -1156,6 +1161,7 @@ export default function Home() {
 
     setIsDownloadingProvider(true);
     setProviderDownloadMessage(null);
+    setProviderDownloadError(null);
     setProviderDownloadStatusLabel("Starting download job");
     setRequestError(null);
 
@@ -1194,6 +1200,7 @@ export default function Home() {
       }
 
       setProviderDownloadMessage(downloadMessage);
+      setProviderDownloadError(null);
       setProviderDownloadStatusLabel(null);
       setProviderCandidates([]);
       setSelectedProviderCandidateId("");
@@ -1210,7 +1217,8 @@ export default function Home() {
         );
       }
     } catch (error) {
-      setRequestError(errorMessage(error));
+      setProviderDownloadMessage(null);
+      setProviderDownloadError(errorMessage(error));
     } finally {
       setIsDownloadingProvider(false);
       setProviderDownloadStatusLabel(null);
@@ -1621,6 +1629,7 @@ export default function Home() {
     setDownloadRightsConfirmed(false);
     setDownloadBulkRiskAccepted(false);
     setProviderDownloadMessage(null);
+    setProviderDownloadError(null);
     const currentBulkDownloadJob = bulkDownloadJobRef.current;
 
     if (
@@ -1715,6 +1724,7 @@ export default function Home() {
       totalCount: downloadTrackOptions.length
     });
     setProviderDownloadMessage(null);
+    setProviderDownloadError(null);
     setRequestError(null);
 
     try {
@@ -1812,6 +1822,7 @@ export default function Home() {
 
     setIsDownloadingBulkProvider(true);
     setBulkDownloadMessage(null);
+    setBulkDownloadJob(null);
     setBulkDownloadProgress({
       completedCount: 0,
       failedCount: 0,
@@ -1881,6 +1892,7 @@ export default function Home() {
     }
 
     setBulkDownloadMessage(null);
+    setProviderDownloadError(null);
     setRequestError(null);
 
     try {
@@ -2043,6 +2055,15 @@ export default function Home() {
       ? Math.round((bulkProgressFinished / bulkDownloadProgress.totalCount) * 100)
       : 0;
   const visibleBulkPreviewItems = bulkCandidatePreview?.items ?? [];
+  const failedBulkDownloadItems =
+    bulkDownloadJob?.items.filter((item) => item.status === "failed") ?? [];
+  const visibleFailedBulkDownloadItems = failedBulkDownloadItems.slice(0, 6);
+  const bulkDownloadMessageClass =
+    bulkDownloadJob?.status === "failed"
+      ? "provider-error"
+      : bulkDownloadJob?.status === "cancelled"
+        ? "provider-queue-note"
+        : "provider-success";
   const canCancelBulkProviderJob = Boolean(
     bulkDownloadJob && isProviderBulkJobActive(bulkDownloadJob)
   );
@@ -2693,6 +2714,7 @@ export default function Home() {
                           setDownloadRightsConfirmed(false);
                           setDownloadBulkRiskAccepted(false);
                           setProviderDownloadMessage(null);
+                          setProviderDownloadError(null);
                           setBulkDownloadMessage(null);
                           setBulkDownloadProgress(null);
                         }}
@@ -2730,6 +2752,7 @@ export default function Home() {
                             setDownloadRightsConfirmed(false);
                             setDownloadBulkRiskAccepted(false);
                             setProviderDownloadMessage(null);
+                            setProviderDownloadError(null);
                           }}
                           value={downloadTrackPosition}
                         >
@@ -2784,6 +2807,7 @@ export default function Home() {
                               setDownloadRightsConfirmed(false);
                               setDownloadBulkRiskAccepted(false);
                               setProviderDownloadMessage(null);
+                              setProviderDownloadError(null);
                             }}
                             value={selectedProviderCandidateId}
                           >
@@ -2869,6 +2893,7 @@ export default function Home() {
                                 setDownloadRightsConfirmed(false);
                                 setDownloadBulkRiskAccepted(false);
                                 setProviderDownloadMessage(null);
+                                setProviderDownloadError(null);
                               }}
                               placeholder="https://www.youtube.com/watch?v=..."
                               type="url"
@@ -2966,6 +2991,11 @@ export default function Home() {
                       {providerDownloadMessage ? (
                         <p className="provider-success">
                           {providerDownloadMessage}
+                        </p>
+                      ) : null}
+                      {providerDownloadError ? (
+                        <p className="provider-error" role="alert">
+                          {providerDownloadError}
                         </p>
                       ) : null}
                     </section>
@@ -3129,7 +3159,58 @@ export default function Home() {
                         </div>
                       ) : null}
                       {bulkDownloadMessage ? (
-                        <p className="provider-success">{bulkDownloadMessage}</p>
+                        <p className={bulkDownloadMessageClass}>
+                          {bulkDownloadMessage}
+                        </p>
+                      ) : null}
+                      {failedBulkDownloadItems.length ? (
+                        <div className="provider-failed-list" role="status">
+                          <div className="download-progress-meta">
+                            <span>Needs Review</span>
+                            <span>
+                              {numberFormatter.format(
+                                failedBulkDownloadItems.length
+                              )}{" "}
+                              failed
+                            </span>
+                          </div>
+                          <div className="provider-preview-list">
+                            {visibleFailedBulkDownloadItems.map((item) => (
+                              <div
+                                className="provider-preview-item failed"
+                                key={`${item.track.position}-${item.track.id ?? item.track.name}`}
+                              >
+                                <span>
+                                  {item.track.position}. {item.track.name}
+                                </span>
+                                <strong>
+                                  {providerDisplayName(item.providerId)} -{" "}
+                                  {item.candidateTitle ?? item.sourceUrl}
+                                </strong>
+                                <span>{item.error ?? "Provider download failed."}</span>
+                                <a
+                                  href={item.sourceUrl}
+                                  rel="noreferrer"
+                                  target="_blank"
+                                >
+                                  Review source
+                                </a>
+                              </div>
+                            ))}
+                            {failedBulkDownloadItems.length >
+                            visibleFailedBulkDownloadItems.length ? (
+                              <div className="provider-preview-item failed">
+                                <span>
+                                  {numberFormatter.format(
+                                    failedBulkDownloadItems.length -
+                                      visibleFailedBulkDownloadItems.length
+                                  )}{" "}
+                                  more failed tracks
+                                </span>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
                       ) : null}
                     </section>
                   </div>
