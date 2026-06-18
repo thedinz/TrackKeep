@@ -155,3 +155,26 @@ test("prefers a matching featured artist over a same-channel live alternate", ()
   );
   assert.equal(matchingFeaturedArtistScore.albumScore, 100);
 });
+
+test("treats an album suffix in the Spotify title as secondary context", () => {
+  const track = {
+    album: "Break Open",
+    artists: ["Pat Barrett"],
+    durationMs: 250_000,
+    name: "Stories - Break Open"
+  };
+  const albumTitleScore = scoreProviderCandidate(track, {
+    artists: ["Pat Barrett"],
+    durationMs: 385_000,
+    title: "Pat Barrett - Break Open (Live)"
+  });
+  const officialLyricScore = scoreProviderCandidate(track, {
+    artists: ["Pat Barrett"],
+    durationMs: 250_000,
+    title: "Pat Barrett - Stories (Official Lyric Video)"
+  });
+
+  assert.ok(officialLyricScore.overall > albumTitleScore.overall);
+  assert.equal(officialLyricScore.titleScore, 100);
+  assert.equal(officialLyricScore.overall, 100);
+});
