@@ -313,6 +313,14 @@ type ProviderDownloadPayload = {
   sourceUrl: string;
 };
 
+type ProviderDownloadFallbackSource = {
+  candidateScore?: number;
+  candidateTitle?: string;
+  providerId: string;
+  selectedReason?: string;
+  sourceUrl: string;
+};
+
 type ProviderDownloadJobStatus =
   | "completed"
   | "failed"
@@ -412,6 +420,7 @@ type ProviderBulkDownloadJobItem = {
   completedAt?: string;
   download?: ProviderDownloadPayload;
   error?: string;
+  fallbackSources?: ProviderDownloadFallbackSource[];
   providerId: string;
   selectedReason?: string;
   sourceUrl: string;
@@ -1170,6 +1179,12 @@ export default function Home() {
         "/api/providers/download",
         {
           bulkRiskAccepted: downloadBulkRiskAccepted,
+          fallbackSources: isManualProviderSourceOpen
+            ? []
+            : buildProviderFallbackSources(
+                providerCandidates,
+                downloadSource.sourceUrl
+              ),
           providerId: downloadSource.providerId,
           quality: downloadQuality,
           rightsConfirmed: downloadRightsConfirmed,
@@ -4327,6 +4342,10 @@ function buildBulkDownloadItems(preview: ProviderBulkCandidatePreview | null) {
     .map((item) => ({
       candidateScore: item.candidate?.score.overall,
       candidateTitle: item.candidate?.title,
+      fallbackSources: buildProviderFallbackSources(
+        item.candidates,
+        item.candidate?.url
+      ),
       providerId: item.candidate?.providerId ?? "",
       selectedReason: `SpotifyBU dry-run bulk preview selected ${
         item.candidate?.title ?? "provider candidate"
@@ -4334,6 +4353,44 @@ function buildBulkDownloadItems(preview: ProviderBulkCandidatePreview | null) {
       sourceUrl: item.candidate?.url ?? "",
       track: item.track
     }));
+}
+
+function buildProviderFallbackSources(
+  candidates: ProviderSearchCandidate[],
+  selectedSourceUrl?: string
+) {
+  const selectedSourceKey = selectedSourceUrl
+    ? providerSourceKey(selectedSourceUrl)
+    : "";
+  const seenSources = new Set<string>(selectedSourceKey ? [selectedSourceKey] : []);
+  const fallbackSources: ProviderDownloadFallbackSource[] = [];
+
+  for (const candidate of candidates) {
+    if (!candidate.url) {
+      continue;
+    }
+
+    const sourceKey = providerSourceKey(candidate.url);
+
+    if (seenSources.has(sourceKey)) {
+      continue;
+    }
+
+    seenSources.add(sourceKey);
+    fallbackSources.push({
+      candidateScore: candidate.score.overall,
+      candidateTitle: candidate.title,
+      providerId: candidate.providerId,
+      selectedReason: `SpotifyBU automatically retried fallback provider candidate ${candidate.title} (${candidate.score.overall}% match)`,
+      sourceUrl: candidate.url
+    });
+  }
+
+  return fallbackSources.slice(0, 5);
+}
+
+function providerSourceKey(sourceUrl: string) {
+  return sourceUrl.trim().toLowerCase();
 }
 
 function providerBulkJobProgress(

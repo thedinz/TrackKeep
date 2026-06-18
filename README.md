@@ -35,12 +35,12 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - Spotify title, artist, album, and album-cover tagging for staged provider downloads
 - Source-provider catalog with active YouTube and JioSaavn sourcing plus planned future providers
 - Automatic provider search for missing tracks, with YouTube checked before JioSaavn
-- Reviewed single-track source downloads for YouTube and JioSaavn using `yt-dlp` and background job polling
+- Reviewed single-track source downloads for YouTube and JioSaavn using `yt-dlp`, alternate candidate fallback, and background job polling
 - Dry-run bulk candidate previews with live progress before provider downloads
 - Resumable background bulk playlist jobs with cancellation, retry, per-track waits, chunk pauses, progress reporting, and partial-failure reporting
 - MP3 output with 128 kbps or 320 kbps quality targets
 - Navidrome-volume staging with idle cleanup for abandoned failed download/convert temp files
-- Docker image with Node.js, `ffmpeg`, `yt-dlp`, Python 3, and `pip`
+- Docker image with Node.js, `ffmpeg`, prerelease/nightly-channel `yt-dlp[default]`, Python 3, and `pip`
 - GitHub Container Registry image publishing for `dev`, `latest`, and version tags
 
 ## Docker Quick Start
@@ -411,7 +411,7 @@ docker run --rm -p 3000:3000 \
 - `src/lib/spotify.ts` owns Spotify API calls and export shaping.
 - `src/lib/navidrome.ts` owns Navidrome library path checks, safe target directory creation, folder planning, library indexing, local matching, matched-file organization, album-folder logging, and Navidrome playlist replace, append, and full-sync modes.
 - `src/lib/providers/types.ts` defines the source-provider contract and provider catalog for matching, downloading, tagging, and provenance.
-- `src/lib/providers/download.ts` searches provider candidates, validates selected provider URLs, calls `yt-dlp`, stages files on the Navidrome volume, tags downloads with Spotify metadata, records provenance, and cleans abandoned staging files after idle.
+- `src/lib/providers/download.ts` searches provider candidates, validates selected provider URLs, calls `yt-dlp`, retries alternate provider candidates for source-side failures, stages files on the Navidrome volume, tags downloads with Spotify metadata, records provenance, and cleans abandoned staging files after idle.
 - `src/app/api/providers/route.ts` exposes the provider catalog and provider risk/status metadata.
 - `src/app/api/providers/search/route.ts` searches YouTube first, then JioSaavn, for candidate sources.
 - `src/app/api/providers/download/route.ts` starts confirmed single-track provider download jobs.
@@ -423,13 +423,17 @@ docker run --rm -p 3000:3000 \
 - `src/app/api/navidrome/library/organize/route.ts` moves or renames matched local files into their planned Lidarr-compatible Navidrome paths in small batches.
 - `src/app/api/spotify/playlists/[playlistId]/navidrome/route.ts` replaces, appends, or full-syncs a matching Navidrome playlist from backed-up Spotify tracks.
 - `src/lib/session.ts` and `src/lib/server-session.ts` own PKCE cookie and Spotify token-session handling.
-- `.github/workflows/docker-image.yml` publishes GHCR images for `dev`, `main`, and `v*` tags. The `dev` branch publishes `dev`; `main` and version tags publish stable tags such as `latest`.
+- `.github/workflows/docker-image.yml` publishes GHCR images for `dev`, `main`, and `v*` tags. The `dev` branch publishes `dev`; `main` and version tags publish stable tags such as `latest`. The workflow runs `npm run check:yt-dlp` so image builds record the current yt-dlp release channel before publishing.
 
 ## Source Providers
 
-spotDL is a useful comparison point: it resolves Spotify metadata to audio candidates from providers such as YouTube Music and then downloads through `yt-dlp`. SpotifyBU keeps a similar provider-oriented shape, but the active automatic sourcing flow intentionally uses direct YouTube search first and JioSaavn second. YouTube Music, Piped, SoundCloud, and Bandcamp remain planned/future provider entries rather than active UI choices. The implemented download path searches provider candidates for a selected missing track, or dry-runs candidate selection for each missing track in a playlist-scale queue before starting a persisted background job with configured waits between tracks and longer pauses between chunks.
+spotDL is a useful comparison point: it resolves Spotify metadata to audio candidates from providers such as YouTube Music and then downloads through `yt-dlp`. SpotifyBU keeps a similar provider-oriented shape, but the active automatic sourcing flow intentionally uses direct YouTube search first and JioSaavn second. YouTube Music, Piped, SoundCloud, and Bandcamp remain planned/future provider entries rather than active UI choices. The implemented download path searches provider candidates for a selected missing track, or dry-runs candidate selection for each missing track in a playlist-scale queue before starting a persisted background job with configured waits between tracks and longer pauses between chunks. If a download fails with a source-side provider error such as a YouTube 403, SpotifyBU retries other reviewed or previewed candidates before marking the track as needing review.
 
 Bulk playlist sourcing can trigger provider throttling, captchas, temporary blocks, account action, or service-term issues. SpotifyBU shows those risks before starting large jobs and uses conservative rate limits, chunk pauses, background status polling, partial-failure reporting, dry-run previews, cancellation, retry controls, and provenance logs.
+
+## Maintenance Checks
+
+Run `npm run check:yt-dlp` during code-change passes that touch downloads, Docker, provider behavior, release packaging, or deployment docs. SpotifyBU images intentionally install `yt-dlp[default]` with `--pre --upgrade` so fresh image builds pick up the newest available yt-dlp/EJS support; the check script makes that release-channel state visible before publishing.
 
 See [docs/source-providers.md](docs/source-providers.md).
 

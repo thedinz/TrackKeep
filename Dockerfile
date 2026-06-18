@@ -44,7 +44,7 @@ RUN apt-get update \
     python3-pip \
     tini \
   && rm -rf /var/lib/apt/lists/* \
-  && python3 -m pip install --no-cache-dir --break-system-packages --upgrade "yt-dlp[default]" \
+  && python3 -m pip install --no-cache-dir --break-system-packages --upgrade --pre "yt-dlp[default]" \
   && mkdir -p /config /music \
   && chown -R node:node /app /config /music
 
