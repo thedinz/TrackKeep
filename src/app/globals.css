@@ -1193,13 +1193,19 @@ button.folder-plan-status.organize:hover:not(:disabled) {
 }
 
 .provider-row.with-action {
-  grid-template-columns: 34px minmax(0, 1fr) 40px;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
 }
 
 .icon-command.compact {
   aspect-ratio: 1;
   min-height: 38px;
   padding: 0;
+}
+
+.index-command {
+  min-height: 38px;
+  padding: 8px 10px;
+  white-space: nowrap;
 }
 
 .provider-icon {
