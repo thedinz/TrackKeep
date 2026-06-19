@@ -5,7 +5,9 @@ import { access, mkdir, readdir, readFile, rename, stat, writeFile } from "fs/pr
 import path from "path";
 import { promisify } from "util";
 import {
+  defaultOrganizeNamingSettings,
   loadOrganizeNamingSettings,
+  organizeNamingSettingsKey,
   type OrganizeNamingSettings
 } from "./organize-settings";
 import type { BackupTrack, PlaylistSummary } from "./spotify";
@@ -124,6 +126,7 @@ type NavidromeIndexAudioResult =
 export type NavidromeLibraryIndex = {
   generatedAt: string;
   libraryPath: string;
+  namingSchemeKey?: string;
   skipped?: NavidromeIndexSkip[];
   tracks: NavidromeIndexedTrack[];
   version: 1;
@@ -132,6 +135,8 @@ export type NavidromeLibraryIndex = {
 export type NavidromeLibraryIndexSummary = {
   generatedAt?: string;
   libraryPath?: string;
+  namingSchemeChanged?: boolean;
+  namingSchemeKey?: string;
   navidromeScan?: NavidromeServerScanResult;
   skippedCount?: number;
   skippedExamples?: NavidromeIndexSkip[];
@@ -199,6 +204,9 @@ const libraryIndexSegments = [".spotifybu", "library-index.json"];
 const defaultOrganizeMoveLimit = 15;
 const indexValidationConcurrency = 64;
 const unknownLidarrReleaseYear = "Unknown Year";
+const defaultOrganizeNamingSettingsKey = organizeNamingSettingsKey(
+  defaultOrganizeNamingSettings
+);
 const controlCharacters = /[\u0000-\u001f]/g;
 const combiningMarks = /[\u0300-\u036f]/g;
 const reservedWindowsNames = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
@@ -568,7 +576,12 @@ export async function getNavidromeLibraryIndexSummary() {
   }
 
   const index = await readCurrentNavidromeLibraryIndex();
-  const summary = summarizeNavidromeLibraryIndex(index, libraryPath);
+  const naming = await loadOrganizeNamingSettings();
+  const summary = summarizeNavidromeLibraryIndex(
+    index,
+    libraryPath,
+    organizeNamingSettingsKey(naming)
+  );
 
   lastLibraryIndexSummary = summary;
 
@@ -706,6 +719,8 @@ async function pruneMissingNavidromeIndexTracks(
 
 export async function scanNavidromeLibraryIndex() {
   const status = await getNavidromeLibraryStatus();
+  const naming = await loadOrganizeNamingSettings();
+  const namingSchemeKey = organizeNamingSettingsKey(naming);
 
   if (status.state !== "ready" || !status.libraryPath) {
     throw new Error(status.message);
@@ -751,6 +766,7 @@ export async function scanNavidromeLibraryIndex() {
   const index = {
     generatedAt: new Date().toISOString(),
     libraryPath: status.libraryPath,
+    namingSchemeKey,
     skipped: indexSkipped,
     tracks,
     version: 1
@@ -760,7 +776,11 @@ export async function scanNavidromeLibraryIndex() {
   const navidromeScan = await requestNavidromeServerScan();
 
   const summary = {
-    ...summarizeNavidromeLibraryIndex(index, status.libraryPath),
+    ...summarizeNavidromeLibraryIndex(
+      index,
+      status.libraryPath,
+      namingSchemeKey
+    ),
     navidromeScan
   } satisfies NavidromeLibraryIndexSummary;
 
@@ -784,6 +804,8 @@ export async function upsertNavidromeLibraryIndexTrack(filePath: string) {
   }
 
   const indexedTrack = await indexAudioFile(libraryPath, targetPath);
+  const naming = await loadOrganizeNamingSettings();
+  const namingSchemeKey = organizeNamingSettingsKey(naming);
   const existingIndex = await readCurrentNavidromeLibraryIndex();
   const reusableIndex =
     existingIndex?.libraryPath === libraryPath ? existingIndex : null;
@@ -793,6 +815,7 @@ export async function upsertNavidromeLibraryIndexTrack(filePath: string) {
       : ({
           generatedAt: new Date(0).toISOString(),
           libraryPath,
+          namingSchemeKey,
           skipped: [],
           tracks: [],
           version: 1
@@ -801,6 +824,7 @@ export async function upsertNavidromeLibraryIndexTrack(filePath: string) {
 
   index.generatedAt = new Date().toISOString();
   index.libraryPath = libraryPath;
+  index.namingSchemeKey = namingSchemeKey;
   index.tracks = [
     ...index.tracks.filter(
       (track) => normalizeRelativePathKey(track.relativePath) !== indexedTrackKey
@@ -815,7 +839,11 @@ export async function upsertNavidromeLibraryIndexTrack(filePath: string) {
 
   await writeNavidromeLibraryIndex(index);
 
-  const summary = summarizeNavidromeLibraryIndex(index, libraryPath);
+  const summary = summarizeNavidromeLibraryIndex(
+    index,
+    libraryPath,
+    namingSchemeKey
+  );
   lastLibraryIndexSummary = summary;
 
   return summary;
@@ -935,6 +963,7 @@ export async function organizeNavidromeMatchedTracks(
   const updatedIndex = {
     ...currentIndex,
     generatedAt: new Date().toISOString(),
+    namingSchemeKey: organizeNamingSettingsKey(naming),
     tracks: updatedTracks.sort((left, right) =>
       left.relativePath.localeCompare(right.relativePath)
     )
@@ -953,7 +982,11 @@ export async function organizeNavidromeMatchedTracks(
     movedCount,
     remainingMoveCount: libraryMatches.filter((match) => match.needsMove).length,
     skippedCount,
-    summary: summarizeNavidromeLibraryIndex(updatedIndex, libraryPath)
+    summary: summarizeNavidromeLibraryIndex(
+      updatedIndex,
+      libraryPath,
+      organizeNamingSettingsKey(naming)
+    )
   } satisfies NavidromeTrackOrganizationResult;
 }
 
@@ -1683,22 +1716,31 @@ function getAlbumFolderKey(track: BackupTrack) {
 
 function summarizeNavidromeLibraryIndex(
   index: NavidromeLibraryIndex | null,
-  libraryPath: string
+  libraryPath: string,
+  namingSchemeKey: string
 ) {
   if (!index) {
     return {
       libraryPath,
+      namingSchemeChanged: true,
+      namingSchemeKey,
       stale: true,
       trackCount: 0
     } satisfies NavidromeLibraryIndexSummary;
   }
 
+  const indexNamingSchemeKey =
+    index.namingSchemeKey ?? defaultOrganizeNamingSettingsKey;
+  const namingSchemeChanged = indexNamingSchemeKey !== namingSchemeKey;
+
   return {
     generatedAt: index.generatedAt,
     libraryPath,
+    namingSchemeChanged,
+    namingSchemeKey: indexNamingSchemeKey,
     skippedCount: index.skipped?.length,
     skippedExamples: index.skipped?.slice(0, 3),
-    stale: index.libraryPath !== libraryPath,
+    stale: index.libraryPath !== libraryPath || namingSchemeChanged,
     trackCount: index.tracks.length
   } satisfies NavidromeLibraryIndexSummary;
 }

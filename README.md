@@ -309,6 +309,8 @@ After a library scan, the Organize action compares matched local files against t
 
 Running Organize before backing up missing files is recommended, but not required. It gives SpotifyBU a clean library view first, can repair older organize runs, and reduces the chance of downloading a track that already exists under a messy path. If you skip it, new provider downloads still stage into the active organize layout.
 
+Changing the organize scheme marks the current library index stale. Run Library Index again after switching between SpotifyBU, Lidarr, or manual naming so SpotifyBU can re-check whether matched files are already organized under the newly selected layout.
+
 SpotifyBU's Library Index scan reads the mounted music folder directly. It does
 not need a Navidrome username or password for that local index. If
 `NAVIDROME_USERNAME` and `NAVIDROME_PASSWORD` are set, SpotifyBU also uses

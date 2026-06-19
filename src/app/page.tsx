@@ -171,6 +171,7 @@ type LibraryMatch = {
 type NavidromeLibraryIndexSummary = {
   generatedAt?: string;
   libraryPath?: string;
+  namingSchemeChanged?: boolean;
   navidromeScan?: NavidromeServerStatus;
   skippedCount?: number;
   skippedExamples?: NavidromeIndexSkip[];
@@ -2030,7 +2031,13 @@ export default function Home() {
     ? libraryIndex.generatedAt
       ? `${numberFormatter.format(libraryIndex.trackCount)} indexed - scanned ${formatShortDate(
           libraryIndex.generatedAt
-        )}${libraryIndex.stale ? " - rescan needed" : ""}${
+        )}${
+          libraryIndex.namingSchemeChanged
+            ? " - organize scheme changed; rescan needed"
+            : libraryIndex.stale
+              ? " - rescan needed"
+              : ""
+        }${
           libraryIndex.skippedCount
             ? ` - ${numberFormatter.format(libraryIndex.skippedCount)} skipped`
             : ""

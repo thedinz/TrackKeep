@@ -134,6 +134,17 @@ export function toOrganizeNamingSettingsView(
   };
 }
 
+export function organizeNamingSettingsKey(settings: OrganizeNamingSettings) {
+  return JSON.stringify({
+    artistFolderFormat: settings.artistFolderFormat,
+    colonReplacementFormat: settings.colonReplacementFormat,
+    mode: settings.mode,
+    multiDiscTrackFormat: settings.multiDiscTrackFormat,
+    replaceIllegalCharacters: settings.replaceIllegalCharacters,
+    standardTrackFormat: settings.standardTrackFormat
+  });
+}
+
 export async function fetchLidarrNamingConfig(
   settings: OrganizeNamingSettings,
   override?: {
