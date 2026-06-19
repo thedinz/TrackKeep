@@ -1229,7 +1229,7 @@ export default function Home() {
         setProviderDownloadMessage(
           `${downloadMessage}. SpotifyBU could not refresh the match table automatically (${errorMessage(
             error
-          )}). The file is already in the library folder; run Scan library after the server settles.`
+          )}). The file is already in the library folder; run Library Index after the server settles.`
         );
       }
     } catch (error) {
@@ -2023,7 +2023,7 @@ export default function Home() {
           bulkDownloadJob
         )} SpotifyBU could not refresh the match table automatically (${errorMessage(
           error
-        )}). Run Scan library after the server settles.`
+        )}). Run Library Index after the server settles.`
       );
     });
   }, [bulkDownloadJob, refreshLibraryMatches]);
@@ -2033,26 +2033,26 @@ export default function Home() {
           libraryIndex.generatedAt
         )}${
           libraryIndex.namingSchemeChanged
-            ? " - organize scheme changed; rescan needed"
+            ? " - organize scheme changed; index needed"
             : libraryIndex.stale
-              ? " - rescan needed"
+              ? " - index needed"
               : ""
         }${
           libraryIndex.skippedCount
             ? ` - ${numberFormatter.format(libraryIndex.skippedCount)} skipped`
             : ""
         }`
-      : "No library scan yet"
+      : "No library index yet"
     : "Checking index";
   const libraryIndexScanLabel =
     libraryIndexScan?.state === "running"
-      ? "Library scan running in the background."
+      ? "Library Index running in the background."
       : libraryIndexScan?.state === "failed"
-        ? `Library scan failed: ${
+        ? `Library Index failed: ${
             libraryIndexScan.error ?? "SpotifyBU could not scan the library."
           }`
         : libraryIndexScan?.state === "succeeded"
-          ? "Library scan completed."
+          ? "Library Index completed."
           : null;
   const playlistSource = selectedPlaylist
     ? ({
@@ -2611,7 +2611,7 @@ export default function Home() {
                   <span className="stat-value">
                     {hasUsableLibraryIndex
                       ? numberFormatter.format(missingBackupCount)
-                      : "Scan"}
+                      : "Index"}
                   </span>
                 </span>
               </div>
@@ -2717,13 +2717,13 @@ export default function Home() {
                       <h3>Back up tracks that are not in Navidrome</h3>
                       <p>
                         The track table below shows coverage. These controls only
-                        target tracks that are still missing from the library scan.
+                        target tracks that are still missing from the library index.
                       </p>
                     </div>
                     <span className="backup-workflow-count">
                       {hasUsableLibraryIndex
                         ? `${numberFormatter.format(missingBackupCount)} missing`
-                        : "Scan library"}
+                        : "Run Index"}
                     </span>
                   </div>
                   <div className="provider-throttle-grid compact backup-workflow-settings">
@@ -3405,16 +3405,17 @@ export default function Home() {
                   ) : null}
                 </span>
                 <button
-                  className="icon-command compact"
+                  className="icon-command index-command"
                   disabled={!navidromeReady || isScanningLibrary}
                   onClick={() => void scanNavidromeLibrary()}
-                  title="Scan Navidrome library"
+                  title="Run Library Index"
                   type="button"
                 >
                   <RefreshCw
                     className={isScanningLibrary ? "spin" : undefined}
                     size={18}
                   />
+                  Run Index
                 </button>
               </div>
               <div className="provider-warning">
@@ -4004,11 +4005,18 @@ function renderLibraryMatch(
   } = {}
 ) {
   if (!libraryIndex) {
-    return <span className="track-status unindexed">No scan</span>;
+    return <span className="track-status unindexed">No index</span>;
   }
 
   if (libraryIndex.stale) {
-    return <span className="track-status stale">Scan needed</span>;
+    return (
+      <span
+        className="track-status stale"
+        title="Run Library Index to refresh organization status"
+      >
+        Index needed
+      </span>
+    );
   }
 
   if (!match || !match.exists) {
@@ -4234,7 +4242,7 @@ function folderPlanStatus(
   if (!hasUsableLibraryIndex) {
     return {
       status: "scan",
-      statusLabel: "Scan needed"
+      statusLabel: "Index needed"
     };
   }
 
