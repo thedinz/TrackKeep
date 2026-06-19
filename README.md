@@ -299,15 +299,15 @@ Provider downloads stage temporary files under:
 /music/.spotifybu/tmp/provider-downloads
 ```
 
-Finished files are moved into their final Lidarr-style `Artist/Artist - Album Type - Release Year - Album/0103 - Track` path before the response completes. If a download, move, or conversion fails, leftover staging files stay on the mounted music volume rather than the container filesystem. After 10 minutes of provider-download idleness, SpotifyBU removes stale staging files older than 10 minutes old.
+Finished files are moved into the active organize scheme before the response completes. The default scheme is the SpotifyBU/Lidarr-style `Artist/Artist - Album Type - Release Year - Album/0103 - Track` path. If a download, move, or conversion fails, leftover staging files stay on the mounted music volume rather than the container filesystem. After 10 minutes of provider-download idleness, SpotifyBU removes stale staging files older than 10 minutes old.
 
 Navidrome still needs read access to the same host folder and a scan/watch configuration that sees new files.
 
 ### Organize Matched Files
 
-After a library scan, the Organize action compares matched local files against the same Lidarr-style artist, album, and track naming format used for new SpotifyBU downloads. It moves or renames loose files, older SpotifyBU folder layouts, and other matched tracks that are not already in the expected structure. Files already inside a compatible Lidarr-shaped artist/album folder for the same release are left alone, so Lidarr should not suddenly see missing albums just because SpotifyBU organized a playlist.
+After a library scan, the Organize action compares matched local files against the same naming scheme used for new SpotifyBU downloads. The Settings page can keep the current SpotifyBU default, load `artistFolderFormat`, `standardTrackFormat`, `multiDiscTrackFormat`, `replaceIllegalCharacters`, and `colonReplacementFormat` from Lidarr with a URL and API key, or use manual templates. It moves or renames loose files, older SpotifyBU folder layouts, and other matched tracks that are not already in the expected structure. In default SpotifyBU mode, files already inside a compatible Lidarr-shaped artist/album folder for the same release are left alone, so Lidarr should not suddenly see missing albums just because SpotifyBU organized a playlist.
 
-Running Organize before backing up missing files is recommended, but not required. It gives SpotifyBU a clean library view first, can repair older organize runs, and reduces the chance of downloading a track that already exists under a messy path. If you skip it, new provider downloads still stage into the Lidarr-compatible layout.
+Running Organize before backing up missing files is recommended, but not required. It gives SpotifyBU a clean library view first, can repair older organize runs, and reduces the chance of downloading a track that already exists under a messy path. If you skip it, new provider downloads still stage into the active organize layout.
 
 SpotifyBU's Library Index scan reads the mounted music folder directly. It does
 not need a Navidrome username or password for that local index. If

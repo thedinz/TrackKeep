@@ -339,7 +339,8 @@ button {
 }
 
 .form-field input,
-.form-field select {
+.form-field select,
+.form-field textarea {
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -350,9 +351,24 @@ button {
 }
 
 .form-field input:focus,
-.form-field select:focus {
+.form-field select:focus,
+.form-field textarea:focus {
   border-color: var(--spotify-bright);
   box-shadow: 0 0 0 3px rgba(37, 230, 109, 0.12);
+}
+
+.form-field textarea {
+  line-height: 1.45;
+  min-height: 86px;
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+.form-field input:disabled,
+.form-field select:disabled,
+.form-field textarea:disabled {
+  color: var(--muted);
+  opacity: 0.72;
 }
 
 .auth-note {
@@ -375,8 +391,10 @@ button {
 }
 
 .settings-grid {
+  display: grid;
+  gap: 16px;
   margin: 0 auto;
-  max-width: 720px;
+  max-width: 860px;
   width: 100%;
 }
 
@@ -388,6 +406,76 @@ button {
   display: grid;
   gap: 16px;
   padding: 16px;
+}
+
+.organize-form {
+  gap: 16px;
+}
+
+.segmented-control {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 4px;
+}
+
+.segmented-control button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 700;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 10px;
+}
+
+.segmented-control button.active {
+  background: rgba(29, 185, 84, 0.14);
+  color: var(--ink);
+}
+
+.settings-subsection {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 14px;
+  padding-top: 14px;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.settings-inline-grid {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+}
+
+.checkbox-field {
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  display: flex;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 12px;
+}
+
+.checkbox-field input {
+  accent-color: var(--spotify-bright);
 }
 
 .connect-grid {
@@ -1694,7 +1782,12 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   .workspace-grid,
   .signal-grid,
   .summary-strip,
+  .settings-inline-grid,
   .backup-workflow-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .segmented-control {
     grid-template-columns: 1fr;
   }
 

@@ -79,15 +79,17 @@ async function getPersistedPlaylistBackupStatuses(playlistIds: string[]) {
 
   const snapshots = getLatestPlaylistBackupSnapshots(playlistIds);
 
-  return Object.fromEntries(
-    Object.values(snapshots).map((snapshot) => [
+  const statuses = await Promise.all(
+    Object.values(snapshots).map(async (snapshot) => [
       snapshot.playlistId,
       getPlaylistBackupStatus(
         snapshot.tracks,
-        matchNavidromeTracksWithIndex(snapshot.tracks, index)
+        await matchNavidromeTracksWithIndex(snapshot.tracks, index)
       )
-    ])
-  ) as Record<string, PlaylistBackupStatus>;
+    ] as const)
+  );
+
+  return Object.fromEntries(statuses) as Record<string, PlaylistBackupStatus>;
 }
 
 function getPlaylistBackupStatus(

@@ -1047,7 +1047,7 @@ async function downloadAuthorizedProviderTrackInner(
     const targetDirectory = await ensureNavidromeTargetDirectory(
       relativePathSegments(folderPlan.relativePath)
     );
-    const fileBase = buildNavidromeTrackFileBase(request.track);
+    const fileBase = await buildNavidromeTrackFileBase(request.track);
     const stagingDirectory = await createDownloadStagingDirectory(libraryPath);
     const outputTemplate = path.join(
       /* turbopackIgnore: true */ stagingDirectory,
