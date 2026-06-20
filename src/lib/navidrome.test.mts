@@ -224,8 +224,8 @@ const lidarrNamingSettings = {
   artistFolderFormat: "{Artist CleanName}{ (Artist Disambiguation)}",
   colonReplacementFormat: 4,
   lidarr: {
-    apiKey: "saved",
-    baseUrl: "http://lidarr"
+    apiKey: "",
+    baseUrl: ""
   },
   mode: "lidarr",
   multiDiscTrackFormat:

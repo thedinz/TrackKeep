@@ -53,6 +53,10 @@ type LidarrNamingResponse = Partial<LidarrNamingConfig> & {
   renameTracks?: boolean;
 };
 
+type LoadOrganizeNamingSettingsOptions = {
+  syncLidarr?: boolean;
+};
+
 export const defaultOrganizeNamingSettings = {
   artistFolderFormat: "{Album Artist Name}",
   colonReplacementFormat: 4,
@@ -68,7 +72,17 @@ export const defaultOrganizeNamingSettings = {
     "{Album Artist Name} - {Album Type} - {Release Year} - {Album Title}/{medium:00}{track:00} - {Track Title}"
 } satisfies OrganizeNamingSettings;
 
-export async function loadOrganizeNamingSettings() {
+export async function loadOrganizeNamingSettings(
+  options: LoadOrganizeNamingSettingsOptions = {}
+) {
+  const settings = await loadStoredOrganizeNamingSettings();
+
+  return options.syncLidarr
+    ? await syncLidarrNamingSettingsIfAvailable(settings)
+    : settings;
+}
+
+async function loadStoredOrganizeNamingSettings() {
   try {
     const contents = await readFile(getOrganizeSettingsPath(), "utf8");
     const parsed = JSON.parse(contents) as Partial<StoredOrganizeNamingSettings>;
@@ -83,6 +97,34 @@ export async function loadOrganizeNamingSettings() {
     }
 
     throw error;
+  }
+}
+
+async function syncLidarrNamingSettingsIfAvailable(
+  settings: OrganizeNamingSettings
+) {
+  if (
+    settings.mode !== "lidarr" ||
+    !settings.lidarr.apiKey ||
+    !settings.lidarr.baseUrl
+  ) {
+    return settings;
+  }
+
+  try {
+    const naming = await fetchLidarrNamingConfig(settings);
+    const next = normalizeOrganizeNamingSettings(settings, {
+      ...naming,
+      mode: "lidarr"
+    });
+
+    if (organizeNamingSettingsKey(next) !== organizeNamingSettingsKey(settings)) {
+      await saveOrganizeNamingSettings(next);
+    }
+
+    return next;
+  } catch {
+    return settings;
   }
 }
 

@@ -19,7 +19,9 @@ export async function GET() {
     );
   }
 
-  const naming = await loadOrganizeNamingSettings();
+  const naming = await loadOrganizeNamingSettings({
+    syncLidarr: true
+  });
 
   return NextResponse.json(
     {

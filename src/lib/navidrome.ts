@@ -482,7 +482,9 @@ export async function ensureNavidromeTargetDirectory(segments: string[]) {
 export async function planNavidromeAlbumFolders(tracks: BackupTrack[]) {
   const libraryPath = getNavidromeLibraryPath();
   const log = await readAlbumFolderLog();
-  const naming = await loadOrganizeNamingSettings();
+  const naming = await loadOrganizeNamingSettings({
+    syncLidarr: true
+  });
   const tracksByAlbum = groupTracksByAlbum(tracks);
 
   return Array.from(tracksByAlbum.entries()).map(([key, albumTracks]) => {
@@ -522,7 +524,9 @@ export async function recordNavidromeAlbumFolders(tracks: BackupTrack[]) {
   }
 
   const log = await readAlbumFolderLog();
-  const naming = await loadOrganizeNamingSettings();
+  const naming = await loadOrganizeNamingSettings({
+    syncLidarr: true
+  });
   const tracksByAlbum = groupTracksByAlbum(tracks);
   const now = new Date().toISOString();
 
@@ -576,7 +580,9 @@ export async function getNavidromeLibraryIndexSummary() {
   }
 
   const index = await readCurrentNavidromeLibraryIndex();
-  const naming = await loadOrganizeNamingSettings();
+  const naming = await loadOrganizeNamingSettings({
+    syncLidarr: true
+  });
   const summary = summarizeNavidromeLibraryIndex(
     index,
     libraryPath,
@@ -719,7 +725,9 @@ async function pruneMissingNavidromeIndexTracks(
 
 export async function scanNavidromeLibraryIndex() {
   const status = await getNavidromeLibraryStatus();
-  const naming = await loadOrganizeNamingSettings();
+  const naming = await loadOrganizeNamingSettings({
+    syncLidarr: true
+  });
   const namingSchemeKey = organizeNamingSettingsKey(naming);
 
   if (status.state !== "ready" || !status.libraryPath) {
@@ -804,7 +812,9 @@ export async function upsertNavidromeLibraryIndexTrack(filePath: string) {
   }
 
   const indexedTrack = await indexAudioFile(libraryPath, targetPath);
-  const naming = await loadOrganizeNamingSettings();
+  const naming = await loadOrganizeNamingSettings({
+    syncLidarr: true
+  });
   const namingSchemeKey = organizeNamingSettingsKey(naming);
   const existingIndex = await readCurrentNavidromeLibraryIndex();
   const reusableIndex =
@@ -852,7 +862,9 @@ export async function upsertNavidromeLibraryIndexTrack(filePath: string) {
 export async function matchNavidromeTracks(tracks: BackupTrack[]) {
   const libraryPath = getNavidromeLibraryPath();
   const index = await readCurrentNavidromeLibraryIndex();
-  const naming = await loadOrganizeNamingSettings();
+  const naming = await loadOrganizeNamingSettings({
+    syncLidarr: true
+  });
 
   return matchNavidromeTracksWithIndexUsingSettings(
     tracks,
@@ -878,7 +890,9 @@ export async function organizeNavidromeMatchedTracks(
   const currentIndex = index
     ? await pruneMissingNavidromeIndexTracks(index, libraryPath)
     : null;
-  const naming = await loadOrganizeNamingSettings();
+  const naming = await loadOrganizeNamingSettings({
+    syncLidarr: true
+  });
 
   if (!currentIndex) {
     throw new Error("Scan the Navidrome library before organizing matched files.");
@@ -1214,7 +1228,9 @@ export async function buildNavidromeTrackFileBase(
   track: BackupTrack,
   matchedTrack?: NavidromeIndexedTrack
 ) {
-  const naming = await loadOrganizeNamingSettings();
+  const naming = await loadOrganizeNamingSettings({
+    syncLidarr: true
+  });
 
   return buildNavidromeTrackFileBaseWithSettings(track, naming, matchedTrack);
 }

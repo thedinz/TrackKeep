@@ -312,6 +312,8 @@ Running Organize before backing up missing files is recommended, but not require
 
 Changing the organize scheme marks the current library index stale. Run Library Index again after switching between SpotifyBU, Lidarr, or manual naming so SpotifyBU can re-check whether matched files are already organized under the newly selected layout.
 
+In Lidarr mode, SpotifyBU keeps the imported naming scheme as a local fallback and also attempts a best-effort refresh from Lidarr when settings, folder plans, library matching, indexing, or organizing need the active scheme. If Lidarr is unreachable, SpotifyBU continues using the last saved Lidarr naming settings. The Settings page still includes `Load from Lidarr` for an immediate manual refresh or credential change.
+
 SpotifyBU's Library Index scan reads the mounted music folder directly. It does
 not need a Navidrome username or password for that local index. If
 `NAVIDROME_USERNAME` and `NAVIDROME_PASSWORD` are set, SpotifyBU also uses
