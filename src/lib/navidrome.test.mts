@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
@@ -57,6 +57,71 @@ test("SpotifyBU recognizes its album-type-free folder layout", async (t) => {
   });
 });
 
+test("Lidarr templates omit the normal album type from folder paths", async (t) => {
+  await withOrganizeSettings(t, lidarrNamingSettings, async () => {
+    const [plan] = await planNavidromeAlbumFolders([exampleTrack]);
+
+    assert.equal(
+      plan.relativePath,
+      "Example Artist/Example Artist - 2026 - Example Record"
+    );
+    assert.equal(plan.albumFolderName.includes(" - Album - "), false);
+  });
+});
+
+test("Lidarr templates keep meaningful album types like EP", async (t) => {
+  await withOrganizeSettings(t, lidarrNamingSettings, async () => {
+    const [plan] = await planNavidromeAlbumFolders([
+      {
+        ...exampleTrack,
+        album: "Example EP",
+        albumId: "album-ep",
+        albumTracksTotal: 5,
+        albumType: "single"
+      }
+    ]);
+
+    assert.equal(
+      plan.relativePath,
+      "Example Artist/Example Artist - EP - 2026 - Example EP"
+    );
+  });
+});
+
+test("Lidarr mode moves existing normal album folders away from the album type", async (t) => {
+  await withOrganizeSettings(t, lidarrNamingSettings, async () => {
+    const matches = await matchNavidromeTracksWithIndex([exampleTrack], {
+      generatedAt: new Date(0).toISOString(),
+      libraryPath: "/music",
+      tracks: [
+        {
+          album: "Example Record",
+          albumArtist: "Example Artist",
+          artist: "Example Artist",
+          artists: ["Example Artist"],
+          fileName: "0101 - Opening.mp3",
+          mtimeMs: 0,
+          relativeDirectory:
+            "Example Artist/Example Artist - Album - 2026 - Example Record",
+          relativePath:
+            "Example Artist/Example Artist - Album - 2026 - Example Record/0101 - Opening.mp3",
+          sizeBytes: 1,
+          source: "tags",
+          title: "Opening"
+        }
+      ],
+      version: 1
+    } satisfies NavidromeLibraryIndex);
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].needsMove, true);
+    assert.equal(
+      matches[0].recommendedRelativePath,
+      "Example Artist/Example Artist - 2026 - Example Record/0101 - Opening.mp3"
+    );
+  });
+});
+
 const exampleTrack = {
   album: "Example Record",
   albumArtist: "Example Artist",
@@ -76,8 +141,33 @@ const exampleTrack = {
   trackNumber: 1
 } satisfies BackupTrack;
 
+const lidarrNamingSettings = {
+  artistFolderFormat: "{Artist CleanName}{ (Artist Disambiguation)}",
+  colonReplacementFormat: 4,
+  lidarr: {
+    apiKey: "saved",
+    baseUrl: "http://lidarr"
+  },
+  mode: "lidarr",
+  multiDiscTrackFormat:
+    "{Artist CleanName} - {Album Type} - {Release Year} - {Album CleanTitle}/{medium:00}{track:00} - {Track CleanTitle}",
+  replaceIllegalCharacters: true,
+  standardTrackFormat:
+    "{Artist CleanName} - {Album Type} - {Release Year} - {Album CleanTitle}/{medium:00}{track:00} - {Track CleanTitle}",
+  updatedAt: new Date(0).toISOString(),
+  version: 1
+};
+
 async function withDefaultOrganizeSettings(
   t: TestContext,
+  run: () => Promise<void>
+) {
+  await withOrganizeSettings(t, null, run);
+}
+
+async function withOrganizeSettings(
+  t: TestContext,
+  settings: Record<string, unknown> | null,
   run: () => Promise<void>
 ) {
   const previousConfigDirectory = process.env.SPOTIFYBU_CONFIG_DIR;
@@ -88,6 +178,14 @@ async function withDefaultOrganizeSettings(
 
   process.env.SPOTIFYBU_CONFIG_DIR = configDirectory;
   delete process.env.NAVIDROME_LIBRARY_PATH;
+
+  if (settings) {
+    await writeFile(
+      path.join(configDirectory, "organize-settings.json"),
+      `${JSON.stringify(settings, null, 2)}\n`,
+      "utf8"
+    );
+  }
 
   t.after(async () => {
     if (typeof previousConfigDirectory === "string") {
