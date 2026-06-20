@@ -10,20 +10,39 @@ import {
 } from "./navidrome.ts";
 import type { BackupTrack } from "./spotify.ts";
 
-test("SpotifyBU default album folder omits the literal album type", async (t) => {
+test("SpotifyBU default album folder includes a known album type", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
     const [plan] = await planNavidromeAlbumFolders([exampleTrack]);
 
     assert.equal(
       plan.relativePath,
-      "Example Artist/Example Artist - 2026 - Example Record"
+      "Example Artist/Example Artist - Album - 2026 - Example Record"
     );
-    assert.equal(plan.albumFolderName, "Example Artist - 2026 - Example Record");
-    assert.equal(plan.albumFolderName.includes(" - Album - "), false);
+    assert.equal(
+      plan.albumFolderName,
+      "Example Artist - Album - 2026 - Example Record"
+    );
   });
 });
 
-test("SpotifyBU recognizes its album-type-free folder layout", async (t) => {
+test("SpotifyBU default album folder omits an unknown album type", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const [plan] = await planNavidromeAlbumFolders([
+      {
+        ...exampleTrack,
+        albumType: undefined
+      }
+    ]);
+
+    assert.equal(
+      plan.relativePath,
+      "Example Artist/Example Artist - 2026 - Example Record"
+    );
+    assert.equal(plan.albumFolderName.includes(" - - "), false);
+  });
+});
+
+test("SpotifyBU recognizes compatible album-type-free folders", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
     const matches = await matchNavidromeTracksWithIndex([exampleTrack], {
       generatedAt: new Date(0).toISOString(),
@@ -88,6 +107,23 @@ test("Lidarr templates keep meaningful album types like EP", async (t) => {
   });
 });
 
+test("Lidarr templates omit an unknown album type cleanly", async (t) => {
+  await withOrganizeSettings(t, lidarrNamingSettings, async () => {
+    const [plan] = await planNavidromeAlbumFolders([
+      {
+        ...exampleTrack,
+        albumType: undefined
+      }
+    ]);
+
+    assert.equal(
+      plan.relativePath,
+      "Example Artist/Example Artist - 2026 - Example Record"
+    );
+    assert.equal(plan.albumFolderName.includes(" - - "), false);
+  });
+});
+
 test("Lidarr mode treats matching album-type folders as organized", async (t) => {
   await withOrganizeSettings(t, lidarrNamingSettings, async () => {
     const matches = await matchNavidromeTracksWithIndex([exampleTrack], {
@@ -120,6 +156,48 @@ test("Lidarr mode treats matching album-type folders as organized", async (t) =>
       "Example Artist/Example Artist - Album - 2026 - Example Record"
     );
     assert.equal(matches[0].recommendedRelativePath, undefined);
+  });
+});
+
+test("Lidarr mode accepts compatible folders when Lidarr has the missing album type", async (t) => {
+  await withOrganizeSettings(t, lidarrNamingSettings, async () => {
+    const matches = await matchNavidromeTracksWithIndex(
+      [
+        {
+          ...exampleTrack,
+          albumType: undefined
+        }
+      ],
+      {
+        generatedAt: new Date(0).toISOString(),
+        libraryPath: "/music",
+        tracks: [
+          {
+            album: "Example Record",
+            albumArtist: "Example Artist",
+            artist: "Example Artist",
+            artists: ["Example Artist"],
+            fileName: "0101 - Opening.mp3",
+            mtimeMs: 0,
+            relativeDirectory:
+              "Example Artist/Example Artist - Album - 2026 - Example Record",
+            relativePath:
+              "Example Artist/Example Artist - Album - 2026 - Example Record/0101 - Opening.mp3",
+            sizeBytes: 1,
+            source: "tags",
+            title: "Opening"
+          }
+        ],
+        version: 1
+      } satisfies NavidromeLibraryIndex
+    );
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].needsMove, false);
+    assert.equal(
+      matches[0].expectedFolder,
+      "Example Artist/Example Artist - Album - 2026 - Example Record"
+    );
   });
 });
 

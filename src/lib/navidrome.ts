@@ -1202,9 +1202,12 @@ function buildLidarrAlbumFolderName(
 ) {
   return [
     artistFolderName,
+    lidarrAlbumType(track),
     releaseYear(track),
     cleanLidarrToken(track.album || "Unknown Album", "Unknown Album")
-  ].join(" - ");
+  ]
+    .filter((part) => part.length > 0)
+    .join(" - ");
 }
 
 export async function buildNavidromeTrackFileBase(
@@ -1493,6 +1496,7 @@ function sanitizeNamingTemplateSegment(
     .replace(/\s+/g, " ")
     .replace(/\.+$/g, "")
     .trim();
+  segment = collapseEmptyNamingTemplateParts(segment);
 
   if (!segment || segment === "." || segment === "..") {
     return "";
@@ -1503,6 +1507,18 @@ function sanitizeNamingTemplateSegment(
   }
 
   return segment.slice(0, 180).trim();
+}
+
+function collapseEmptyNamingTemplateParts(value: string) {
+  let compacted = value;
+  let previous = "";
+
+  while (compacted !== previous) {
+    previous = compacted;
+    compacted = compacted.replace(/\s+-\s*-\s+/g, " - ");
+  }
+
+  return compacted.replace(/^\s*-\s*/, "").replace(/\s*-\s*$/, "").trim();
 }
 
 function replaceLidarrColon(value: string, naming: OrganizeNamingSettings) {
@@ -1562,6 +1578,14 @@ function cleanLidarrToken(value: string, fallback: string) {
 function lidarrAlbumType(track: BackupTrack) {
   const albumType = (track.albumType ?? "").trim().toLowerCase();
 
+  if (!albumType) {
+    return "";
+  }
+
+  if (albumType === "album") {
+    return "Album";
+  }
+
   if (albumType === "compilation") {
     return "Compilation";
   }
@@ -1578,7 +1602,7 @@ function lidarrAlbumType(track: BackupTrack) {
     return "EP";
   }
 
-  return albumType ? titleCaseAlbumType(albumType) : "Album";
+  return titleCaseAlbumType(albumType);
 }
 
 function titleCaseAlbumType(value: string) {
@@ -2476,17 +2500,24 @@ function buildTrackOrganizationPlan(
   naming: OrganizeNamingSettings
 ) {
   const compatibleDirectory =
-    naming.mode === "spotifybu"
+    naming.mode === "spotifybu" || naming.mode === "lidarr"
       ? compatibleExistingLidarrDirectory(track, matchedTrack)
       : null;
   const expectedFolder =
     compatibleDirectory ?? buildNamingAlbumFolderPlan(track, naming).relativePath;
-  const recommendedRelativePath = buildLidarrTrackRelativePath(
+  const renderedRelativePath = buildLidarrTrackRelativePath(
     track,
     naming,
     matchedTrack,
     expectedFolder
   );
+  const recommendedRelativePath =
+    compatibleDirectory && naming.mode === "lidarr"
+      ? path.posix.join(
+          compatibleDirectory,
+          path.posix.basename(renderedRelativePath)
+        )
+      : renderedRelativePath;
 
   return {
     expectedFolder,

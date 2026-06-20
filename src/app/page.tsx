@@ -899,6 +899,12 @@ export default function Home() {
           (!requestedPositions || requestedPositions.has(match.trackPosition))
       ).length;
 
+      if (!initialMoveCount) {
+        latestLibraryMatches = await refreshLibraryMatches(tracks);
+        setLibraryOrganizeMessage("No files need organization.");
+        return;
+      }
+
       while (true) {
         const batchTrackPositions = latestLibraryMatches
           .filter(
@@ -1660,7 +1666,7 @@ export default function Home() {
     }
   }, [downloadTrackOptions, downloadTrackPosition]);
   const canOrganizeLibrary =
-    navidromeReady && tracks.length > 0 && moveNeededCount > 0;
+    navidromeReady && tracks.length > 0 && hasUsableLibraryIndex;
   const organizingTrackPositionSet = new Set(organizingTrackPositions);
   const isAnyOrganizationRunning =
     isOrganizingLibrary || organizingTrackPositions.length > 0;
