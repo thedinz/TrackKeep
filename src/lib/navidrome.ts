@@ -1493,7 +1493,6 @@ function sanitizeNamingTemplateSegment(
     .replace(/\s+/g, " ")
     .replace(/\.+$/g, "")
     .trim();
-  segment = collapseEmptyNamingTemplateParts(segment);
 
   if (!segment || segment === "." || segment === "..") {
     return "";
@@ -1504,18 +1503,6 @@ function sanitizeNamingTemplateSegment(
   }
 
   return segment.slice(0, 180).trim();
-}
-
-function collapseEmptyNamingTemplateParts(value: string) {
-  let compacted = value;
-  let previous = "";
-
-  while (compacted !== previous) {
-    previous = compacted;
-    compacted = compacted.replace(/\s+-\s*-\s+/g, " - ");
-  }
-
-  return compacted.replace(/^\s*-\s*/, "").replace(/\s*-\s*$/, "").trim();
 }
 
 function replaceLidarrColon(value: string, naming: OrganizeNamingSettings) {
@@ -1575,10 +1562,6 @@ function cleanLidarrToken(value: string, fallback: string) {
 function lidarrAlbumType(track: BackupTrack) {
   const albumType = (track.albumType ?? "").trim().toLowerCase();
 
-  if (!albumType || albumType === "album") {
-    return "";
-  }
-
   if (albumType === "compilation") {
     return "Compilation";
   }
@@ -1595,7 +1578,7 @@ function lidarrAlbumType(track: BackupTrack) {
     return "EP";
   }
 
-  return titleCaseAlbumType(albumType);
+  return albumType ? titleCaseAlbumType(albumType) : "Album";
 }
 
 function titleCaseAlbumType(value: string) {
