@@ -300,7 +300,7 @@ Provider downloads stage temporary files under:
 /music/.spotifybu/tmp/provider-downloads
 ```
 
-Finished files are moved into the active organize scheme before the response completes. The default scheme is the SpotifyBU/Lidarr-style `Artist/Artist - Album Type - Release Year - Album/0103 - Track` path. If a download, move, or conversion fails, leftover staging files stay on the mounted music volume rather than the container filesystem. After 10 minutes of provider-download idleness, SpotifyBU removes stale staging files older than 10 minutes old.
+Finished files are moved into the active organize scheme before the response completes. The default scheme is the SpotifyBU-style `Artist/Artist - Release Year - Album/0103 - Track` path. If a download, move, or conversion fails, leftover staging files stay on the mounted music volume rather than the container filesystem. After 10 minutes of provider-download idleness, SpotifyBU removes stale staging files older than 10 minutes old.
 
 Navidrome still needs read access to the same host folder and a scan/watch configuration that sees new files.
 

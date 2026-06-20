@@ -62,10 +62,10 @@ export const defaultOrganizeNamingSettings = {
   },
   mode: "spotifybu",
   multiDiscTrackFormat:
-    "{Album Artist Name} - {Album Type} - {Release Year} - {Album Title}/{medium:00}{track:00} - {Track Title}",
+    "{Album Artist Name} - {Release Year} - {Album Title}/{medium:00}{track:00} - {Track Title}",
   replaceIllegalCharacters: true,
   standardTrackFormat:
-    "{Album Artist Name} - {Album Type} - {Release Year} - {Album Title}/{medium:00}{track:00} - {Track Title}"
+    "{Album Artist Name} - {Release Year} - {Album Title}/{medium:00}{track:00} - {Track Title}"
 } satisfies OrganizeNamingSettings;
 
 export async function loadOrganizeNamingSettings() {
