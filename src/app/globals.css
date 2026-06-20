@@ -1193,7 +1193,7 @@ button.folder-plan-status.organize:hover:not(:disabled) {
 }
 
 .provider-row.with-action {
-  grid-template-columns: 34px minmax(0, 1fr) auto;
+  grid-template-columns: 34px minmax(0, 1fr);
 }
 
 .icon-command.compact {
@@ -1202,10 +1202,20 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   padding: 0;
 }
 
+.index-row {
+  align-items: flex-start;
+}
+
 .index-command {
+  justify-self: start;
+  margin-top: 10px;
   min-height: 38px;
   padding: 8px 10px;
   white-space: nowrap;
+}
+
+.provider-content {
+  min-width: 0;
 }
 
 .provider-icon {

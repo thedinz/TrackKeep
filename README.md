@@ -4,7 +4,7 @@ SpotifyBU is a Docker-first web app for turning a Spotify library into a local, 
 
 The point is not to replace Navidrome search. Navidrome already tells you what is in Navidrome. SpotifyBU uses Spotify as the source-of-truth list, uses Navidrome matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
 
-Current stable release: `1.3.0`. It includes the web UI, local or external-proxy app auth, Spotify OAuth, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, Navidrome library checks, Lidarr-compatible folder planning, library indexing, matched-file organization, Navidrome playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
+Current stable release: `1.4.0`. It includes the web UI, local or external-proxy app auth, Spotify OAuth, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, Navidrome library checks, configurable SpotifyBU/Lidarr/manual organize schemes, library indexing, matched-file organization, Navidrome playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
 Download the latest stable release from GitHub: https://github.com/thedinz/SpotifyBU/releases/latest
 
@@ -16,6 +16,7 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - Local SpotifyBU login with default `admin/admin` credentials
 - Settings page for switching between internal login and external reverse-proxy auth
 - Settings page for changing the SpotifyBU app username and password
+- Settings page for matching SpotifyBU, Lidarr, or manual organize schemes
 - Playlist listing with private and collaborative playlist scopes
 - Playlist rail badges for fully backed-up playlists and changed playlists with unbacked-up track counts
 - SQLite-backed playlist metadata backup snapshots saved under the SpotifyBU config directory
@@ -57,14 +58,14 @@ The test image built from the `dev` branch is:
 ghcr.io/thedinz/spotifybu:dev
 ```
 
-Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.3.0-dev.1`; stable releases use normal version tags such as `1.3.0`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
+Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.4.0-dev.1`; stable releases use normal version tags such as `1.4.0`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
 
-For the exact v1.3.0 release, pin one of these tags:
+For the exact v1.4.0 release, pin one of these tags:
 
 ```text
-ghcr.io/thedinz/spotifybu:v1.3.0
-ghcr.io/thedinz/spotifybu:1.3.0
-ghcr.io/thedinz/spotifybu:1.3
+ghcr.io/thedinz/spotifybu:v1.4.0
+ghcr.io/thedinz/spotifybu:1.4.0
+ghcr.io/thedinz/spotifybu:1.4
 ```
 
 Create a folder for SpotifyBU and save this Compose template as `docker-compose.yml`:

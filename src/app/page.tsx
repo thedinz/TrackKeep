@@ -3380,7 +3380,7 @@ export default function Home() {
                   </span>
                 </div>
               ) : null}
-              <div className="provider-row with-action">
+              <div className="provider-row with-action index-row">
                 <span
                   className={`provider-icon ${
                     libraryIndex?.trackCount ? "green" : "teal"
@@ -3388,7 +3388,7 @@ export default function Home() {
                 >
                   <HardDrive size={18} />
                 </span>
-                <span>
+                <span className="provider-content">
                   <h3>Library index</h3>
                   <p>{libraryIndexLabel}</p>
                   {libraryIndexScanLabel ? <p>{libraryIndexScanLabel}</p> : null}
@@ -3403,20 +3403,20 @@ export default function Home() {
                         .join("; ")}
                     </p>
                   ) : null}
+                  <button
+                    className="icon-command index-command"
+                    disabled={!navidromeReady || isScanningLibrary}
+                    onClick={() => void scanNavidromeLibrary()}
+                    title="Run Library Index"
+                    type="button"
+                  >
+                    <RefreshCw
+                      className={isScanningLibrary ? "spin" : undefined}
+                      size={18}
+                    />
+                    Run Index
+                  </button>
                 </span>
-                <button
-                  className="icon-command index-command"
-                  disabled={!navidromeReady || isScanningLibrary}
-                  onClick={() => void scanNavidromeLibrary()}
-                  title="Run Library Index"
-                  type="button"
-                >
-                  <RefreshCw
-                    className={isScanningLibrary ? "spin" : undefined}
-                    size={18}
-                  />
-                  Run Index
-                </button>
               </div>
               <div className="provider-warning">
                 <span className="provider-icon amber">
