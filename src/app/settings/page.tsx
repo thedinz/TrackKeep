@@ -48,10 +48,10 @@ const defaultOrganizeNamingTemplates = {
   artistFolderFormat: "{Album Artist Name}",
   colonReplacementFormat: 4,
   multiDiscTrackFormat:
-    "{Album Artist Name} - {Album Type} - {Release Year} - {Album Title}/{medium:00}{track:00} - {Track Title}",
+    "{Album Artist Name} - {Release Year} - {Album Title}/{medium:00}{track:00} - {Track Title}",
   replaceIllegalCharacters: true,
   standardTrackFormat:
-    "{Album Artist Name} - {Album Type} - {Release Year} - {Album Title}/{medium:00}{track:00} - {Track Title}"
+    "{Album Artist Name} - {Release Year} - {Album Title}/{medium:00}{track:00} - {Track Title}"
 };
 
 const namingModes: Array<{ id: NamingMode; label: string }> = [
@@ -587,7 +587,7 @@ export default function SettingsPage() {
                     <CheckCircle2 size={18} />
                     <span>
                       Uses the current SpotifyBU default:
-                      Artist / Artist - Album Type - Release Year - Album /
+                      Artist / Artist - Release Year - Album /
                       0103 - Track.
                     </span>
                   </div>

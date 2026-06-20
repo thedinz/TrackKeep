@@ -9,7 +9,7 @@ import {
   loadOrganizeNamingSettings,
   organizeNamingSettingsKey,
   type OrganizeNamingSettings
-} from "./organize-settings";
+} from "./organize-settings.ts";
 import type { BackupTrack, PlaylistSummary } from "./spotify";
 
 export type NavidromeLibraryState =
@@ -1202,7 +1202,6 @@ function buildLidarrAlbumFolderName(
 ) {
   return [
     artistFolderName,
-    lidarrAlbumType(track),
     releaseYear(track),
     cleanLidarrToken(track.album || "Unknown Album", "Unknown Album")
   ].join(" - ");
@@ -1633,7 +1632,7 @@ function parseLidarrAlbumDirectory(
   }
 
   const fallbackMatch = albumFolderName.match(
-    /^(?<artist>.+?) - (?<albumType>.+?) - (?<releaseYear>\d{4}|Unknown Year) - (?<album>.+)$/
+    /^(?<artist>.+?) - (?:(?<albumType>.+?) - )?(?<releaseYear>\d{4}|Unknown Year) - (?<album>.+)$/
   );
 
   if (!fallbackMatch?.groups) {
@@ -1643,7 +1642,7 @@ function parseLidarrAlbumDirectory(
   return {
     album: fallbackMatch.groups.album,
     albumKey: lidarrTokenKey(fallbackMatch.groups.album),
-    albumType: fallbackMatch.groups.albumType,
+    albumType: fallbackMatch.groups.albumType ?? "",
     artist: fallbackMatch.groups.artist,
     artistKey: lidarrTokenKey(fallbackMatch.groups.artist),
     releaseYear: fallbackMatch.groups.releaseYear
@@ -1654,24 +1653,19 @@ function parseLidarrAlbumFolderRemainder(
   artistFolderName: string,
   remainder: string
 ) {
-  const firstSeparatorIndex = remainder.indexOf(" - ");
+  const parts = remainder.split(" - ");
 
-  if (firstSeparatorIndex < 0) {
+  if (parts.length < 2) {
     return null;
   }
 
-  const albumType = remainder.slice(0, firstSeparatorIndex);
-  const yearAndAlbum = remainder.slice(firstSeparatorIndex + 3);
-  const secondSeparatorIndex = yearAndAlbum.indexOf(" - ");
+  const hasAlbumType = !isLidarrReleaseYear(parts[0]);
+  const albumType = hasAlbumType ? parts[0] : "";
+  const releaseYear = hasAlbumType ? parts[1] : parts[0];
+  const albumParts = parts.slice(hasAlbumType ? 2 : 1);
+  const album = albumParts.join(" - ");
 
-  if (secondSeparatorIndex < 0) {
-    return null;
-  }
-
-  const releaseYear = yearAndAlbum.slice(0, secondSeparatorIndex);
-  const album = yearAndAlbum.slice(secondSeparatorIndex + 3);
-
-  if (!/^(?:\d{4}|Unknown Year)$/.test(releaseYear) || !album) {
+  if (!isLidarrReleaseYear(releaseYear) || !album) {
     return null;
   }
 
@@ -1683,6 +1677,10 @@ function parseLidarrAlbumFolderRemainder(
     artistKey: lidarrTokenKey(artistFolderName),
     releaseYear
   };
+}
+
+function isLidarrReleaseYear(value: string) {
+  return /^(?:\d{4}|Unknown Year)$/.test(value);
 }
 
 function lidarrTokenKey(value: string) {
