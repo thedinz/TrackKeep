@@ -1,14 +1,13 @@
 # SpotifyBU 1.4.0
 
-SpotifyBU 1.4.0 adds configurable organize schemes so SpotifyBU, NaviClean,
-and Lidarr can agree on library layout.
+SpotifyBU 1.4.0 adds configurable organize schemes so SpotifyBU and NaviClean
+can agree on library layout.
 
 ## Added
 
-- Settings now includes an Organize Scheme section with SpotifyBU default,
-  Lidarr, and manual naming modes.
-- Lidarr mode can test a Lidarr URL/API key and load naming formats from
-  `/api/v1/config/naming`.
+- Settings now includes an Organize Scheme section with standard and manual
+  naming modes.
+- Standard mode uses the shared clean artist/album/year layout by default.
 - Manual mode supports editable artist, standard-track, and multi-disc track
   templates.
 

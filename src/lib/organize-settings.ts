@@ -1,85 +1,39 @@
 import { mkdir, readFile, rename, writeFile } from "fs/promises";
 import path from "path";
 
-export type OrganizeNamingMode = "manual" | "lidarr" | "spotifybu";
+export type OrganizeNamingMode = "standard" | "manual";
 
 export type OrganizeNamingSettings = {
   artistFolderFormat: string;
   colonReplacementFormat: number;
-  lidarr: {
-    apiKey: string;
-    baseUrl: string;
-  };
   mode: OrganizeNamingMode;
   multiDiscTrackFormat: string;
   replaceIllegalCharacters: boolean;
   standardTrackFormat: string;
 };
 
-export type OrganizeNamingSettingsView = Omit<
-  OrganizeNamingSettings,
-  "lidarr"
-> & {
-  lidarr: {
-    apiKeySet: boolean;
-    baseUrl: string;
-  };
-};
+export type OrganizeNamingSettingsView = OrganizeNamingSettings;
 
-export type OrganizeNamingSettingsUpdate = Partial<
-  Omit<OrganizeNamingSettings, "lidarr">
-> & {
-  lidarr?: {
-    apiKey?: string;
-    baseUrl?: string;
-  };
-};
-
-export type LidarrNamingConfig = Pick<
-  OrganizeNamingSettings,
-  | "artistFolderFormat"
-  | "colonReplacementFormat"
-  | "multiDiscTrackFormat"
-  | "replaceIllegalCharacters"
-  | "standardTrackFormat"
->;
+export type OrganizeNamingSettingsUpdate = Partial<OrganizeNamingSettings>;
 
 type StoredOrganizeNamingSettings = OrganizeNamingSettings & {
   updatedAt: string;
   version: 1;
 };
 
-type LidarrNamingResponse = Partial<LidarrNamingConfig> & {
-  renameTracks?: boolean;
-};
-
-type LoadOrganizeNamingSettingsOptions = {
-  syncLidarr?: boolean;
-};
-
 export const defaultOrganizeNamingSettings = {
   artistFolderFormat: "{Album Artist Name}",
   colonReplacementFormat: 4,
-  lidarr: {
-    apiKey: "",
-    baseUrl: ""
-  },
-  mode: "spotifybu",
+  mode: "standard",
   multiDiscTrackFormat:
-    "{Album Artist Name} - {Album Type} - {Release Year} - {Album Title}/{medium:00}{track:00} - {Track Title}",
+    "{Album Artist Name} - {Album Title} ({Release Year})/{Album Artist Name} - {Album Title} ({Release Year}) - {medium:00}-{track:00} - {Track Title}",
   replaceIllegalCharacters: true,
   standardTrackFormat:
-    "{Album Artist Name} - {Album Type} - {Release Year} - {Album Title}/{medium:00}{track:00} - {Track Title}"
+    "{Album Artist Name} - {Album Title} ({Release Year})/{Album Artist Name} - {Album Title} ({Release Year}) - {track:00} - {Track Title}"
 } satisfies OrganizeNamingSettings;
 
-export async function loadOrganizeNamingSettings(
-  options: LoadOrganizeNamingSettingsOptions = {}
-) {
-  const settings = await loadStoredOrganizeNamingSettings();
-
-  return options.syncLidarr
-    ? await syncLidarrNamingSettingsIfAvailable(settings)
-    : settings;
+export async function loadOrganizeNamingSettings() {
+  return loadStoredOrganizeNamingSettings();
 }
 
 async function loadStoredOrganizeNamingSettings() {
@@ -100,59 +54,11 @@ async function loadStoredOrganizeNamingSettings() {
   }
 }
 
-async function syncLidarrNamingSettingsIfAvailable(
-  settings: OrganizeNamingSettings
-) {
-  if (
-    settings.mode !== "lidarr" ||
-    !settings.lidarr.apiKey ||
-    !settings.lidarr.baseUrl
-  ) {
-    return settings;
-  }
-
-  try {
-    const naming = await fetchLidarrNamingConfig(settings);
-    const next = normalizeOrganizeNamingSettings(settings, {
-      ...naming,
-      mode: "lidarr"
-    });
-
-    if (organizeNamingSettingsKey(next) !== organizeNamingSettingsKey(settings)) {
-      await saveOrganizeNamingSettings(next);
-    }
-
-    return next;
-  } catch {
-    return settings;
-  }
-}
-
 export async function updateOrganizeNamingSettings(
   update: OrganizeNamingSettingsUpdate
 ) {
   const current = await loadOrganizeNamingSettings();
   const next = normalizeOrganizeNamingSettings(current, update);
-
-  await saveOrganizeNamingSettings(next);
-
-  return next;
-}
-
-export async function syncLidarrNamingSettings(override?: {
-  apiKey?: string;
-  baseUrl?: string;
-}) {
-  const current = await loadOrganizeNamingSettings();
-  const naming = await fetchLidarrNamingConfig(current, override);
-  const next = normalizeOrganizeNamingSettings(current, {
-    ...naming,
-    lidarr: {
-      apiKey: override?.apiKey,
-      baseUrl: override?.baseUrl
-    },
-    mode: "lidarr"
-  });
 
   await saveOrganizeNamingSettings(next);
 
@@ -165,10 +71,6 @@ export function toOrganizeNamingSettingsView(
   return {
     artistFolderFormat: settings.artistFolderFormat,
     colonReplacementFormat: settings.colonReplacementFormat,
-    lidarr: {
-      apiKeySet: settings.lidarr.apiKey.length > 0,
-      baseUrl: settings.lidarr.baseUrl
-    },
     mode: settings.mode,
     multiDiscTrackFormat: settings.multiDiscTrackFormat,
     replaceIllegalCharacters: settings.replaceIllegalCharacters,
@@ -185,73 +87,6 @@ export function organizeNamingSettingsKey(settings: OrganizeNamingSettings) {
     replaceIllegalCharacters: settings.replaceIllegalCharacters,
     standardTrackFormat: settings.standardTrackFormat
   });
-}
-
-export async function fetchLidarrNamingConfig(
-  settings: OrganizeNamingSettings,
-  override?: {
-    apiKey?: string;
-    baseUrl?: string;
-  }
-) {
-  const baseUrl = trimTrailingSlash(override?.baseUrl || settings.lidarr.baseUrl);
-  const apiKey = override?.apiKey || settings.lidarr.apiKey;
-
-  if (!baseUrl || !apiKey) {
-    throw new Error("Lidarr URL and API key are required.");
-  }
-
-  const response = await fetch(new URL("api/v1/config/naming", `${baseUrl}/`), {
-    headers: {
-      "X-Api-Key": apiKey,
-      accept: "application/json"
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status} from Lidarr.`);
-  }
-
-  const body = (await response.json()) as LidarrNamingResponse;
-
-  if (
-    !body.artistFolderFormat ||
-    !body.standardTrackFormat ||
-    !body.multiDiscTrackFormat
-  ) {
-    throw new Error("Lidarr did not return complete naming formats.");
-  }
-
-  return {
-    artistFolderFormat: body.artistFolderFormat,
-    colonReplacementFormat: normalizeColonReplacementFormat(
-      body.colonReplacementFormat,
-      defaultOrganizeNamingSettings.colonReplacementFormat
-    ),
-    multiDiscTrackFormat: body.multiDiscTrackFormat,
-    replaceIllegalCharacters: body.replaceIllegalCharacters ?? true,
-    standardTrackFormat: body.standardTrackFormat
-  } satisfies LidarrNamingConfig;
-}
-
-export async function testLidarrNamingConnection(override?: {
-  apiKey?: string;
-  baseUrl?: string;
-}) {
-  try {
-    const current = await loadOrganizeNamingSettings();
-    const naming = await fetchLidarrNamingConfig(current, override);
-
-    return {
-      message: `Loaded Lidarr naming config: ${naming.artistFolderFormat}`,
-      ok: true
-    };
-  } catch (error) {
-    return {
-      message: error instanceof Error ? error.message : "Could not reach Lidarr.",
-      ok: false
-    };
-  }
 }
 
 async function saveOrganizeNamingSettings(settings: OrganizeNamingSettings) {
@@ -283,14 +118,10 @@ function normalizeOrganizeNamingSettings(
       partial.colonReplacementFormat,
       fallback.colonReplacementFormat
     ),
-    lidarr: {
-      ...fallback.lidarr,
-      ...compactStringValues(partial.lidarr ?? {})
-    },
     mode
   } satisfies OrganizeNamingSettings;
 
-  if (mode === "spotifybu") {
+  if (mode === "standard") {
     return {
       ...merged,
       artistFolderFormat: defaultOrganizeNamingSettings.artistFolderFormat,
@@ -310,9 +141,19 @@ function normalizeNamingMode(
   value: unknown,
   fallback: OrganizeNamingMode
 ): OrganizeNamingMode {
-  return value === "manual" || value === "lidarr" || value === "spotifybu"
-    ? value
-    : fallback;
+  if (value === "standard" || value === "manual") {
+    return value;
+  }
+
+  if (value === "spotifybu") {
+    return "standard";
+  }
+
+  if (value === "lidarr") {
+    return "manual";
+  }
+
+  return fallback;
 }
 
 function normalizeColonReplacementFormat(value: unknown, fallback: number) {
@@ -333,10 +174,6 @@ function compactStringValues<T extends Record<string, unknown>>(values: T) {
       return value.trim().length > 0;
     })
   ) as Partial<T>;
-}
-
-function trimTrailingSlash(value: string) {
-  return value.trim().replace(/\/+$/, "");
 }
 
 function getOrganizeSettingsPath() {

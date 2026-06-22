@@ -55,7 +55,7 @@ Useful references:
 - Providers must declare whether they can search, download, tag, and report provenance.
 - Providers must declare their authorization model before any download action is enabled.
 - Providers must stage files only through the Navidrome target helper, never by accepting arbitrary output paths.
-- Download workers must record successful writes with `recordNavidromeAlbumFolders` so later tracks from the same album use the same Lidarr-style artist/album folder.
+- Download workers must record successful writes with `recordNavidromeAlbumFolders` so later tracks from the same album use the same active artist/album folder.
 - Providers should preserve provenance in a sidecar or database record: source name, source URL, candidate score, selected reason, and user confirmation.
 - Provider downloads should run as background jobs with retry, cancellation, and a dry-run preview.
 - External providers must show a rights confirmation and a bulk-download warning before the first download job.

@@ -2558,7 +2558,7 @@ export default function Home() {
                   }`}
                   disabled={!canOrganizeLibrary || isAnyOrganizationRunning}
                   onClick={() => void organizeLibraryMatches()}
-                  title="Move matched files into Lidarr-style folders"
+                  title="Move matched files into organized album folders"
                   type="button"
                 >
                   {isOrganizingLibrary ? (
