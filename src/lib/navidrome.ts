@@ -1579,6 +1579,28 @@ function parseStructuredAlbumDirectory(
     }
   }
 
+  const fallbackStandardMatch = albumFolderName.match(
+    /^(?<artist>.+?) - (?<album>.+?)\s+\((?<releaseYear>\d{4}|Unknown Year)\)$/
+  );
+
+  if (
+    fallbackStandardMatch?.groups &&
+    structuredArtistMatches(
+      fallbackStandardMatch.groups.artist,
+      parentArtistFolderName,
+      track
+    )
+  ) {
+    return {
+      album: fallbackStandardMatch.groups.album,
+      albumKey: pathTokenKey(fallbackStandardMatch.groups.album),
+      albumType: "",
+      artist: fallbackStandardMatch.groups.artist,
+      artistKey: pathTokenKey(fallbackStandardMatch.groups.artist),
+      releaseYear: fallbackStandardMatch.groups.releaseYear
+    };
+  }
+
   const fallbackMatch = albumFolderName.match(
     /^(?<artist>.+?) - (?:(?<albumType>.+?) - )?(?<releaseYear>\d{4}|Unknown Year) - (?<album>.+)$/
   );
@@ -1595,6 +1617,22 @@ function parseStructuredAlbumDirectory(
     artistKey: pathTokenKey(fallbackMatch.groups.artist),
     releaseYear: fallbackMatch.groups.releaseYear
   };
+}
+
+function structuredArtistMatches(
+  artist: string,
+  parentArtistFolderName: string,
+  track?: BackupTrack
+) {
+  const artistKey = pathTokenKey(artist);
+  const expectedArtistKeys = [
+    track?.albumArtist,
+    parentArtistFolderName
+  ]
+    .filter((value): value is string => Boolean(value))
+    .map(pathTokenKey);
+
+  return expectedArtistKeys.includes(artistKey);
 }
 
 function parseStructuredAlbumFolderRemainder(

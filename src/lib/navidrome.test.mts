@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
 import {
   matchNavidromeTracksWithIndex,
   planNavidromeAlbumFolders,
+  readCurrentNavidromeLibraryIndex,
+  scanNavidromeLibraryIndex,
   type NavidromeLibraryIndex
 } from "./navidrome.ts";
 import type { BackupTrack } from "./spotify.ts";
@@ -72,6 +74,45 @@ test("standard matching accepts compatible folders with a different release year
       matches[0].expectedFolder,
       "Example Artist/Example Artist - Example Record (2025)"
     );
+  });
+});
+
+test("library index parses standard folders when parent artist stripped trailing punctuation", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const libraryPath = await mkdtemp(
+      path.join(tmpdir(), "spotifybu-library-")
+    );
+    const previousLibraryPath = process.env.NAVIDROME_LIBRARY_PATH;
+    const relativePath =
+      "Journey Worship Co/Journey Worship Co. - Come to the Lord (2021)/Journey Worship Co. - Come to the Lord (2021) - 01 - Come to the Lord.mp3";
+    const filePath = path.join(libraryPath, ...relativePath.split("/"));
+
+    process.env.NAVIDROME_LIBRARY_PATH = libraryPath;
+    t.after(async () => {
+      if (typeof previousLibraryPath === "string") {
+        process.env.NAVIDROME_LIBRARY_PATH = previousLibraryPath;
+      } else {
+        delete process.env.NAVIDROME_LIBRARY_PATH;
+      }
+
+      await rm(libraryPath, {
+        force: true,
+        recursive: true
+      });
+    });
+
+    await mkdir(path.dirname(filePath), {
+      recursive: true
+    });
+    await writeFile(filePath, "not real audio", "utf8");
+
+    await scanNavidromeLibraryIndex();
+    const index = await readCurrentNavidromeLibraryIndex();
+    const track = index?.tracks[0];
+
+    assert.equal(index?.tracks.length, 1);
+    assert.equal(track?.albumArtist, "Journey Worship Co.");
+    assert.equal(track?.album, "Come to the Lord");
   });
 });
 
