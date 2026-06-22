@@ -1,13 +1,11 @@
 "use client";
 
 import {
-  Activity,
   ArrowLeft,
   CheckCircle2,
   LockKeyhole,
   RefreshCw,
   Save,
-  Server,
   SlidersHorizontal
 } from "lucide-react";
 import type { FormEvent } from "react";
@@ -20,15 +18,11 @@ type AppAuthStatus = {
   username?: string;
 };
 
-type NamingMode = "manual" | "lidarr" | "spotifybu";
+type NamingMode = "standard" | "manual";
 
 type OrganizeNamingSettings = {
   artistFolderFormat: string;
   colonReplacementFormat: number;
-  lidarr: {
-    apiKeySet: boolean;
-    baseUrl: string;
-  };
   mode: NamingMode;
   multiDiscTrackFormat: string;
   replaceIllegalCharacters: boolean;
@@ -39,24 +33,18 @@ type OrganizeSettingsResponse = {
   naming: OrganizeNamingSettings;
 };
 
-type LidarrTestResponse = {
-  message: string;
-  ok: boolean;
-};
-
 const defaultOrganizeNamingTemplates = {
   artistFolderFormat: "{Album Artist Name}",
   colonReplacementFormat: 4,
   multiDiscTrackFormat:
-    "{Album Artist Name} - {Album Type} - {Release Year} - {Album Title}/{medium:00}{track:00} - {Track Title}",
+    "{Album Artist Name} - {Album Title} ({Release Year})/{Album Artist Name} - {Album Title} ({Release Year}) - {medium:00}-{track:00} - {Track Title}",
   replaceIllegalCharacters: true,
   standardTrackFormat:
-    "{Album Artist Name} - {Album Type} - {Release Year} - {Album Title}/{medium:00}{track:00} - {Track Title}"
+    "{Album Artist Name} - {Album Title} ({Release Year})/{Album Artist Name} - {Album Title} ({Release Year}) - {track:00} - {Track Title}"
 };
 
 const namingModes: Array<{ id: NamingMode; label: string }> = [
-  { id: "spotifybu", label: "SpotifyBU" },
-  { id: "lidarr", label: "Lidarr" },
+  { id: "standard", label: "Standard" },
   { id: "manual", label: "Manual" }
 ];
 
@@ -74,9 +62,6 @@ export default function SettingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingAuthMode, setIsSavingAuthMode] = useState(false);
   const [isSavingNaming, setIsSavingNaming] = useState(false);
-  const [isTestingLidarr, setIsTestingLidarr] = useState(false);
-  const [lidarrApiKey, setLidarrApiKey] = useState("");
-  const [lidarrMessage, setLidarrMessage] = useState<string | null>(null);
   const [namingSettings, setNamingSettings] =
     useState<OrganizeNamingSettings | null>(null);
   const [newPassword, setNewPassword] = useState("");
@@ -220,30 +205,13 @@ export default function SettingsPage() {
     []
   );
 
-  const updateLidarrSettings = useCallback(
-    (update: Partial<OrganizeNamingSettings["lidarr"]>) => {
-      setNamingSettings((current) =>
-        current
-          ? {
-              ...current,
-              lidarr: {
-                ...current.lidarr,
-                ...update
-              }
-            }
-          : current
-      );
-    },
-    []
-  );
-
   const changeNamingMode = useCallback((mode: NamingMode) => {
     setNamingSettings((current) => {
       if (!current) {
         return current;
       }
 
-      if (mode === "spotifybu") {
+      if (mode === "standard") {
         return {
           ...current,
           ...defaultOrganizeNamingTemplates,
@@ -256,82 +224,9 @@ export default function SettingsPage() {
         mode
       };
     });
-    setLidarrMessage(null);
     setSuccess(null);
     setError(null);
   }, []);
-
-  const loadLidarrNaming = useCallback(async () => {
-    if (!namingSettings) {
-      return;
-    }
-
-    setError(null);
-    setSuccess(null);
-    setLidarrMessage(null);
-    setIsTestingLidarr(true);
-
-    try {
-      const response = await fetch("/api/lidarr/naming/sync", {
-        body: JSON.stringify({
-          apiKey: lidarrApiKey,
-          baseUrl: namingSettings.lidarr.baseUrl
-        }),
-        headers: {
-          "Content-Type": "application/json"
-        },
-        method: "POST"
-      });
-      const body = await readJson<OrganizeSettingsResponse>(response);
-
-      setNamingSettings(body.naming);
-      setLidarrApiKey("");
-      setSuccess("Loaded Lidarr organize scheme.");
-    } catch (settingsError) {
-      setError(
-        settingsError instanceof Error
-          ? settingsError.message
-          : "Could not load Lidarr naming."
-      );
-    } finally {
-      setIsTestingLidarr(false);
-    }
-  }, [lidarrApiKey, namingSettings]);
-
-  const testLidarr = useCallback(async () => {
-    if (!namingSettings) {
-      return;
-    }
-
-    setError(null);
-    setSuccess(null);
-    setLidarrMessage(null);
-    setIsTestingLidarr(true);
-
-    try {
-      const response = await fetch("/api/lidarr/test", {
-        body: JSON.stringify({
-          apiKey: lidarrApiKey,
-          baseUrl: namingSettings.lidarr.baseUrl
-        }),
-        headers: {
-          "Content-Type": "application/json"
-        },
-        method: "POST"
-      });
-      const body = await readJson<LidarrTestResponse>(response);
-
-      setLidarrMessage(body.message);
-    } catch (settingsError) {
-      setError(
-        settingsError instanceof Error
-          ? settingsError.message
-          : "Could not test Lidarr."
-      );
-    } finally {
-      setIsTestingLidarr(false);
-    }
-  }, [lidarrApiKey, namingSettings]);
 
   const submitNamingSettings = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
@@ -343,7 +238,6 @@ export default function SettingsPage() {
 
       setError(null);
       setSuccess(null);
-      setLidarrMessage(null);
       setIsSavingNaming(true);
 
       try {
@@ -352,10 +246,6 @@ export default function SettingsPage() {
             naming: {
               artistFolderFormat: namingSettings.artistFolderFormat,
               colonReplacementFormat: namingSettings.colonReplacementFormat,
-              lidarr: {
-                apiKey: lidarrApiKey,
-                baseUrl: namingSettings.lidarr.baseUrl
-              },
               mode: namingSettings.mode,
               multiDiscTrackFormat: namingSettings.multiDiscTrackFormat,
               replaceIllegalCharacters: namingSettings.replaceIllegalCharacters,
@@ -367,30 +257,10 @@ export default function SettingsPage() {
           },
           method: "POST"
         });
-        let body = await readJson<OrganizeSettingsResponse>(response);
-
-        if (body.naming.mode === "lidarr") {
-          const syncResponse = await fetch("/api/lidarr/naming/sync", {
-            body: JSON.stringify({
-              apiKey: lidarrApiKey,
-              baseUrl: body.naming.lidarr.baseUrl
-            }),
-            headers: {
-              "Content-Type": "application/json"
-            },
-            method: "POST"
-          });
-
-          body = await readJson<OrganizeSettingsResponse>(syncResponse);
-        }
+        const body = await readJson<OrganizeSettingsResponse>(response);
 
         setNamingSettings(body.naming);
-        setLidarrApiKey("");
-        setSuccess(
-          body.naming.mode === "lidarr"
-            ? "Organize scheme saved from Lidarr."
-            : "Organize scheme saved."
-        );
+        setSuccess("Organize scheme saved.");
       } catch (settingsError) {
         setError(
           settingsError instanceof Error
@@ -401,7 +271,7 @@ export default function SettingsPage() {
         setIsSavingNaming(false);
       }
     },
-    [lidarrApiKey, namingSettings]
+    [namingSettings]
   );
 
   const internalAuthEnabled = authMode === "internal";
@@ -555,7 +425,7 @@ export default function SettingsPage() {
               <SlidersHorizontal size={20} />
               <div>
                 <h2>Organize Scheme</h2>
-                <p className="muted">Match SpotifyBU, Lidarr, or a manual layout</p>
+                <p className="muted">Match SpotifyBU and NaviClean with a shared layout</p>
               </div>
             </div>
           </div>
@@ -582,78 +452,13 @@ export default function SettingsPage() {
                   ))}
                 </div>
 
-                {namingSettings.mode === "spotifybu" ? (
+                {namingSettings.mode === "standard" ? (
                   <div className="auth-note">
                     <CheckCircle2 size={18} />
                     <span>
-                      Uses the current SpotifyBU default:
-                      Artist / Artist - Album Type - Release Year - Album /
-                      0103 - Track.
+                      Uses the shared default: Artist / Artist - Album (Year) /
+                      Artist - Album (Year) - 01 - Track Title.
                     </span>
-                  </div>
-                ) : null}
-
-                {namingSettings.mode === "lidarr" ? (
-                  <div className="settings-subsection">
-                    <label className="form-field">
-                      <span className="stat-label">Lidarr URL</span>
-                      <input
-                        onChange={(event) =>
-                          updateLidarrSettings({ baseUrl: event.target.value })
-                        }
-                        placeholder="http://lidarr:8686"
-                        value={namingSettings.lidarr.baseUrl}
-                      />
-                    </label>
-
-                    <label className="form-field">
-                      <span className="stat-label">Lidarr API Key</span>
-                      <input
-                        autoComplete="off"
-                        onChange={(event) => setLidarrApiKey(event.target.value)}
-                        placeholder={
-                          namingSettings.lidarr.apiKeySet ? "Saved" : "API key"
-                        }
-                        type="password"
-                        value={lidarrApiKey}
-                      />
-                    </label>
-
-                    <div className="settings-actions">
-                      <button
-                        className="icon-command"
-                        disabled={isTestingLidarr}
-                        onClick={() => void testLidarr()}
-                        type="button"
-                      >
-                        {isTestingLidarr ? (
-                          <RefreshCw className="spin" size={18} />
-                        ) : (
-                          <Activity size={18} />
-                        )}
-                        Test
-                      </button>
-
-                      <button
-                        className="icon-command"
-                        disabled={isTestingLidarr}
-                        onClick={() => void loadLidarrNaming()}
-                        type="button"
-                      >
-                        <RefreshCw
-                          className={isTestingLidarr ? "spin" : undefined}
-                          size={18}
-                        />
-                        Load from Lidarr
-                      </button>
-                    </div>
-
-                    {lidarrMessage ? (
-                      <div className="auth-note">
-                        <Server size={18} />
-                        <span>{lidarrMessage}</span>
-                      </div>
-                    ) : null}
                   </div>
                 ) : null}
 

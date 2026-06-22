@@ -1,76 +1,46 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
-import { loadOrganizeNamingSettings } from "./organize-settings.ts";
+import {
+  defaultOrganizeNamingSettings,
+  loadOrganizeNamingSettings
+} from "./organize-settings.ts";
 
-test("auto-syncs Lidarr naming when configured", async (t) => {
-  await withStoredSettings(t, storedLidarrSettings, async (configDirectory) => {
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = async () =>
-      ({
-        json: async () => ({
-          artistFolderFormat: "{Artist CleanName}",
-          colonReplacementFormat: 4,
-          multiDiscTrackFormat:
-            "{Artist CleanName} - {Album Type} - {Release Year} - {Album CleanTitle}/{medium:00}{track:00} - {Track CleanTitle}",
-          replaceIllegalCharacters: true,
-          standardTrackFormat:
-            "{Artist CleanName} - {Album Type} - {Release Year} - {Album CleanTitle}/{medium:00}{track:00} - {Track CleanTitle}"
-        }),
-        ok: true,
-        status: 200
-      }) as Response;
+test("uses standard naming by default", async (t) => {
+  await withStoredSettings(t, null, async () => {
+    const settings = await loadOrganizeNamingSettings();
 
-    t.after(() => {
-      globalThis.fetch = previousFetch;
-    });
-
-    const synced = await loadOrganizeNamingSettings({
-      syncLidarr: true
-    });
-    const saved = JSON.parse(
-      await readFile(
-        path.join(configDirectory, "organize-settings.json"),
-        "utf8"
-      )
-    ) as typeof storedLidarrSettings;
-
-    assert.equal(
-      synced.standardTrackFormat,
-      "{Artist CleanName} - {Album Type} - {Release Year} - {Album CleanTitle}/{medium:00}{track:00} - {Track CleanTitle}"
-    );
-    assert.equal(saved.standardTrackFormat, synced.standardTrackFormat);
+    assert.deepEqual(settings, defaultOrganizeNamingSettings);
   });
 });
 
-test("keeps saved Lidarr naming when auto-sync fails", async (t) => {
-  await withStoredSettings(t, storedLidarrSettings, async () => {
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = async () => {
-      throw new Error("Lidarr offline");
-    };
+test("legacy imported naming becomes manual and keeps templates", async (t) => {
+  await withStoredSettings(t, legacyImportedSettings, async () => {
+    const settings = await loadOrganizeNamingSettings();
 
-    t.after(() => {
-      globalThis.fetch = previousFetch;
-    });
-
-    const settings = await loadOrganizeNamingSettings({
-      syncLidarr: true
-    });
-
+    assert.equal(settings.mode, "manual");
     assert.equal(settings.standardTrackFormat, "old/{track:00}");
+    assert.equal(settings.multiDiscTrackFormat, "old/{medium:00}{track:00}");
   });
 });
 
-const storedLidarrSettings = {
+test("legacy default naming becomes standard defaults", async (t) => {
+  await withStoredSettings(t, legacyDefaultSettings, async () => {
+    const settings = await loadOrganizeNamingSettings();
+
+    assert.equal(settings.mode, "standard");
+    assert.equal(
+      settings.standardTrackFormat,
+      defaultOrganizeNamingSettings.standardTrackFormat
+    );
+  });
+});
+
+const legacyImportedSettings = {
   artistFolderFormat: "{Artist CleanName}",
   colonReplacementFormat: 4,
-  lidarr: {
-    apiKey: "abc123",
-    baseUrl: "http://lidarr.local:8686"
-  },
   mode: "lidarr",
   multiDiscTrackFormat: "old/{medium:00}{track:00}",
   replaceIllegalCharacters: true,
@@ -79,9 +49,20 @@ const storedLidarrSettings = {
   version: 1
 };
 
+const legacyDefaultSettings = {
+  artistFolderFormat: "{Album Artist Name}",
+  colonReplacementFormat: 4,
+  mode: "spotifybu",
+  multiDiscTrackFormat: "legacy",
+  replaceIllegalCharacters: true,
+  standardTrackFormat: "legacy",
+  updatedAt: new Date(0).toISOString(),
+  version: 1
+};
+
 async function withStoredSettings(
   t: TestContext,
-  settings: Record<string, unknown>,
+  settings: Record<string, unknown> | null,
   run: (configDirectory: string) => Promise<void>
 ) {
   const previousConfigDirectory = process.env.SPOTIFYBU_CONFIG_DIR;
@@ -90,11 +71,13 @@ async function withStoredSettings(
   );
 
   process.env.SPOTIFYBU_CONFIG_DIR = configDirectory;
-  await writeFile(
-    path.join(configDirectory, "organize-settings.json"),
-    `${JSON.stringify(settings, null, 2)}\n`,
-    "utf8"
-  );
+  if (settings) {
+    await writeFile(
+      path.join(configDirectory, "organize-settings.json"),
+      `${JSON.stringify(settings, null, 2)}\n`,
+      "utf8"
+    );
+  }
 
   t.after(async () => {
     if (typeof previousConfigDirectory === "string") {

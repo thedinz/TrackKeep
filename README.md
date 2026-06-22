@@ -1,10 +1,10 @@
 # SpotifyBU
 
-SpotifyBU is a Docker-first web app for turning a Spotify library into a local, Navidrome-ready backup. It connects to a user's Spotify account, reads playlists, resolves Spotify song/album metadata, checks which songs are already backed up locally, stages missing tracks into Lidarr-compatible Navidrome folders, and exports backup metadata.
+SpotifyBU is a Docker-first web app for turning a Spotify library into a local, Navidrome-ready backup. It connects to a user's Spotify account, reads playlists, resolves Spotify song/album metadata, checks which songs are already backed up locally, stages missing tracks into clean Navidrome album folders, and exports backup metadata.
 
 The point is not to replace Navidrome search. Navidrome already tells you what is in Navidrome. SpotifyBU uses Spotify as the source-of-truth list, uses Navidrome matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
 
-Current stable release: `1.4.0`. It includes the web UI, local or external-proxy app auth, Spotify OAuth, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, Navidrome library checks, configurable SpotifyBU/Lidarr/manual organize schemes, library indexing, matched-file organization, Navidrome playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
+Current stable release: `1.4.0`. It includes the web UI, local or external-proxy app auth, Spotify OAuth, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, Navidrome library checks, standard or manual organize schemes, library indexing, matched-file organization, Navidrome playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
 Download the latest stable release from GitHub: https://github.com/thedinz/SpotifyBU/releases/latest
 
@@ -16,7 +16,7 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - Local SpotifyBU login with default `admin/admin` credentials
 - Settings page for switching between internal login and external reverse-proxy auth
 - Settings page for changing the SpotifyBU app username and password
-- Settings page for matching SpotifyBU, Lidarr, or manual organize schemes
+- Settings page for matching SpotifyBU and NaviClean with standard or manual organize schemes
 - Playlist listing with private and collaborative playlist scopes
 - Playlist rail badges for fully backed-up playlists and changed playlists with unbacked-up track counts
 - SQLite-backed playlist metadata backup snapshots saved under the SpotifyBU config directory
@@ -26,10 +26,10 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - JSON and CSV metadata exports
 - Navidrome library folder status checks
 - Navidrome library indexing for local backup coverage checks
-- Navidrome folder planning using Lidarr-style artist, album, and track paths
+- Navidrome folder planning using clean artist, album, and track paths
 - Backup coverage counts for backed-up and missing Spotify tracks
 - Track backup table with one-click provider search for missing tracks
-- Matched-file organization into Lidarr-compatible Navidrome album folders
+- Matched-file organization into clean Navidrome album folders
 - Replace, append, or full-sync matching Navidrome playlists from backed-up Spotify playlist tracks
 - Skipped-track review after Navidrome playlist sync
 - Stable album-folder logging for staged download jobs
@@ -300,19 +300,17 @@ Provider downloads stage temporary files under:
 /music/.spotifybu/tmp/provider-downloads
 ```
 
-Finished files are moved into the active organize scheme before the response completes. The default scheme is the SpotifyBU/Lidarr-style `Artist/Artist - Album Type - Release Year - Album/0103 - Track` path. If Spotify does not provide the album type, SpotifyBU omits that path segment instead of guessing. If a download, move, or conversion fails, leftover staging files stay on the mounted music volume rather than the container filesystem. After 10 minutes of provider-download idleness, SpotifyBU removes stale staging files older than 10 minutes old.
+Finished files are moved into the active organize scheme before the response completes. The default standard scheme is `Artist/Artist - Album (Year)/Artist - Album (Year) - 01 - Track Title`. Multi-disc albums use `Disc-Track` numbering, for example `02-03`. If a download, move, or conversion fails, leftover staging files stay on the mounted music volume rather than the container filesystem. After 10 minutes of provider-download idleness, SpotifyBU removes stale staging files older than 10 minutes old.
 
 Navidrome still needs read access to the same host folder and a scan/watch configuration that sees new files.
 
 ### Organize Matched Files
 
-After a library scan, the Organize action compares matched local files against the same naming scheme used for new SpotifyBU downloads. The Settings page can keep the current SpotifyBU default, load `artistFolderFormat`, `standardTrackFormat`, `multiDiscTrackFormat`, `replaceIllegalCharacters`, and `colonReplacementFormat` from Lidarr with a URL and API key, or use manual templates. It moves or renames loose files, older SpotifyBU folder layouts, and other matched tracks that are not already in the expected structure. In default SpotifyBU mode, files already inside a compatible Lidarr-shaped artist/album folder for the same release are left alone, so Lidarr should not suddenly see missing albums just because SpotifyBU organized a playlist.
+After a library scan, the Organize action compares matched local files against the same naming scheme used for new SpotifyBU downloads. The Settings page can keep the standard default or use manual templates. It moves or renames loose files, older SpotifyBU folder layouts, and other matched tracks that are not already in the expected structure. In standard mode, files already inside a compatible artist/album/year folder for the same artist, album, track number, and title are left alone even if the year token came from different metadata, keeping SpotifyBU and NaviClean from moving the same files back and forth.
 
 Running Organize before backing up missing files is recommended, but not required. It gives SpotifyBU a clean library view first, can repair older organize runs, and reduces the chance of downloading a track that already exists under a messy path. If you skip it, new provider downloads still stage into the active organize layout.
 
-Changing the organize scheme marks the current library index stale. Run Library Index again after switching between SpotifyBU, Lidarr, or manual naming so SpotifyBU can re-check whether matched files are already organized under the newly selected layout.
-
-In Lidarr mode, SpotifyBU keeps the imported naming scheme as a local fallback and also attempts a best-effort refresh from Lidarr when settings, folder plans, library matching, indexing, or organizing need the active scheme. If Lidarr is unreachable, SpotifyBU continues using the last saved Lidarr naming settings. The Settings page still includes `Load from Lidarr` for an immediate manual refresh or credential change.
+Changing the organize scheme marks the current library index stale. Run Library Index again after switching between standard and manual naming so SpotifyBU can re-check whether matched files are already organized under the newly selected layout.
 
 SpotifyBU's Library Index scan reads the mounted music folder directly. It does
 not need a Navidrome username or password for that local index. If
@@ -425,7 +423,7 @@ docker run --rm -p 3000:3000 \
 - `src/app/api/providers/download/bulk/preview/route.ts` dry-runs provider candidate selection for missing tracks.
 - `src/app/api/providers/download/bulk/route.ts` starts persisted background bulk provider jobs.
 - `src/app/api/providers/download/bulk/[jobId]/route.ts` reports, cancels, and retries bulk provider jobs.
-- `src/app/api/navidrome/library/organize/route.ts` moves or renames matched local files into their planned Lidarr-compatible Navidrome paths in small batches.
+- `src/app/api/navidrome/library/organize/route.ts` moves or renames matched local files into their planned Navidrome album paths in small batches.
 - `src/app/api/spotify/playlists/[playlistId]/navidrome/route.ts` replaces, appends, or full-syncs a matching Navidrome playlist from backed-up Spotify tracks.
 - `src/lib/session.ts` and `src/lib/server-session.ts` own PKCE cookie and Spotify token-session handling.
 - `.github/workflows/docker-image.yml` publishes GHCR images for `dev`, `main`, and `v*` tags. The `dev` branch publishes `dev`; `main` and version tags publish stable tags such as `latest`. The workflow runs `npm run check:yt-dlp` so image builds record the current yt-dlp release channel before publishing.
