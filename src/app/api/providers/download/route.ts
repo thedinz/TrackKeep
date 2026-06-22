@@ -36,6 +36,9 @@ export async function POST(request: NextRequest) {
     const job = startProviderDownloadJob({
       bulkRiskAccepted: Boolean(body.bulkRiskAccepted),
       diagnosticId,
+      fallbackSources: Array.isArray(body.fallbackSources)
+        ? body.fallbackSources
+        : [],
       format: String(body.format ?? ""),
       providerId: String(body.providerId ?? ""),
       quality: String(body.quality ?? ""),

@@ -55,14 +55,14 @@ Useful references:
 - Providers must declare whether they can search, download, tag, and report provenance.
 - Providers must declare their authorization model before any download action is enabled.
 - Providers must stage files only through the Navidrome target helper, never by accepting arbitrary output paths.
-- Download workers must record successful writes with `recordNavidromeAlbumFolders` so later tracks from the same album use the same Lidarr-style artist/album folder.
+- Download workers must record successful writes with `recordNavidromeAlbumFolders` so later tracks from the same album use the same active artist/album folder.
 - Providers should preserve provenance in a sidecar or database record: source name, source URL, candidate score, selected reason, and user confirmation.
 - Provider downloads should run as background jobs with retry, cancellation, and a dry-run preview.
 - External providers must show a rights confirmation and a bulk-download warning before the first download job.
 - Bulk jobs should use conservative rate limits and should make cancellation available at track and playlist scope.
-- The current implemented external download path searches YouTube first, then JioSaavn, for one selected Spotify track or for every missing track in a playlist-scale queue. The user still reviews the candidate and confirms download rights before a single-track download starts.
+- The current implemented external download path searches YouTube first, then JioSaavn, for one selected Spotify track or for every missing track in a playlist-scale queue. The user still reviews the candidate and confirms download rights before a single-track download starts. If a provider source fails with a source-side error such as a YouTube 403, SpotifyBU can retry alternate reviewed or previewed candidates before marking the track as failed.
 - Downloads support MP3 or FLAC output and 128 kbps or 320 kbps quality targets.
-- Bulk queues run sequentially with configurable wait between tracks, chunk size, and chunk pause to reduce provider blocking risk.
+- Bulk queues run sequentially with configurable wait between tracks, chunk size, and chunk pause to reduce provider blocking risk. Defaults are intentionally conservative and can still be overridden by request settings.
 - Provider work stages temporary files under `.spotifybu/tmp/provider-downloads` inside the mounted Navidrome library, then moves completed files into final album folders.
 - If a download, conversion, or move fails, stale staging files are cleaned after 10 minutes of provider-download idleness so unfinished media does not accumulate in the container filesystem.
 - YouTube Music is not active in the automatic flow because it is closed for reliable unauthenticated search.
@@ -87,7 +87,11 @@ The provider catalog lives in `src/lib/providers/types.ts` and is exposed by `/a
 
 SpotifyBU explains that large playlist jobs can trigger throttling, captchas, temporary service blocks, provider account action, regional failures, or service-term issues. The app does not treat this warning as a substitute for authorization; it is a preflight confirmation alongside provider configuration, dry-run candidate review, rate limits, retry controls, cancellation, and provenance logging.
 
-The current routes intentionally block provider playlists with `--no-playlist` and UI copy. Playlist-scale backups are represented as missing Spotify tracks, previewed one item at a time with automatic provider search, and then processed by a persisted background job with conservative throttling, cancellation, retry, and partial-failure reporting. The app checks YouTube first, then JioSaavn, and skips tracks where no candidate can be found.
+The current routes intentionally block provider playlists with `--no-playlist` and UI copy. Playlist-scale backups are represented as missing Spotify tracks, previewed one item at a time with automatic provider search, and then processed by a persisted background job with conservative throttling, cancellation, retry, fallback candidates, and partial-failure reporting. The app checks YouTube first, then JioSaavn, and skips tracks where no candidate can be found.
+
+## yt-dlp Maintenance
+
+SpotifyBU Docker images install `yt-dlp[default]` with prerelease updates enabled so the matching EJS challenge scripts stay current with yt-dlp. When provider or Docker behavior changes, run `npm run check:yt-dlp` and include any needed yt-dlp update or image rebuild work in the same change.
 
 ## First Provider Candidates
 

@@ -81,7 +81,10 @@ function titleSimilarity(
   candidateTitle: string,
   trackAlbum?: string
 ) {
-  const trackTokens = tokenSet(trackTitle);
+  const trackTokenSets = [
+    tokenSet(trackTitle),
+    ...albumQualifiedTitleTokenSets(trackTitle, trackAlbum)
+  ];
   const contextualEditionTokens = albumEditionTokensIn(trackAlbum);
   const contextualTrackTokens = contextualEditionTokens.size
     ? tokenSet(trackTitle, contextualEditionTokens)
@@ -94,7 +97,9 @@ function titleSimilarity(
     : 0;
 
   return Math.max(
-    bestTitleSegmentScore(trackTokens, candidateTitle),
+    ...trackTokenSets.map((trackTokens) =>
+      bestTitleSegmentScore(trackTokens, candidateTitle)
+    ),
     contextualScore
   );
 }
@@ -216,12 +221,16 @@ function countIntersection(leftTokens: Set<string>, rightTokens: Set<string>) {
 }
 
 function titleSegments(value: string) {
-  const segments = value
+  const segments = splitTitleSegments(value);
+
+  return segments.length > 1 ? [...segments, value] : segments;
+}
+
+function splitTitleSegments(value: string) {
+  return value
     .split(/\s+[-\u2013\u2014]\s+|\s*[|\u2022\u00b7]\s*/)
     .map((segment) => segment.trim())
     .filter(Boolean);
-
-  return segments.length > 1 ? [...segments, value] : segments;
 }
 
 function tokenSet(value: string, ignoredTokens = new Set<string>()) {
@@ -243,6 +252,47 @@ function albumEditionTokensIn(value: string | undefined) {
   );
 
   return new Set(matchingTokens);
+}
+
+function albumQualifiedTitleTokenSets(
+  trackTitle: string,
+  trackAlbum: string | undefined
+) {
+  const albumTokens = tokenSet(trackAlbum ?? "", albumEditionTokens);
+
+  if (albumTokens.size < 2) {
+    return [];
+  }
+
+  const segments = splitTitleSegments(trackTitle);
+
+  if (segments.length < 2) {
+    return [];
+  }
+
+  const retainedSegments = segments.filter(
+    (segment) => !isAlbumEquivalentSegment(segment, albumTokens)
+  );
+
+  if (!retainedSegments.length || retainedSegments.length === segments.length) {
+    return [];
+  }
+
+  const retainedTokens = tokenSet(retainedSegments.join(" "));
+  const hasNonEditionToken = [...retainedTokens].some(
+    (token) => !albumEditionTokens.has(token)
+  );
+
+  return hasNonEditionToken ? [retainedTokens] : [];
+}
+
+function isAlbumEquivalentSegment(segment: string, albumTokens: Set<string>) {
+  const segmentTokens = tokenSet(segment, albumEditionTokens);
+
+  return (
+    directionalSimilarity(albumTokens, segmentTokens) >= 90 &&
+    directionalSimilarity(segmentTokens, albumTokens) >= 90
+  );
 }
 
 function normalizeSearchText(value: string) {

@@ -171,6 +171,7 @@ type LibraryMatch = {
 type NavidromeLibraryIndexSummary = {
   generatedAt?: string;
   libraryPath?: string;
+  namingSchemeChanged?: boolean;
   navidromeScan?: NavidromeServerStatus;
   skippedCount?: number;
   skippedExamples?: NavidromeIndexSkip[];
@@ -313,6 +314,14 @@ type ProviderDownloadPayload = {
   sourceUrl: string;
 };
 
+type ProviderDownloadFallbackSource = {
+  candidateScore?: number;
+  candidateTitle?: string;
+  providerId: string;
+  selectedReason?: string;
+  sourceUrl: string;
+};
+
 type ProviderDownloadJobStatus =
   | "completed"
   | "failed"
@@ -412,6 +421,7 @@ type ProviderBulkDownloadJobItem = {
   completedAt?: string;
   download?: ProviderDownloadPayload;
   error?: string;
+  fallbackSources?: ProviderDownloadFallbackSource[];
   providerId: string;
   selectedReason?: string;
   sourceUrl: string;
@@ -563,6 +573,8 @@ export default function Home() {
   const [downloadBulkRiskAccepted, setDownloadBulkRiskAccepted] = useState(false);
   const [providerDownloadMessage, setProviderDownloadMessage] =
     useState<string | null>(null);
+  const [providerDownloadError, setProviderDownloadError] =
+    useState<string | null>(null);
   const [providerDownloadStatusLabel, setProviderDownloadStatusLabel] =
     useState<string | null>(null);
   const [bulkDownloadMessage, setBulkDownloadMessage] = useState<string | null>(
@@ -606,6 +618,7 @@ export default function Home() {
     setBulkCandidatePreview(null);
     setBulkDownloadJob(null);
     setProviderDownloadMessage(null);
+    setProviderDownloadError(null);
     setProviderDownloadStatusLabel(null);
     setProviderCandidates([]);
     setSelectedProviderCandidateId("");
@@ -886,6 +899,12 @@ export default function Home() {
           (!requestedPositions || requestedPositions.has(match.trackPosition))
       ).length;
 
+      if (!initialMoveCount) {
+        latestLibraryMatches = await refreshLibraryMatches(tracks);
+        setLibraryOrganizeMessage("No files need organization.");
+        return;
+      }
+
       while (true) {
         const batchTrackPositions = latestLibraryMatches
           .filter(
@@ -1024,6 +1043,7 @@ export default function Home() {
     setProviderCandidates([]);
     setSelectedProviderCandidateId("");
     setProviderDownloadMessage(null);
+    setProviderDownloadError(null);
     setProviderDownloadStatusLabel(null);
     setRequestError(null);
     setManualProviderSourceUrl("");
@@ -1110,6 +1130,7 @@ export default function Home() {
     setDownloadRightsConfirmed(false);
     setDownloadBulkRiskAccepted(false);
     setProviderDownloadMessage(null);
+    setProviderDownloadError(null);
   }, [isManualProviderSourceOpen]);
 
   const downloadSelectedProviderCandidate = useCallback(async () => {
@@ -1156,6 +1177,7 @@ export default function Home() {
 
     setIsDownloadingProvider(true);
     setProviderDownloadMessage(null);
+    setProviderDownloadError(null);
     setProviderDownloadStatusLabel("Starting download job");
     setRequestError(null);
 
@@ -1164,6 +1186,12 @@ export default function Home() {
         "/api/providers/download",
         {
           bulkRiskAccepted: downloadBulkRiskAccepted,
+          fallbackSources: isManualProviderSourceOpen
+            ? []
+            : buildProviderFallbackSources(
+                providerCandidates,
+                downloadSource.sourceUrl
+              ),
           providerId: downloadSource.providerId,
           quality: downloadQuality,
           rightsConfirmed: downloadRightsConfirmed,
@@ -1194,6 +1222,7 @@ export default function Home() {
       }
 
       setProviderDownloadMessage(downloadMessage);
+      setProviderDownloadError(null);
       setProviderDownloadStatusLabel(null);
       setProviderCandidates([]);
       setSelectedProviderCandidateId("");
@@ -1206,11 +1235,12 @@ export default function Home() {
         setProviderDownloadMessage(
           `${downloadMessage}. SpotifyBU could not refresh the match table automatically (${errorMessage(
             error
-          )}). The file is already in the library folder; run Scan library after the server settles.`
+          )}). The file is already in the library folder; run Library Index after the server settles.`
         );
       }
     } catch (error) {
-      setRequestError(errorMessage(error));
+      setProviderDownloadMessage(null);
+      setProviderDownloadError(errorMessage(error));
     } finally {
       setIsDownloadingProvider(false);
       setProviderDownloadStatusLabel(null);
@@ -1621,6 +1651,7 @@ export default function Home() {
     setDownloadRightsConfirmed(false);
     setDownloadBulkRiskAccepted(false);
     setProviderDownloadMessage(null);
+    setProviderDownloadError(null);
     const currentBulkDownloadJob = bulkDownloadJobRef.current;
 
     if (
@@ -1635,7 +1666,7 @@ export default function Home() {
     }
   }, [downloadTrackOptions, downloadTrackPosition]);
   const canOrganizeLibrary =
-    navidromeReady && tracks.length > 0 && moveNeededCount > 0;
+    navidromeReady && tracks.length > 0 && hasUsableLibraryIndex;
   const organizingTrackPositionSet = new Set(organizingTrackPositions);
   const isAnyOrganizationRunning =
     isOrganizingLibrary || organizingTrackPositions.length > 0;
@@ -1715,6 +1746,7 @@ export default function Home() {
       totalCount: downloadTrackOptions.length
     });
     setProviderDownloadMessage(null);
+    setProviderDownloadError(null);
     setRequestError(null);
 
     try {
@@ -1812,6 +1844,7 @@ export default function Home() {
 
     setIsDownloadingBulkProvider(true);
     setBulkDownloadMessage(null);
+    setBulkDownloadJob(null);
     setBulkDownloadProgress({
       completedCount: 0,
       failedCount: 0,
@@ -1881,6 +1914,7 @@ export default function Home() {
     }
 
     setBulkDownloadMessage(null);
+    setProviderDownloadError(null);
     setRequestError(null);
 
     try {
@@ -1995,7 +2029,7 @@ export default function Home() {
           bulkDownloadJob
         )} SpotifyBU could not refresh the match table automatically (${errorMessage(
           error
-        )}). Run Scan library after the server settles.`
+        )}). Run Library Index after the server settles.`
       );
     });
   }, [bulkDownloadJob, refreshLibraryMatches]);
@@ -2003,22 +2037,28 @@ export default function Home() {
     ? libraryIndex.generatedAt
       ? `${numberFormatter.format(libraryIndex.trackCount)} indexed - scanned ${formatShortDate(
           libraryIndex.generatedAt
-        )}${libraryIndex.stale ? " - rescan needed" : ""}${
+        )}${
+          libraryIndex.namingSchemeChanged
+            ? " - organize scheme changed; index needed"
+            : libraryIndex.stale
+              ? " - index needed"
+              : ""
+        }${
           libraryIndex.skippedCount
             ? ` - ${numberFormatter.format(libraryIndex.skippedCount)} skipped`
             : ""
         }`
-      : "No library scan yet"
+      : "No library index yet"
     : "Checking index";
   const libraryIndexScanLabel =
     libraryIndexScan?.state === "running"
-      ? "Library scan running in the background."
+      ? "Library Index running in the background."
       : libraryIndexScan?.state === "failed"
-        ? `Library scan failed: ${
+        ? `Library Index failed: ${
             libraryIndexScan.error ?? "SpotifyBU could not scan the library."
           }`
         : libraryIndexScan?.state === "succeeded"
-          ? "Library scan completed."
+          ? "Library Index completed."
           : null;
   const playlistSource = selectedPlaylist
     ? ({
@@ -2043,6 +2083,15 @@ export default function Home() {
       ? Math.round((bulkProgressFinished / bulkDownloadProgress.totalCount) * 100)
       : 0;
   const visibleBulkPreviewItems = bulkCandidatePreview?.items ?? [];
+  const failedBulkDownloadItems =
+    bulkDownloadJob?.items.filter((item) => item.status === "failed") ?? [];
+  const visibleFailedBulkDownloadItems = failedBulkDownloadItems.slice(0, 6);
+  const bulkDownloadMessageClass =
+    bulkDownloadJob?.status === "failed"
+      ? "provider-error"
+      : bulkDownloadJob?.status === "cancelled"
+        ? "provider-queue-note"
+        : "provider-success";
   const canCancelBulkProviderJob = Boolean(
     bulkDownloadJob && isProviderBulkJobActive(bulkDownloadJob)
   );
@@ -2509,7 +2558,7 @@ export default function Home() {
                   }`}
                   disabled={!canOrganizeLibrary || isAnyOrganizationRunning}
                   onClick={() => void organizeLibraryMatches()}
-                  title="Move matched files into Lidarr-style folders"
+                  title="Move matched files into organized album folders"
                   type="button"
                 >
                   {isOrganizingLibrary ? (
@@ -2568,7 +2617,7 @@ export default function Home() {
                   <span className="stat-value">
                     {hasUsableLibraryIndex
                       ? numberFormatter.format(missingBackupCount)
-                      : "Scan"}
+                      : "Index"}
                   </span>
                 </span>
               </div>
@@ -2674,13 +2723,13 @@ export default function Home() {
                       <h3>Back up tracks that are not in Navidrome</h3>
                       <p>
                         The track table below shows coverage. These controls only
-                        target tracks that are still missing from the library scan.
+                        target tracks that are still missing from the library index.
                       </p>
                     </div>
                     <span className="backup-workflow-count">
                       {hasUsableLibraryIndex
                         ? `${numberFormatter.format(missingBackupCount)} missing`
-                        : "Scan library"}
+                        : "Run Index"}
                     </span>
                   </div>
                   <div className="provider-throttle-grid compact backup-workflow-settings">
@@ -2693,6 +2742,7 @@ export default function Home() {
                           setDownloadRightsConfirmed(false);
                           setDownloadBulkRiskAccepted(false);
                           setProviderDownloadMessage(null);
+                          setProviderDownloadError(null);
                           setBulkDownloadMessage(null);
                           setBulkDownloadProgress(null);
                         }}
@@ -2730,6 +2780,7 @@ export default function Home() {
                             setDownloadRightsConfirmed(false);
                             setDownloadBulkRiskAccepted(false);
                             setProviderDownloadMessage(null);
+                            setProviderDownloadError(null);
                           }}
                           value={downloadTrackPosition}
                         >
@@ -2784,6 +2835,7 @@ export default function Home() {
                               setDownloadRightsConfirmed(false);
                               setDownloadBulkRiskAccepted(false);
                               setProviderDownloadMessage(null);
+                              setProviderDownloadError(null);
                             }}
                             value={selectedProviderCandidateId}
                           >
@@ -2869,6 +2921,7 @@ export default function Home() {
                                 setDownloadRightsConfirmed(false);
                                 setDownloadBulkRiskAccepted(false);
                                 setProviderDownloadMessage(null);
+                                setProviderDownloadError(null);
                               }}
                               placeholder="https://www.youtube.com/watch?v=..."
                               type="url"
@@ -2966,6 +3019,11 @@ export default function Home() {
                       {providerDownloadMessage ? (
                         <p className="provider-success">
                           {providerDownloadMessage}
+                        </p>
+                      ) : null}
+                      {providerDownloadError ? (
+                        <p className="provider-error" role="alert">
+                          {providerDownloadError}
                         </p>
                       ) : null}
                     </section>
@@ -3129,7 +3187,58 @@ export default function Home() {
                         </div>
                       ) : null}
                       {bulkDownloadMessage ? (
-                        <p className="provider-success">{bulkDownloadMessage}</p>
+                        <p className={bulkDownloadMessageClass}>
+                          {bulkDownloadMessage}
+                        </p>
+                      ) : null}
+                      {failedBulkDownloadItems.length ? (
+                        <div className="provider-failed-list" role="status">
+                          <div className="download-progress-meta">
+                            <span>Needs Review</span>
+                            <span>
+                              {numberFormatter.format(
+                                failedBulkDownloadItems.length
+                              )}{" "}
+                              failed
+                            </span>
+                          </div>
+                          <div className="provider-preview-list">
+                            {visibleFailedBulkDownloadItems.map((item) => (
+                              <div
+                                className="provider-preview-item failed"
+                                key={`${item.track.position}-${item.track.id ?? item.track.name}`}
+                              >
+                                <span>
+                                  {item.track.position}. {item.track.name}
+                                </span>
+                                <strong>
+                                  {providerDisplayName(item.providerId)} -{" "}
+                                  {item.candidateTitle ?? item.sourceUrl}
+                                </strong>
+                                <span>{item.error ?? "Provider download failed."}</span>
+                                <a
+                                  href={item.sourceUrl}
+                                  rel="noreferrer"
+                                  target="_blank"
+                                >
+                                  Review source
+                                </a>
+                              </div>
+                            ))}
+                            {failedBulkDownloadItems.length >
+                            visibleFailedBulkDownloadItems.length ? (
+                              <div className="provider-preview-item failed">
+                                <span>
+                                  {numberFormatter.format(
+                                    failedBulkDownloadItems.length -
+                                      visibleFailedBulkDownloadItems.length
+                                  )}{" "}
+                                  more failed tracks
+                                </span>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
                       ) : null}
                     </section>
                   </div>
@@ -3277,7 +3386,7 @@ export default function Home() {
                   </span>
                 </div>
               ) : null}
-              <div className="provider-row with-action">
+              <div className="provider-row with-action index-row">
                 <span
                   className={`provider-icon ${
                     libraryIndex?.trackCount ? "green" : "teal"
@@ -3285,7 +3394,7 @@ export default function Home() {
                 >
                   <HardDrive size={18} />
                 </span>
-                <span>
+                <span className="provider-content">
                   <h3>Library index</h3>
                   <p>{libraryIndexLabel}</p>
                   {libraryIndexScanLabel ? <p>{libraryIndexScanLabel}</p> : null}
@@ -3300,19 +3409,20 @@ export default function Home() {
                         .join("; ")}
                     </p>
                   ) : null}
+                  <button
+                    className="icon-command index-command"
+                    disabled={!navidromeReady || isScanningLibrary}
+                    onClick={() => void scanNavidromeLibrary()}
+                    title="Run Library Index"
+                    type="button"
+                  >
+                    <RefreshCw
+                      className={isScanningLibrary ? "spin" : undefined}
+                      size={18}
+                    />
+                    Run Index
+                  </button>
                 </span>
-                <button
-                  className="icon-command compact"
-                  disabled={!navidromeReady || isScanningLibrary}
-                  onClick={() => void scanNavidromeLibrary()}
-                  title="Scan Navidrome library"
-                  type="button"
-                >
-                  <RefreshCw
-                    className={isScanningLibrary ? "spin" : undefined}
-                    size={18}
-                  />
-                </button>
               </div>
               <div className="provider-warning">
                 <span className="provider-icon amber">
@@ -3901,11 +4011,18 @@ function renderLibraryMatch(
   } = {}
 ) {
   if (!libraryIndex) {
-    return <span className="track-status unindexed">No scan</span>;
+    return <span className="track-status unindexed">No index</span>;
   }
 
   if (libraryIndex.stale) {
-    return <span className="track-status stale">Scan needed</span>;
+    return (
+      <span
+        className="track-status stale"
+        title="Run Library Index to refresh organization status"
+      >
+        Index needed
+      </span>
+    );
   }
 
   if (!match || !match.exists) {
@@ -4131,7 +4248,7 @@ function folderPlanStatus(
   if (!hasUsableLibraryIndex) {
     return {
       status: "scan",
-      statusLabel: "Scan needed"
+      statusLabel: "Index needed"
     };
   }
 
@@ -4246,6 +4363,10 @@ function buildBulkDownloadItems(preview: ProviderBulkCandidatePreview | null) {
     .map((item) => ({
       candidateScore: item.candidate?.score.overall,
       candidateTitle: item.candidate?.title,
+      fallbackSources: buildProviderFallbackSources(
+        item.candidates,
+        item.candidate?.url
+      ),
       providerId: item.candidate?.providerId ?? "",
       selectedReason: `SpotifyBU dry-run bulk preview selected ${
         item.candidate?.title ?? "provider candidate"
@@ -4253,6 +4374,44 @@ function buildBulkDownloadItems(preview: ProviderBulkCandidatePreview | null) {
       sourceUrl: item.candidate?.url ?? "",
       track: item.track
     }));
+}
+
+function buildProviderFallbackSources(
+  candidates: ProviderSearchCandidate[],
+  selectedSourceUrl?: string
+) {
+  const selectedSourceKey = selectedSourceUrl
+    ? providerSourceKey(selectedSourceUrl)
+    : "";
+  const seenSources = new Set<string>(selectedSourceKey ? [selectedSourceKey] : []);
+  const fallbackSources: ProviderDownloadFallbackSource[] = [];
+
+  for (const candidate of candidates) {
+    if (!candidate.url) {
+      continue;
+    }
+
+    const sourceKey = providerSourceKey(candidate.url);
+
+    if (seenSources.has(sourceKey)) {
+      continue;
+    }
+
+    seenSources.add(sourceKey);
+    fallbackSources.push({
+      candidateScore: candidate.score.overall,
+      candidateTitle: candidate.title,
+      providerId: candidate.providerId,
+      selectedReason: `SpotifyBU automatically retried fallback provider candidate ${candidate.title} (${candidate.score.overall}% match)`,
+      sourceUrl: candidate.url
+    });
+  }
+
+  return fallbackSources.slice(0, 5);
+}
+
+function providerSourceKey(sourceUrl: string) {
+  return sourceUrl.trim().toLowerCase();
 }
 
 function providerBulkJobProgress(

@@ -128,6 +128,7 @@ type ProviderCandidateSearchOutcome =
 export type AuthorizedProviderDownloadRequest = {
   bulkRiskAccepted: boolean;
   diagnosticId?: string;
+  fallbackSources?: AuthorizedProviderDownloadFallbackSource[];
   format?: string;
   providerId: string;
   quality?: string;
@@ -137,9 +138,18 @@ export type AuthorizedProviderDownloadRequest = {
   track: BackupTrack;
 };
 
+export type AuthorizedProviderDownloadFallbackSource = {
+  candidateScore?: number;
+  candidateTitle?: string;
+  providerId: string;
+  selectedReason?: string;
+  sourceUrl: string;
+};
+
 export type AuthorizedProviderDownloadBatchItem = {
   candidateScore?: number;
   candidateTitle?: string;
+  fallbackSources?: AuthorizedProviderDownloadFallbackSource[];
   format?: string;
   providerId: string;
   quality?: string;
@@ -208,6 +218,7 @@ export type ProviderBulkDownloadJobItemSnapshot = {
   completedAt?: string;
   download?: AuthorizedProviderDownloadResult;
   error?: string;
+  fallbackSources?: AuthorizedProviderDownloadFallbackSource[];
   providerId: string;
   selectedReason?: string;
   sourceUrl: string;
@@ -369,6 +380,10 @@ const maxAttemptLogEntries = 200;
 const maxBatchItems = 500;
 const maxProviderDownloadJobs = 100;
 const providerDownloadJobTtlMs = 2 * 60 * 60 * 1000;
+const defaultProviderBulkChunkSize = 3;
+const defaultProviderBulkDelayMs = 10000;
+const defaultProviderBulkChunkPauseMs = 120000;
+const providerFallbackDelayMs = 5000;
 const defaultProviderSearchTimeoutMs = 20000;
 const maxYoutubeSearchResultsPerQuery = 25;
 const minYoutubeSearchResultsPerQuery = 5;
@@ -609,6 +624,7 @@ export function retryProviderBulkDownloadJob(jobId: string) {
     return {
       candidateScore: item.candidateScore,
       candidateTitle: item.candidateTitle,
+      fallbackSources: item.fallbackSources,
       providerId: item.providerId,
       selectedReason: item.selectedReason,
       sourceUrl: item.sourceUrl,
@@ -650,11 +666,21 @@ export async function downloadAuthorizedProviderBatch(
     throw new Error(`Bulk queues are limited to ${maxBatchItems} tracks.`);
   }
 
-  const chunkSize = clampPositiveInteger(request.chunkSize, 5, 1, 20);
-  const delayMs = clampPositiveInteger(request.delayMs, 4000, 1000, 120000);
+  const chunkSize = clampPositiveInteger(
+    request.chunkSize,
+    defaultProviderBulkChunkSize,
+    1,
+    20
+  );
+  const delayMs = clampPositiveInteger(
+    request.delayMs,
+    defaultProviderBulkDelayMs,
+    1000,
+    120000
+  );
   const chunkPauseMs = clampPositiveInteger(
     request.chunkPauseMs,
-    60000,
+    defaultProviderBulkChunkPauseMs,
     5000,
     600000
   );
@@ -666,6 +692,7 @@ export async function downloadAuthorizedProviderBatch(
     try {
       const result = await downloadAuthorizedProviderTrack({
         bulkRiskAccepted: true,
+        fallbackSources: item.fallbackSources,
         format: item.format ?? request.format,
         providerId: item.providerId,
         quality: item.quality ?? request.quality,
@@ -751,10 +778,193 @@ export async function downloadAuthorizedProviderTrack(
   beginProviderDownloadActivity();
 
   try {
-    return await downloadAuthorizedProviderTrackInner(request);
+    return await downloadAuthorizedProviderTrackWithFallback(request);
   } finally {
     endProviderDownloadActivity();
   }
+}
+
+async function downloadAuthorizedProviderTrackWithFallback(
+  request: AuthorizedProviderDownloadRequest
+) {
+  const diagnosticId = request.diagnosticId ?? providerDownloadDiagnosticId();
+  const attempts = providerDownloadAttemptSources({
+    ...request,
+    diagnosticId
+  });
+  const failures: string[] = [];
+  let lastError: unknown = null;
+
+  for (let index = 0; index < attempts.length; index += 1) {
+    const attempt = attempts[index];
+
+    try {
+      return await downloadAuthorizedProviderTrackInner({
+        ...request,
+        diagnosticId,
+        providerId: attempt.providerId,
+        selectedReason: attempt.selectedReason,
+        sourceUrl: attempt.sourceUrl
+      });
+    } catch (error) {
+      lastError = error;
+      failures.push(providerAttemptFailureLabel(attempt, error));
+
+      const nextAttempt = attempts[index + 1];
+
+      if (!nextAttempt || !isProviderFallbackError(error)) {
+        break;
+      }
+
+      console.warn("[spotifybu.provider-download] retrying alternate source", {
+        diagnosticId,
+        failedProviderId: attempt.providerId,
+        failedSourceHost: safeHostname(attempt.sourceUrl),
+        failedSourceUrl: attempt.sourceUrl,
+        nextProviderId: nextAttempt.providerId,
+        nextSourceHost: safeHostname(nextAttempt.sourceUrl),
+        nextSourceUrl: nextAttempt.sourceUrl,
+        trackName: request.track?.name,
+        trackPosition: request.track?.position
+      });
+      await sleep(providerFallbackDelayMs);
+    }
+  }
+
+  if (failures.length > 1) {
+    throw new Error(
+      `Provider download failed after ${failures.length} sources. ${failures.join(
+        " "
+      )}`
+    );
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Provider download failed.");
+}
+
+type ProviderDownloadAttemptSource = {
+  candidateScore?: number;
+  candidateTitle?: string;
+  providerId: DownloadProviderId;
+  selectedReason?: string;
+  sourceUrl: string;
+};
+
+function providerDownloadAttemptSources(
+  request: AuthorizedProviderDownloadRequest
+) {
+  const providerId = assertDownloadProvider(request.providerId);
+  const source = resolveProviderSource(providerId, request.sourceUrl);
+  const primaryAttempt = {
+    providerId,
+    selectedReason: request.selectedReason,
+    sourceUrl: source.sourceUrl
+  } satisfies ProviderDownloadAttemptSource;
+
+  return [
+    primaryAttempt,
+    ...normalizeProviderFallbackSources(
+      request.fallbackSources,
+      providerId,
+      source.sourceUrl
+    )
+  ];
+}
+
+function normalizeProviderFallbackSources(
+  fallbackSources: AuthorizedProviderDownloadFallbackSource[] | undefined,
+  primaryProviderId: DownloadProviderId,
+  primarySourceUrl: string
+) {
+  if (!Array.isArray(fallbackSources) || !fallbackSources.length) {
+    return [];
+  }
+
+  const seenSources = new Set([
+    providerAttemptSourceKey(primaryProviderId, primarySourceUrl)
+  ]);
+  const normalizedSources: ProviderDownloadAttemptSource[] = [];
+
+  for (const fallbackSource of fallbackSources) {
+    try {
+      const providerId = assertDownloadProvider(fallbackSource.providerId);
+      const source = resolveProviderSource(providerId, fallbackSource.sourceUrl);
+      const sourceKey = providerAttemptSourceKey(providerId, source.sourceUrl);
+
+      if (seenSources.has(sourceKey)) {
+        continue;
+      }
+
+      seenSources.add(sourceKey);
+      normalizedSources.push({
+        candidateScore: fallbackSource.candidateScore,
+        candidateTitle: fallbackSource.candidateTitle,
+        providerId,
+        selectedReason:
+          fallbackSource.selectedReason ??
+          fallbackSelectedReason(fallbackSource),
+        sourceUrl: source.sourceUrl
+      });
+    } catch {
+      continue;
+    }
+  }
+
+  return normalizedSources.slice(0, 5);
+}
+
+function providerAttemptSourceKey(
+  providerId: DownloadProviderId,
+  sourceUrl: string
+) {
+  return `${providerId}:${sourceUrl.trim().toLowerCase()}`;
+}
+
+function fallbackSelectedReason(
+  fallbackSource: AuthorizedProviderDownloadFallbackSource
+) {
+  return fallbackSource.candidateTitle
+    ? `SpotifyBU automatically retried fallback provider candidate ${fallbackSource.candidateTitle} (${fallbackSource.candidateScore ?? 0}% match)`
+    : "SpotifyBU automatically retried a fallback provider candidate";
+}
+
+function providerAttemptFailureLabel(
+  attempt: ProviderDownloadAttemptSource,
+  error: unknown
+) {
+  return `${providerDisplayName(attempt.providerId)} ${safeHostname(
+    attempt.sourceUrl
+  )}: ${errorMessage(error)}`;
+}
+
+function providerDisplayName(providerId: DownloadProviderId) {
+  return (
+    SOURCE_PROVIDER_CATALOG.find((provider) => provider.id === providerId)?.name ??
+    providerId
+  );
+}
+
+function isProviderFallbackError(error: unknown) {
+  const message = errorMessage(error).toLowerCase();
+
+  return [
+    "http error 403",
+    "403: forbidden",
+    "http error 429",
+    "too many requests",
+    "rate limit",
+    "unable to download video data",
+    "did not expose a downloadable audio stream",
+    "precondition check failed",
+    "signature extraction failed",
+    "n challenge",
+    "requested format is not available",
+    "this video is unavailable",
+    "not available",
+    "timed out"
+  ].some((needle) => message.includes(needle));
 }
 
 async function downloadAuthorizedProviderTrackInner(
@@ -837,7 +1047,7 @@ async function downloadAuthorizedProviderTrackInner(
     const targetDirectory = await ensureNavidromeTargetDirectory(
       relativePathSegments(folderPlan.relativePath)
     );
-    const fileBase = buildNavidromeTrackFileBase(request.track);
+    const fileBase = await buildNavidromeTrackFileBase(request.track);
     const stagingDirectory = await createDownloadStagingDirectory(libraryPath);
     const outputTemplate = path.join(
       /* turbopackIgnore: true */ stagingDirectory,
@@ -1019,11 +1229,21 @@ function buildProviderBulkDownloadJob(
 
   const format = normalizeDownloadFormat(request.format);
   const quality = normalizeDownloadQuality(request.quality);
-  const chunkSize = clampPositiveInteger(request.chunkSize, 5, 1, 20);
-  const delayMs = clampPositiveInteger(request.delayMs, 4000, 1000, 120000);
+  const chunkSize = clampPositiveInteger(
+    request.chunkSize,
+    defaultProviderBulkChunkSize,
+    1,
+    20
+  );
+  const delayMs = clampPositiveInteger(
+    request.delayMs,
+    defaultProviderBulkDelayMs,
+    1000,
+    120000
+  );
   const chunkPauseMs = clampPositiveInteger(
     request.chunkPauseMs,
-    60000,
+    defaultProviderBulkChunkPauseMs,
     5000,
     600000
   );
@@ -1037,6 +1257,11 @@ function buildProviderBulkDownloadJob(
     return {
       candidateScore: item.candidateScore,
       candidateTitle: item.candidateTitle,
+      fallbackSources: normalizeProviderFallbackSources(
+        item.fallbackSources,
+        providerId,
+        source.sourceUrl
+      ),
       providerId,
       selectedReason:
         item.selectedReason ??
@@ -1116,6 +1341,7 @@ async function runProviderBulkDownloadJob(jobId: string) {
         item.download = await downloadAuthorizedProviderTrack({
           bulkRiskAccepted: true,
           diagnosticId: `${job.diagnosticId}-${item.track.position}`,
+          fallbackSources: item.fallbackSources,
           format: job.request.format,
           providerId: item.providerId,
           quality: job.request.quality,
@@ -1124,6 +1350,8 @@ async function runProviderBulkDownloadJob(jobId: string) {
           sourceUrl: item.sourceUrl,
           track: item.track
         });
+        item.providerId = item.download.providerId;
+        item.sourceUrl = item.download.sourceUrl;
         item.status = "completed";
         item.completedAt = new Date().toISOString();
       } catch (error) {
@@ -2025,11 +2253,11 @@ async function runYtDlp({
         formatSelector,
         ...ytDlpJsRuntimeArgs(),
         "--sleep-requests",
-        "1",
-        "--sleep-interval",
         "2",
+        "--sleep-interval",
+        "5",
         "--max-sleep-interval",
-        "6",
+        "10",
         "--print",
         "after_move:filepath",
         "--output",

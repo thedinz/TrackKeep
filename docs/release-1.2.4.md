@@ -6,7 +6,7 @@ organization actions throughout the track workflow.
 ## Added
 
 - Red `Orginize` actions for individual matched tracks that are outside their
-  planned Lidarr-compatible folder.
+  planned album folder.
 - Album-target organization buttons that move only the tracks belonging to
   that destination.
 
