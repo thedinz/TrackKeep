@@ -2472,97 +2472,21 @@ function buildTrackOrganizationPlan(
   matchedTrack: NavidromeIndexedTrack,
   naming: OrganizeNamingSettings
 ) {
-  const compatibleDirectory =
-    naming.mode === "standard"
-      ? compatibleExistingStandardDirectory(track, matchedTrack)
-      : null;
-  const expectedFolder =
-    compatibleDirectory ?? buildNamingAlbumFolderPlan(track, naming).relativePath;
+  const expectedFolder = buildNamingAlbumFolderPlan(track, naming).relativePath;
   const renderedRelativePath = buildOrganizedTrackRelativePath(
     track,
     naming,
     matchedTrack,
     expectedFolder
   );
-  const recommendedRelativePath =
-    compatibleDirectory && standardTrackFilenameIsCompatible(track, matchedTrack)
-      ? matchedTrack.relativePath
-      : renderedRelativePath;
 
   return {
     expectedFolder,
     needsMove:
       normalizeRelativePathKey(matchedTrack.relativePath) !==
-      normalizeRelativePathKey(recommendedRelativePath),
-    recommendedRelativePath
+      normalizeRelativePathKey(renderedRelativePath),
+    recommendedRelativePath: renderedRelativePath
   };
-}
-
-function compatibleExistingStandardDirectory(
-  track: BackupTrack,
-  matchedTrack: NavidromeIndexedTrack
-) {
-  const parsedDirectory = parseStructuredAlbumDirectory(
-    matchedTrack.relativeDirectory,
-    track
-  );
-
-  if (!parsedDirectory) {
-    return null;
-  }
-
-  const expectedArtistKey = pathTokenKey(track.albumArtist || "Unknown Artist");
-  const expectedAlbumKey = pathTokenKey(track.album || "Unknown Album");
-  if (
-    parsedDirectory.artistKey !== expectedArtistKey ||
-    parsedDirectory.albumKey !== expectedAlbumKey
-  ) {
-    return null;
-  }
-
-  return matchedTrack.relativeDirectory;
-}
-
-function standardTrackFilenameIsCompatible(
-  track: BackupTrack,
-  matchedTrack: NavidromeIndexedTrack
-) {
-  const parsed = path.posix.parse(matchedTrack.fileName);
-  const match = parsed.name.match(
-    /^\s*(?:(?<artist>.+?)\s+-\s+(?<album>.+?)\s+\((?<year>\d{4}|Unknown Year)\)\s+-\s+)?(?:(?<medium>\d{1,2})[-_.])?(?<track>\d{1,3})\s*[-_. ]+(?<title>.+)$/
-  );
-
-  if (!match?.groups) {
-    return false;
-  }
-
-  const expectedArtist = track.albumArtist || matchedTrack.albumArtist || "Unknown Artist";
-  const expectedAlbum = track.album || matchedTrack.album || "Unknown Album";
-  const expectedMedium = track.discNumber ?? matchedTrack.discNumber ?? 1;
-  const expectedTrack = track.trackNumber ?? matchedTrack.trackNumber ?? track.position;
-  const expectedTitle = track.name || matchedTrack.title || "Unknown Track";
-  const mediumNumber = Number.parseInt(match.groups.medium, 10);
-  const trackNumber = Number.parseInt(match.groups.track, 10);
-
-  if (
-    match.groups.artist &&
-    pathTokenKey(match.groups.artist) !== pathTokenKey(expectedArtist)
-  ) {
-    return false;
-  }
-
-  if (
-    match.groups.album &&
-    pathTokenKey(match.groups.album) !== pathTokenKey(expectedAlbum)
-  ) {
-    return false;
-  }
-
-  return (
-    (Number.isNaN(mediumNumber) || mediumNumber === expectedMedium) &&
-    trackNumber === expectedTrack &&
-    pathTokenKey(match.groups.title) === pathTokenKey(expectedTitle)
-  );
 }
 
 function findIndexedTrackMatch(
@@ -2637,7 +2561,35 @@ function findIndexedTrackMatch(
     return flexibleMetadataMatch;
   }
 
+  const flexibleArtistMatch = bestIndexedTrackMatch(
+    track,
+    indexedArtistCandidates(artists, lookup).filter((candidate) =>
+      indexedTrackTitleMatches(track, candidate.track)
+    ),
+    "metadata",
+    naming
+  );
+
+  if (flexibleArtistMatch) {
+    return flexibleArtistMatch;
+  }
+
   return null;
+}
+
+function indexedArtistCandidates(
+  artists: Set<string>,
+  lookup: NavidromeTrackLookup
+) {
+  const candidates = new Map<string, NavidromeTrackLookupEntry>();
+
+  for (const artist of artists) {
+    for (const candidate of lookup.artistMatches.get(artist) ?? []) {
+      candidates.set(candidate.track.relativePath, candidate);
+    }
+  }
+
+  return Array.from(candidates.values());
 }
 
 function bestIndexedTrackMatch(
@@ -2781,6 +2733,7 @@ function indexedTrackMatchScore(
 
 type NavidromeTrackLookup = {
   albumMatches: Map<string, NavidromeTrackLookupEntry[]>;
+  artistMatches: Map<string, NavidromeTrackLookupEntry[]>;
   isrcMatches: Map<string, NavidromeTrackLookupEntry[]>;
   metadataMatches: Map<string, NavidromeTrackLookupEntry[]>;
   titleMatches: Map<string, NavidromeTrackLookupEntry[]>;
@@ -2799,6 +2752,7 @@ function buildNavidromeTrackLookup(
 ): NavidromeTrackLookup {
   const lookup = {
     albumMatches: new Map<string, NavidromeTrackLookupEntry[]>(),
+    artistMatches: new Map<string, NavidromeTrackLookupEntry[]>(),
     isrcMatches: new Map<string, NavidromeTrackLookupEntry[]>(),
     metadataMatches: new Map<string, NavidromeTrackLookupEntry[]>(),
     titleMatches: new Map<string, NavidromeTrackLookupEntry[]>()
@@ -2819,6 +2773,10 @@ function buildNavidromeTrackLookup(
 
     if (entry.albumKey) {
       appendNavidromeLookupEntry(lookup.albumMatches, entry.albumKey, entry);
+    }
+
+    for (const artistKey of entry.artistKeys) {
+      appendNavidromeLookupEntry(lookup.artistMatches, artistKey, entry);
     }
 
     appendNavidromeLookupEntry(
