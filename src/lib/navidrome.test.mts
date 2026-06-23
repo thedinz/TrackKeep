@@ -5,9 +5,11 @@ import path from "node:path";
 import test, { type TestContext } from "node:test";
 import {
   buildNaviCleanCanonicalTargets,
+  getNaviCleanTargetConflicts,
   matchNavidromeTracksWithIndex,
   planNavidromeAlbumFolders,
   readCurrentNavidromeLibraryIndex,
+  resolveNaviCleanTargetConflict,
   scanNavidromeLibraryIndex,
   type NavidromeLibraryIndex
 } from "./navidrome.ts";
@@ -173,6 +175,77 @@ test("NaviClean targets use saved Spotify metadata for matched files", {
     assert.equal(result.targets[0].sourceRelativePath, sourceRelativePath);
     assert.equal(
       result.targets[0].targetRelativePath,
+      "Example Artist/Example Artist - Example Record (2026)/Example Artist - Example Record (2026) - 01 - Opening.mp3"
+    );
+
+    persistPlaylistBackup({
+      playlist: {
+        id: "playlist-2",
+        imageUrl: undefined,
+        name: "Conflicting Playlist",
+        owner: "Tester",
+        ownerId: "tester",
+        tracksTotal: 1
+      },
+      source: "playlist-load",
+      tracks: [
+        {
+          ...exampleTrack,
+          album: "Example Record Deluxe",
+          albumId: "album-deluxe",
+          id: "track-deluxe",
+          isrc: undefined
+        }
+      ]
+    });
+
+    const conflictingResult = await buildNaviCleanCanonicalTargets([
+      {
+        duration: 180,
+        relativePath: sourceRelativePath,
+        size: 123
+      }
+    ]);
+
+    assert.equal(conflictingResult.targets.length, 0);
+    assert.equal(conflictingResult.conflicts.length, 1);
+    assert.equal(conflictingResult.conflicts[0].targets.length, 2);
+
+    const conflicts = await getNaviCleanTargetConflicts();
+
+    assert.equal(conflicts.unresolvedCount, 1);
+    assert.equal(conflicts.resolvedCount, 0);
+    assert.equal(conflicts.conflicts[0].sourceRelativePath, sourceRelativePath);
+    assert.equal(conflicts.conflicts[0].targets.length, 2);
+
+    await resolveNaviCleanTargetConflict({
+      sourceRelativePath,
+      targetRelativePath:
+        "Example Artist/Example Artist - Example Record (2026)/Example Artist - Example Record (2026) - 01 - Opening.mp3"
+    });
+
+    const resolvedConflicts = await getNaviCleanTargetConflicts();
+
+    assert.equal(resolvedConflicts.unresolvedCount, 0);
+    assert.equal(resolvedConflicts.resolvedCount, 1);
+    assert.equal(
+      resolvedConflicts.conflicts[0].targets.filter((target) => target.selected)
+        .length,
+      1
+    );
+
+    const resolvedResult = await buildNaviCleanCanonicalTargets([
+      {
+        duration: 180,
+        relativePath: sourceRelativePath,
+        size: 123
+      }
+    ]);
+
+    assert.equal(resolvedResult.conflicts.length, 0);
+    assert.equal(resolvedResult.targets.length, 1);
+    assert.equal(
+      resolvedResult.targets[0].targetRelativePath,
       "Example Artist/Example Artist - Example Record (2026)/Example Artist - Example Record (2026) - 01 - Opening.mp3"
     );
   });

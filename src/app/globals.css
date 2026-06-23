@@ -980,6 +980,129 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   white-space: nowrap;
 }
 
+.naviclean-conflict-panel {
+  border: 1px solid rgba(255, 182, 72, 0.34);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px;
+}
+
+.naviclean-conflict-heading {
+  align-items: flex-start;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.naviclean-conflict-heading .stat-label,
+.naviclean-conflict-heading p {
+  grid-column: 1;
+}
+
+.naviclean-conflict-heading .folder-plan-toggle {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  margin-top: 0;
+}
+
+.naviclean-conflict-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.naviclean-conflict-summary span,
+.naviclean-conflict-warning {
+  background: rgba(255, 182, 72, 0.1);
+  border: 1px solid rgba(255, 182, 72, 0.28);
+  border-radius: 999px;
+  color: #ffe0a8;
+  font-size: 0.75rem;
+  font-weight: 850;
+  line-height: 1;
+  margin: 0;
+  padding: 7px 9px;
+}
+
+.naviclean-conflict-warning {
+  border-radius: 8px;
+  line-height: 1.35;
+}
+
+.naviclean-conflict-list {
+  display: grid;
+  gap: 10px;
+}
+
+.naviclean-conflict {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.naviclean-conflict-source {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+}
+
+.naviclean-conflict-source strong,
+.naviclean-conflict-source span span,
+.naviclean-target-option strong,
+.naviclean-target-option span span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.naviclean-conflict-source span span,
+.naviclean-target-option span span,
+.naviclean-target-option em {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.naviclean-target-options {
+  display: grid;
+  gap: 8px;
+}
+
+.naviclean-target-option {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) minmax(110px, auto) 18px;
+  min-height: 54px;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.naviclean-target-option:hover:not(:disabled) {
+  border-color: rgba(37, 230, 109, 0.38);
+}
+
+.naviclean-target-option.selected {
+  background: rgba(37, 230, 109, 0.08);
+  border-color: rgba(37, 230, 109, 0.42);
+}
+
+.naviclean-target-option em {
+  font-style: normal;
+  text-align: right;
+}
+
 .stat-label,
 .stat-value {
   display: block;
