@@ -485,6 +485,67 @@ test("matching finds existing artist title matches across album folders", async 
   });
 });
 
+test("matching finds moved artist-title files without tag duration or track number", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const libraryPath = await mkdtemp(
+      path.join(tmpdir(), "spotifybu-library-")
+    );
+    const previousLibraryPath = process.env.NAVIDROME_LIBRARY_PATH;
+    const relativePath = "Loose Downloads/Marilyn Manson - Tainted Love.mp3";
+    const filePath = path.join(libraryPath, ...relativePath.split("/"));
+    const spotifyTrack = {
+      ...exampleTrack,
+      album: "Lest We Forget - The Best Of",
+      albumArtist: "Marilyn Manson",
+      albumId: "album-manson-best-of",
+      albumReleaseDate: "2004-01-01",
+      artists: ["Marilyn Manson"],
+      id: "track-tainted-love",
+      isrc: undefined,
+      name: "Tainted Love",
+      trackNumber: 17
+    } satisfies BackupTrack;
+
+    process.env.NAVIDROME_LIBRARY_PATH = libraryPath;
+    t.after(async () => {
+      if (typeof previousLibraryPath === "string") {
+        process.env.NAVIDROME_LIBRARY_PATH = previousLibraryPath;
+      } else {
+        delete process.env.NAVIDROME_LIBRARY_PATH;
+      }
+
+      await rm(libraryPath, {
+        force: true,
+        recursive: true
+      });
+    });
+
+    await mkdir(path.dirname(filePath), {
+      recursive: true
+    });
+    await writeFile(filePath, "not real audio", "utf8");
+
+    await scanNavidromeLibraryIndex();
+    const index = await readCurrentNavidromeLibraryIndex();
+    assert.ok(index);
+    const indexedTrack = index.tracks[0];
+
+    assert.equal(index.tracks.length, 1);
+    assert.equal(indexedTrack.artist, "Marilyn Manson");
+    assert.equal(indexedTrack.title, "Tainted Love");
+
+    const matches = await matchNavidromeTracksWithIndex([spotifyTrack], index);
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].needsMove, true);
+    assert.equal(matches[0].matchedTrack?.relativePath, relativePath);
+    assert.equal(
+      matches[0].recommendedRelativePath,
+      "Marilyn Manson/Marilyn Manson - Lest We Forget - The Best Of (2004)/Marilyn Manson - Lest We Forget - The Best Of (2004) - 17 - Tainted Love.mp3"
+    );
+  });
+});
+
 test("library index parses standard folders when parent artist stripped trailing punctuation", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
     const libraryPath = await mkdtemp(
