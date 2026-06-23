@@ -43,7 +43,7 @@ test("standard album folder uses Unknown Year when metadata is missing", async (
   });
 });
 
-test("standard matching accepts compatible folders with a different release year", async (t) => {
+test("standard matching keeps Spotify year canonical when local year differs", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
     const matches = await matchNavidromeTracksWithIndex([exampleTrack], {
       generatedAt: new Date(0).toISOString(),
@@ -69,10 +69,14 @@ test("standard matching accepts compatible folders with a different release year
     } satisfies NavidromeLibraryIndex);
 
     assert.equal(matches[0].exists, true);
-    assert.equal(matches[0].needsMove, false);
+    assert.equal(matches[0].needsMove, true);
     assert.equal(
       matches[0].expectedFolder,
-      "Example Artist/Example Artist - Example Record (2025)"
+      "Example Artist/Example Artist - Example Record (2026)"
+    );
+    assert.equal(
+      matches[0].recommendedRelativePath,
+      "Example Artist/Example Artist - Example Record (2026)/Example Artist - Example Record (2026) - 01 - Opening.mp3"
     );
   });
 });
@@ -160,12 +164,15 @@ test("standard matching uses NaviClean path token normalization", async (t) => {
     } satisfies NavidromeLibraryIndex);
 
     assert.equal(matches[0].exists, true);
-    assert.equal(matches[0].needsMove, false);
-    assert.equal(matches[0].expectedFolder, "Artist and Friend/Artist and Friend - Ampersand Record (2026)");
+    assert.equal(matches[0].needsMove, true);
+    assert.equal(
+      matches[0].recommendedRelativePath,
+      "Artist & Friend/Artist & Friend - Ampersand Record (2026)/Artist & Friend - Ampersand Record (2026) - 01 - Opening.mp3"
+    );
   });
 });
 
-test("standard matching accepts folders organized from indexed album variants", async (t) => {
+test("standard matching finds indexed album variants but keeps Spotify naming canonical", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
     const spotifyTrack = {
       ...exampleTrack,
@@ -204,10 +211,10 @@ test("standard matching accepts folders organized from indexed album variants", 
     } satisfies NavidromeLibraryIndex);
 
     assert.equal(matches[0].exists, true);
-    assert.equal(matches[0].needsMove, false);
+    assert.equal(matches[0].needsMove, true);
     assert.equal(
-      matches[0].expectedFolder,
-      "Passion/Passion - Passion - Even So Come (Live) (2015)"
+      matches[0].recommendedRelativePath,
+      "Passion/Passion - Passion - Even So Come (Live) (2026)/Passion - Passion - Even So Come (Live) (2026) - 01 - Opening.mp3"
     );
   });
 });
@@ -256,6 +263,54 @@ test("matching finds repeated live album suffixes without marking files missing"
     assert.equal(
       matches[0].recommendedRelativePath,
       "Kari Jobe Carnes, Cody Carnes/Kari Jobe Carnes, Cody Carnes - Live From Europe (2024)/Kari Jobe Carnes, Cody Carnes - Live From Europe (2024) - 01 - Firm Foundation (He Won't) Great Are You Lord - Live From Europe.mp3"
+    );
+  });
+});
+
+test("matching finds existing artist title matches across album folders", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const spotifyTrack = {
+      ...exampleTrack,
+      album: "Live From Europe",
+      albumArtist: "Cody Carnes",
+      albumId: "album-live-from-europe-cody",
+      albumReleaseDate: "2024-08-16",
+      artists: ["Cody Carnes"],
+      id: "track-cody-firm-foundation",
+      name: "Firm Foundation (He Won't) - Live From Europe",
+      trackNumber: 4
+    } satisfies BackupTrack;
+    const matches = await matchNavidromeTracksWithIndex([spotifyTrack], {
+      generatedAt: new Date(0).toISOString(),
+      libraryPath: "/music",
+      tracks: [
+        {
+          album: "Firm Foundation (Live)",
+          albumArtist: "Cody Carnes",
+          artist: "Cody Carnes",
+          artists: ["Cody Carnes"],
+          durationMs: 180_000,
+          fileName:
+            "Cody Carnes - Firm Foundation (Live) (2023) - 04 - Firm Foundation (He Won\u2019t) [Live].mp3",
+          mtimeMs: 0,
+          relativeDirectory:
+            "Cody Carnes/Cody Carnes - Firm Foundation (Live) (2023)",
+          relativePath:
+            "Cody Carnes/Cody Carnes - Firm Foundation (Live) (2023)/Cody Carnes - Firm Foundation (Live) (2023) - 04 - Firm Foundation (He Won\u2019t) [Live].mp3",
+          sizeBytes: 1,
+          source: "tags",
+          title: "Firm Foundation (He Won\u2019t) [Live]",
+          trackNumber: 4
+        }
+      ],
+      version: 1
+    } satisfies NavidromeLibraryIndex);
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].needsMove, true);
+    assert.equal(
+      matches[0].recommendedRelativePath,
+      "Cody Carnes/Cody Carnes - Live From Europe (2024)/Cody Carnes - Live From Europe (2024) - 04 - Firm Foundation (He Won't) - Live From Europe.mp3"
     );
   });
 });

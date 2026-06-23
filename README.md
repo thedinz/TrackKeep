@@ -306,7 +306,7 @@ Navidrome still needs read access to the same host folder and a scan/watch confi
 
 ### Organize Matched Files
 
-After a library scan, the Organize action compares matched local files against the same naming scheme used for new SpotifyBU downloads. The Settings page can keep the standard default or use manual templates. It moves or renames loose files, older SpotifyBU folder layouts, and other matched tracks that are not already in the expected structure. In standard mode, files already inside a compatible artist/album/year folder for the same artist, album, track number, and title are left alone even if the year token came from different metadata, keeping SpotifyBU and NaviClean from moving the same files back and forth.
+After a library scan, the Organize action compares matched local files against the same naming scheme used for new SpotifyBU downloads. The Settings page can keep the standard default or use manual templates. It moves or renames loose files, older SpotifyBU folder layouts, and other matched tracks that are not exactly in the expected structure. In standard mode, the rendered Spotify-derived target path is canonical, so a different year, folder name, or filename is treated as organization work instead of being accepted as close enough.
 
 Running Organize before backing up missing files is recommended, but not required. It gives SpotifyBU a clean library view first, can repair older organize runs, and reduces the chance of downloading a track that already exists under a messy path. If you skip it, new provider downloads still stage into the active organize layout.
 
