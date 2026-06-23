@@ -77,6 +77,91 @@ test("standard matching accepts compatible folders with a different release year
   });
 });
 
+test("standard matching accepts filenames organized with indexed title variants", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const spotifyTrack = {
+      ...exampleTrack,
+      id: "track-title-variant",
+      isrc: "USABC1234567",
+      name: "Spotify Title Variant"
+    } satisfies BackupTrack;
+    const matches = await matchNavidromeTracksWithIndex([spotifyTrack], {
+      generatedAt: new Date(0).toISOString(),
+      libraryPath: "/music",
+      tracks: [
+        {
+          album: "Example Record",
+          albumArtist: "Example Artist",
+          artist: "Example Artist",
+          artists: ["Example Artist"],
+          durationMs: 180_000,
+          fileName:
+            "Example Artist - Example Record (2026) - 01 - Local Title.mp3",
+          isrc: "USABC1234567",
+          mtimeMs: 0,
+          relativeDirectory:
+            "Example Artist/Example Artist - Example Record (2026)",
+          relativePath:
+            "Example Artist/Example Artist - Example Record (2026)/Example Artist - Example Record (2026) - 01 - Local Title.mp3",
+          sizeBytes: 1,
+          source: "tags",
+          title: "Local Title",
+          trackNumber: 1
+        }
+      ],
+      version: 1
+    } satisfies NavidromeLibraryIndex);
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].needsMove, false);
+    assert.equal(matches[0].recommendedRelativePath, undefined);
+  });
+});
+
+test("standard matching uses NaviClean path token normalization", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const spotifyTrack = {
+      ...exampleTrack,
+      album: "Ampersand Record",
+      albumArtist: "Artist & Friend",
+      albumId: "album-ampersand",
+      artists: ["Artist & Friend"],
+      id: "track-ampersand",
+      isrc: "USABC7654321"
+    } satisfies BackupTrack;
+    const matches = await matchNavidromeTracksWithIndex([spotifyTrack], {
+      generatedAt: new Date(0).toISOString(),
+      libraryPath: "/music",
+      tracks: [
+        {
+          album: "Ampersand Record",
+          albumArtist: "Artist and Friend",
+          artist: "Artist and Friend",
+          artists: ["Artist and Friend"],
+          durationMs: 180_000,
+          fileName:
+            "Artist and Friend - Ampersand Record (2026) - 01 - Opening.mp3",
+          isrc: "USABC7654321",
+          mtimeMs: 0,
+          relativeDirectory:
+            "Artist and Friend/Artist and Friend - Ampersand Record (2026)",
+          relativePath:
+            "Artist and Friend/Artist and Friend - Ampersand Record (2026)/Artist and Friend - Ampersand Record (2026) - 01 - Opening.mp3",
+          sizeBytes: 1,
+          source: "tags",
+          title: "Opening",
+          trackNumber: 1
+        }
+      ],
+      version: 1
+    } satisfies NavidromeLibraryIndex);
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].needsMove, false);
+    assert.equal(matches[0].expectedFolder, "Artist and Friend/Artist and Friend - Ampersand Record (2026)");
+  });
+});
+
 test("library index parses standard folders when parent artist stripped trailing punctuation", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
     const libraryPath = await mkdtemp(
