@@ -77,7 +77,7 @@ test("standard matching accepts compatible folders with a different release year
   });
 });
 
-test("standard matching accepts filenames organized with indexed title variants", async (t) => {
+test("standard matching finds indexed title variants but keeps Spotify naming canonical", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
     const spotifyTrack = {
       ...exampleTrack,
@@ -113,8 +113,11 @@ test("standard matching accepts filenames organized with indexed title variants"
     } satisfies NavidromeLibraryIndex);
 
     assert.equal(matches[0].exists, true);
-    assert.equal(matches[0].needsMove, false);
-    assert.equal(matches[0].recommendedRelativePath, undefined);
+    assert.equal(matches[0].needsMove, true);
+    assert.equal(
+      matches[0].recommendedRelativePath,
+      "Example Artist/Example Artist - Example Record (2026)/Example Artist - Example Record (2026) - 01 - Spotify Title Variant.mp3"
+    );
   });
 });
 
@@ -209,7 +212,7 @@ test("standard matching accepts folders organized from indexed album variants", 
   });
 });
 
-test("matching finds titles with repeated live album suffixes", async (t) => {
+test("matching finds repeated live album suffixes without marking files missing", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
     const spotifyTrack = {
       ...exampleTrack,
@@ -249,7 +252,11 @@ test("matching finds titles with repeated live album suffixes", async (t) => {
     } satisfies NavidromeLibraryIndex);
 
     assert.equal(matches[0].exists, true);
-    assert.equal(matches[0].needsMove, false);
+    assert.equal(matches[0].needsMove, true);
+    assert.equal(
+      matches[0].recommendedRelativePath,
+      "Kari Jobe Carnes, Cody Carnes/Kari Jobe Carnes, Cody Carnes - Live From Europe (2024)/Kari Jobe Carnes, Cody Carnes - Live From Europe (2024) - 01 - Firm Foundation (He Won't) Great Are You Lord - Live From Europe.mp3"
+    );
   });
 });
 

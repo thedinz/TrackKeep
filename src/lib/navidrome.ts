@@ -2511,12 +2511,8 @@ function compatibleExistingStandardDirectory(
     return null;
   }
 
-  const expectedArtistKey = pathTokenKey(
-    matchedTrack.albumArtist || track.albumArtist || "Unknown Artist"
-  );
-  const expectedAlbumKey = pathTokenKey(
-    matchedTrack.album || track.album || "Unknown Album"
-  );
+  const expectedArtistKey = pathTokenKey(track.albumArtist || "Unknown Artist");
+  const expectedAlbumKey = pathTokenKey(track.album || "Unknown Album");
   if (
     parsedDirectory.artistKey !== expectedArtistKey ||
     parsedDirectory.albumKey !== expectedAlbumKey
@@ -2540,11 +2536,11 @@ function standardTrackFilenameIsCompatible(
     return false;
   }
 
-  const expectedArtist = matchedTrack.albumArtist || track.albumArtist || "Unknown Artist";
-  const expectedAlbum = matchedTrack.album || track.album || "Unknown Album";
-  const expectedMedium = matchedTrack.discNumber ?? track.discNumber ?? 1;
-  const expectedTrack = matchedTrack.trackNumber ?? track.trackNumber ?? track.position;
-  const expectedTitle = matchedTrack.title || track.name || "Unknown Track";
+  const expectedArtist = track.albumArtist || matchedTrack.albumArtist || "Unknown Artist";
+  const expectedAlbum = track.album || matchedTrack.album || "Unknown Album";
+  const expectedMedium = track.discNumber ?? matchedTrack.discNumber ?? 1;
+  const expectedTrack = track.trackNumber ?? matchedTrack.trackNumber ?? track.position;
+  const expectedTitle = track.name || matchedTrack.title || "Unknown Track";
   const mediumNumber = Number.parseInt(match.groups.medium, 10);
   const trackNumber = Number.parseInt(match.groups.track, 10);
 
