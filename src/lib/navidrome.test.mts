@@ -162,6 +162,97 @@ test("standard matching uses NaviClean path token normalization", async (t) => {
   });
 });
 
+test("standard matching accepts folders organized from indexed album variants", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const spotifyTrack = {
+      ...exampleTrack,
+      album: "Passion: Even So Come (Live)",
+      albumArtist: "Passion",
+      albumId: "album-passion",
+      artists: ["Passion"],
+      id: "track-passion",
+      isrc: "USABC2345678"
+    } satisfies BackupTrack;
+    const matches = await matchNavidromeTracksWithIndex([spotifyTrack], {
+      generatedAt: new Date(0).toISOString(),
+      libraryPath: "/music",
+      tracks: [
+        {
+          album: "Passion - Even So Come (Live)",
+          albumArtist: "Passion",
+          artist: "Passion",
+          artists: ["Passion"],
+          durationMs: 180_000,
+          fileName:
+            "Passion - Passion - Even So Come (Live) (2015) - 01 - Opening.mp3",
+          isrc: "USABC2345678",
+          mtimeMs: 0,
+          relativeDirectory:
+            "Passion/Passion - Passion - Even So Come (Live) (2015)",
+          relativePath:
+            "Passion/Passion - Passion - Even So Come (Live) (2015)/Passion - Passion - Even So Come (Live) (2015) - 01 - Opening.mp3",
+          sizeBytes: 1,
+          source: "tags",
+          title: "Opening",
+          trackNumber: 1
+        }
+      ],
+      version: 1
+    } satisfies NavidromeLibraryIndex);
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].needsMove, false);
+    assert.equal(
+      matches[0].expectedFolder,
+      "Passion/Passion - Passion - Even So Come (Live) (2015)"
+    );
+  });
+});
+
+test("matching finds titles with repeated live album suffixes", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const spotifyTrack = {
+      ...exampleTrack,
+      album: "Live From Europe",
+      albumArtist: "Kari Jobe Carnes, Cody Carnes",
+      albumId: "album-live-from-europe",
+      albumReleaseDate: "2024-08-16",
+      artists: ["Kari Jobe Carnes", "Cody Carnes"],
+      id: "track-firm-foundation",
+      name: "Firm Foundation (He Won't) / Great Are You Lord - Live From Europe",
+      trackNumber: 1
+    } satisfies BackupTrack;
+    const matches = await matchNavidromeTracksWithIndex([spotifyTrack], {
+      generatedAt: new Date(0).toISOString(),
+      libraryPath: "/music",
+      tracks: [
+        {
+          album: "Live From Europe",
+          albumArtist: "Kari Jobe Carnes, Cody Carnes",
+          artist: "Kari Jobe Carnes, Cody Carnes",
+          artists: ["Kari Jobe Carnes", "Cody Carnes"],
+          durationMs: 180_000,
+          fileName:
+            "Kari Jobe Carnes, Cody Carnes - Live From Europe (2024) - 01 - Firm Foundation (He Won't) + Great Are You Lord.mp3",
+          mtimeMs: 0,
+          relativeDirectory:
+            "Kari Jobe Carnes, Cody Carnes/Kari Jobe Carnes, Cody Carnes - Live From Europe (2024)",
+          relativePath:
+            "Kari Jobe Carnes, Cody Carnes/Kari Jobe Carnes, Cody Carnes - Live From Europe (2024)/Kari Jobe Carnes, Cody Carnes - Live From Europe (2024) - 01 - Firm Foundation (He Won't) + Great Are You Lord.mp3",
+          sizeBytes: 1,
+          source: "tags",
+          title: "Firm Foundation (He Won't) / Great Are You Lord",
+          trackNumber: 1
+        }
+      ],
+      version: 1
+    } satisfies NavidromeLibraryIndex);
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].needsMove, false);
+  });
+});
+
 test("library index parses standard folders when parent artist stripped trailing punctuation", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
     const libraryPath = await mkdtemp(

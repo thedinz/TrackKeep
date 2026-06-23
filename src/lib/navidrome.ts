@@ -2511,8 +2511,12 @@ function compatibleExistingStandardDirectory(
     return null;
   }
 
-  const expectedArtistKey = pathTokenKey(track.albumArtist || "Unknown Artist");
-  const expectedAlbumKey = pathTokenKey(track.album || "Unknown Album");
+  const expectedArtistKey = pathTokenKey(
+    matchedTrack.albumArtist || track.albumArtist || "Unknown Artist"
+  );
+  const expectedAlbumKey = pathTokenKey(
+    matchedTrack.album || track.album || "Unknown Album"
+  );
   if (
     parsedDirectory.artistKey !== expectedArtistKey ||
     parsedDirectory.albumKey !== expectedAlbumKey
@@ -2620,6 +2624,23 @@ function findIndexedTrackMatch(
     return durationMatch;
   }
 
+  const flexibleMetadataMatch = bestIndexedTrackMatch(
+    track,
+    lookup.albumMatches
+      .get(album)
+      ?.filter(
+        (candidate) =>
+          hasArtistOverlap(artists, candidate.artistKeys) &&
+          indexedTrackTitleMatches(track, candidate.track)
+      ),
+    "metadata",
+    naming
+  );
+
+  if (flexibleMetadataMatch) {
+    return flexibleMetadataMatch;
+  }
+
   return null;
 }
 
@@ -2648,6 +2669,84 @@ function bestIndexedTrackMatch(
         track: bestCandidate.track
       }
     : null;
+}
+
+function indexedTrackTitleMatches(
+  track: BackupTrack,
+  indexedTrack: NavidromeIndexedTrack
+) {
+  if (!titleKeysCompatible(track.name, indexedTrack.title, [
+    track.album,
+    indexedTrack.album
+  ])) {
+    return false;
+  }
+
+  const sameTrackNumber =
+    typeof track.trackNumber === "number" &&
+    typeof indexedTrack.trackNumber === "number" &&
+    track.trackNumber === indexedTrack.trackNumber;
+
+  return sameTrackNumber || durationCloseEnough(track.durationMs, indexedTrack.durationMs);
+}
+
+function titleKeysCompatible(
+  left: string,
+  right: string,
+  contexts: Array<string | undefined>
+) {
+  const leftKeys = titleMatchKeys(left, contexts);
+  const rightKeys = titleMatchKeys(right, contexts);
+
+  for (const leftKey of leftKeys) {
+    for (const rightKey of rightKeys) {
+      if (
+        leftKey === rightKey ||
+        titleTokenCoverage(leftKey, rightKey) >= 0.85 ||
+        titleTokenCoverage(rightKey, leftKey) >= 0.85
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function titleMatchKeys(value: string | undefined, contexts: Array<string | undefined>) {
+  const keys = new Set<string>();
+  const base = normalizeText(value);
+
+  if (base) {
+    keys.add(base);
+  }
+
+  for (const context of contexts) {
+    const contextKey = normalizeText(context);
+
+    if (!base || !contextKey || base === contextKey) {
+      continue;
+    }
+
+    if (base.endsWith(` ${contextKey}`)) {
+      keys.add(base.slice(0, -contextKey.length).trim());
+    }
+  }
+
+  return Array.from(keys).filter(Boolean);
+}
+
+function titleTokenCoverage(left: string, right: string) {
+  const leftTokens = left.split(/\s+/).filter(Boolean);
+  const rightTokens = new Set(right.split(/\s+/).filter(Boolean));
+
+  if (!leftTokens.length || !rightTokens.size) {
+    return 0;
+  }
+
+  const matchingTokens = leftTokens.filter((token) => rightTokens.has(token)).length;
+
+  return matchingTokens / leftTokens.length;
 }
 
 function indexedTrackMatchScore(
@@ -2685,6 +2784,7 @@ function indexedTrackMatchScore(
 }
 
 type NavidromeTrackLookup = {
+  albumMatches: Map<string, NavidromeTrackLookupEntry[]>;
   isrcMatches: Map<string, NavidromeTrackLookupEntry[]>;
   metadataMatches: Map<string, NavidromeTrackLookupEntry[]>;
   titleMatches: Map<string, NavidromeTrackLookupEntry[]>;
@@ -2702,6 +2802,7 @@ function buildNavidromeTrackLookup(
   indexedTracks: NavidromeIndexedTrack[]
 ): NavidromeTrackLookup {
   const lookup = {
+    albumMatches: new Map<string, NavidromeTrackLookupEntry[]>(),
     isrcMatches: new Map<string, NavidromeTrackLookupEntry[]>(),
     metadataMatches: new Map<string, NavidromeTrackLookupEntry[]>(),
     titleMatches: new Map<string, NavidromeTrackLookupEntry[]>()
@@ -2718,6 +2819,10 @@ function buildNavidromeTrackLookup(
 
     if (entry.isrcKey) {
       appendNavidromeLookupEntry(lookup.isrcMatches, entry.isrcKey, entry);
+    }
+
+    if (entry.albumKey) {
+      appendNavidromeLookupEntry(lookup.albumMatches, entry.albumKey, entry);
     }
 
     appendNavidromeLookupEntry(
