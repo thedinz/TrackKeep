@@ -1683,9 +1683,7 @@ function isReleaseYearToken(value: string) {
 }
 
 function pathTokenKey(value: string) {
-  return cleanPathToken(value, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "");
+  return cleanTitleToken(value).toLowerCase();
 }
 
 function groupTracksByAlbum(tracks: BackupTrack[]) {
@@ -2538,11 +2536,11 @@ function standardTrackFilenameIsCompatible(
     return false;
   }
 
-  const expectedArtist = track.albumArtist || matchedTrack.albumArtist || "Unknown Artist";
-  const expectedAlbum = track.album || matchedTrack.album || "Unknown Album";
-  const expectedMedium = track.discNumber ?? matchedTrack.discNumber ?? 1;
-  const expectedTrack = track.trackNumber ?? matchedTrack.trackNumber ?? track.position;
-  const expectedTitle = track.name || matchedTrack.title || "Unknown Track";
+  const expectedArtist = matchedTrack.albumArtist || track.albumArtist || "Unknown Artist";
+  const expectedAlbum = matchedTrack.album || track.album || "Unknown Album";
+  const expectedMedium = matchedTrack.discNumber ?? track.discNumber ?? 1;
+  const expectedTrack = matchedTrack.trackNumber ?? track.trackNumber ?? track.position;
+  const expectedTitle = matchedTrack.title || track.name || "Unknown Track";
   const mediumNumber = Number.parseInt(match.groups.medium, 10);
   const trackNumber = Number.parseInt(match.groups.track, 10);
 
