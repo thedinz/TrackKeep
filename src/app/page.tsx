@@ -621,6 +621,13 @@ export default function Home() {
     useState(false);
   const [resolvingNaviCleanTargetKey, setResolvingNaviCleanTargetKey] =
     useState<string | null>(null);
+  const unresolvedNaviCleanTargetConflicts = useMemo(
+    () =>
+      naviCleanTargetConflicts?.conflicts.filter(
+        (conflict) => !conflict.targets.some((target) => target.selected)
+      ) ?? [],
+    [naviCleanTargetConflicts]
+  );
 
   const applyLibraryMatches = useCallback(
     (nextTracks: BackupTrack[], nextMatches: LibraryMatch[]) => {
@@ -2797,7 +2804,7 @@ export default function Home() {
                 </div>
               ) : null}
 
-              {(naviCleanTargetConflicts?.conflicts.length ||
+              {(unresolvedNaviCleanTargetConflicts.length > 0 ||
                 isLoadingNaviCleanTargetConflicts) ? (
                 <div className="naviclean-conflict-panel">
                   <div className="section-heading naviclean-conflict-heading">
@@ -2836,7 +2843,7 @@ export default function Home() {
                     </p>
                   ))}
                   <div className="naviclean-conflict-list">
-                    {naviCleanTargetConflicts?.conflicts.map((conflict) => (
+                    {unresolvedNaviCleanTargetConflicts.map((conflict) => (
                       <div className="naviclean-conflict" key={conflict.sourceRelativePath}>
                         <div className="naviclean-conflict-source">
                           <HardDrive size={18} />

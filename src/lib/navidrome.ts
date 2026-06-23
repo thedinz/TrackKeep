@@ -2748,30 +2748,65 @@ function inferMetadataFromPath(relativePath: string) {
   const structuredFolder = parseStructuredAlbumDirectory(parsedPath.dir);
   const folderMatch = folderName.match(/^(?<artist>.+?)\s+-\s+(?<album>.+)$/);
   const trackNumbers = inferTrackNumbersFromFileName(parsedPath.name);
-  const title = cleanTrackFileName(parsedPath.name);
   const artist =
     structuredFolder?.artist ?? folderMatch?.groups?.artist?.trim();
   const album = structuredFolder?.album ?? folderMatch?.groups?.album?.trim();
+  const cleanedTitle = cleanTrackFileName(parsedPath.name, { album, artist });
+  const fileArtistTitle = inferArtistTitleFromFileName(cleanedTitle);
 
   return {
     album,
-    albumArtist: artist,
-    artist,
+    albumArtist: artist ?? fileArtistTitle?.artist,
+    artist: artist ?? fileArtistTitle?.artist,
     discNumber: trackNumbers.discNumber,
     trackNumber: trackNumbers.trackNumber,
-    title
+    title: fileArtistTitle?.title ?? cleanedTitle
   };
 }
 
-function cleanTrackFileName(value: string) {
+function cleanTrackFileName(
+  value: string,
+  context: { album?: string; artist?: string } = {}
+) {
+  let clean = value;
+
+  if (context.artist && context.album) {
+    const artistPattern = escapeRegExp(context.artist);
+    const albumPattern = escapeRegExp(context.album);
+    clean = clean.replace(
+      new RegExp(
+        `^\\s*${artistPattern}\\s+-\\s+${albumPattern}(?:\\s+\\((?:\\d{4}|Unknown Year)\\))?\\s+-\\s+`,
+        "i"
+      ),
+      ""
+    );
+  }
+
   return (
-    value
+    clean
       .replace(/^\s*\d{4}\s*[-_. ]+\s*/, "")
       .replace(/^\s*\d{1,2}[-_.]\d{1,2}\s*[-_. ]+\s*/, "")
       .replace(/^\s*\d{1,3}\s*[-_. ]+\s*/, "")
       .replace(/\s+/g, " ")
       .trim() || value
   );
+}
+
+function inferArtistTitleFromFileName(value: string) {
+  const match = value.match(/^(?<artist>.+?)\s+-\s+(?<title>.+)$/);
+
+  if (!match?.groups?.artist || !match.groups.title) {
+    return null;
+  }
+
+  return {
+    artist: match.groups.artist.trim(),
+    title: cleanTrackFileName(match.groups.title.trim())
+  };
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function inferTrackNumbersFromFileName(value: string) {
@@ -3014,6 +3049,19 @@ function findIndexedTrackMatch(
     return flexibleArtistMatch;
   }
 
+  const unambiguousArtistTitleMatch = unambiguousIndexedTrackMatch(
+    track,
+    indexedArtistCandidates(artists, lookup).filter((candidate) =>
+      indexedTrackTitleLooselyMatches(track, candidate.track)
+    ),
+    "metadata",
+    naming
+  );
+
+  if (unambiguousArtistTitleMatch) {
+    return unambiguousArtistTitleMatch;
+  }
+
   return null;
 }
 
@@ -3059,6 +3107,42 @@ function bestIndexedTrackMatch(
     : null;
 }
 
+function unambiguousIndexedTrackMatch(
+  track: BackupTrack,
+  candidates: NavidromeTrackLookupEntry[] | undefined,
+  matchedBy: "duration" | "isrc" | "metadata",
+  naming: OrganizeNamingSettings
+) {
+  const scoredCandidates = candidates
+    ?.map((candidate) => ({
+      candidate,
+      score: indexedTrackMatchScore(track, candidate.track, naming)
+    }))
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        left.candidate.track.relativePath.localeCompare(
+          right.candidate.track.relativePath
+        )
+    );
+
+  if (!scoredCandidates?.length) {
+    return null;
+  }
+
+  if (
+    scoredCandidates.length > 1 &&
+    scoredCandidates[0].score === scoredCandidates[1].score
+  ) {
+    return null;
+  }
+
+  return {
+    matchedBy,
+    track: scoredCandidates[0].candidate.track
+  };
+}
+
 function indexedTrackTitleMatches(
   track: BackupTrack,
   indexedTrack: NavidromeIndexedTrack
@@ -3076,6 +3160,16 @@ function indexedTrackTitleMatches(
     track.trackNumber === indexedTrack.trackNumber;
 
   return sameTrackNumber || durationCloseEnough(track.durationMs, indexedTrack.durationMs);
+}
+
+function indexedTrackTitleLooselyMatches(
+  track: BackupTrack,
+  indexedTrack: NavidromeIndexedTrack
+) {
+  return titleKeysCompatible(track.name, indexedTrack.title, [
+    track.album,
+    indexedTrack.album
+  ]);
 }
 
 function titleKeysCompatible(
