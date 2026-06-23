@@ -170,6 +170,42 @@ export type NavidromeTrackMatch = {
   trackPosition: number;
 };
 
+export type NaviCleanCanonicalTargetRequestTrack = {
+  duration?: number | null;
+  relativePath: string;
+  size?: number | null;
+};
+
+export type NaviCleanCanonicalTarget = {
+  album: string;
+  albumArtist: string;
+  matchedBy?: "duration" | "isrc" | "metadata";
+  playlistIds: string[];
+  playlistNames: string[];
+  sourceRelativePath: string;
+  spotifyTrackIds: string[];
+  spotifyTrackNames: string[];
+  targetRelativePath: string;
+};
+
+export type NaviCleanCanonicalTargetConflict = {
+  sourceRelativePath: string;
+  targets: Array<{
+    playlistIds: string[];
+    spotifyTrackIds: string[];
+    targetRelativePath: string;
+  }>;
+};
+
+export type NaviCleanCanonicalTargetResponse = {
+  conflicts: NaviCleanCanonicalTargetConflict[];
+  indexGeneratedAt?: string;
+  requested: number;
+  skippedStale: number;
+  targets: NaviCleanCanonicalTarget[];
+  warnings: string[];
+};
+
 export type NavidromeTrackOrganizationResult = {
   attemptedCount: number;
   libraryMatches: NavidromeTrackMatch[];
@@ -988,6 +1024,130 @@ export async function organizeNavidromeMatchedTracks(
       organizeNamingSettingsKey(naming)
     )
   } satisfies NavidromeTrackOrganizationResult;
+}
+
+export async function buildNaviCleanCanonicalTargets(
+  requestedTracks: NaviCleanCanonicalTargetRequestTrack[]
+): Promise<NaviCleanCanonicalTargetResponse> {
+  const requestedByRelativePath = new Map(
+    requestedTracks
+      .filter((track) => track.relativePath)
+      .map((track) => [normalizeRelativePathKey(track.relativePath), track])
+  );
+  const response: NaviCleanCanonicalTargetResponse = {
+    conflicts: [],
+    requested: requestedByRelativePath.size,
+    skippedStale: 0,
+    targets: [],
+    warnings: []
+  };
+
+  if (requestedByRelativePath.size === 0) {
+    return response;
+  }
+
+  const index = await readCurrentNavidromeLibraryIndex();
+
+  if (!index) {
+    return {
+      ...response,
+      warnings: ["SpotifyBU has no Navidrome library index. Scan the Navidrome library in SpotifyBU first."]
+    };
+  }
+
+  const { getLatestPlaylistBackupSnapshots } = await import("./backup-store.ts");
+  const snapshots = Object.values(getLatestPlaylistBackupSnapshots());
+
+  if (snapshots.length === 0) {
+    return {
+      ...response,
+      indexGeneratedAt: index.generatedAt,
+      warnings: ["SpotifyBU has no saved Spotify metadata backups yet."]
+    };
+  }
+
+  const naming = await loadOrganizeNamingSettings();
+  const candidatesBySourcePath = new Map<string, NaviCleanCanonicalTarget[]>();
+
+  for (const snapshot of snapshots) {
+    const matches = matchNavidromeTracksWithIndexUsingSettings(
+      snapshot.tracks,
+      index,
+      naming
+    );
+
+    for (let matchIndex = 0; matchIndex < matches.length; matchIndex += 1) {
+      const match = matches[matchIndex];
+      const spotifyTrack = snapshot.tracks[matchIndex];
+      const matchedTrack = match.matchedTrack;
+
+      if (!spotifyTrack || !matchedTrack) {
+        continue;
+      }
+
+      const sourceKey = normalizeRelativePathKey(matchedTrack.relativePath);
+      const requestedTrack = requestedByRelativePath.get(sourceKey);
+
+      if (!requestedTrack) {
+        continue;
+      }
+
+      if (!naviCleanRequestMatchesIndexedTrack(requestedTrack, matchedTrack)) {
+        response.skippedStale += 1;
+        continue;
+      }
+
+      const organizationPlan = buildTrackOrganizationPlan(
+        spotifyTrack,
+        matchedTrack,
+        naming
+      );
+      const currentCandidates = candidatesBySourcePath.get(sourceKey) ?? [];
+
+      currentCandidates.push({
+        album: spotifyTrack.album || "",
+        albumArtist: spotifyTrack.albumArtist || "",
+        matchedBy: match.matchedBy,
+        playlistIds: [snapshot.playlistId],
+        playlistNames: [snapshot.playlistName],
+        sourceRelativePath: matchedTrack.relativePath,
+        spotifyTrackIds: spotifyTrack.id ? [spotifyTrack.id] : [],
+        spotifyTrackNames: [spotifyTrack.name],
+        targetRelativePath: organizationPlan.recommendedRelativePath
+      });
+      candidatesBySourcePath.set(sourceKey, currentCandidates);
+    }
+  }
+
+  for (const candidates of candidatesBySourcePath.values()) {
+    const candidatesByTarget = mergeNaviCleanTargetCandidates(candidates);
+
+    if (candidatesByTarget.length === 1) {
+      response.targets.push(candidatesByTarget[0]);
+      continue;
+    }
+
+    response.conflicts.push({
+      sourceRelativePath: candidates[0].sourceRelativePath,
+      targets: candidatesByTarget.map((candidate) => ({
+        playlistIds: candidate.playlistIds,
+        spotifyTrackIds: candidate.spotifyTrackIds,
+        targetRelativePath: candidate.targetRelativePath
+      }))
+    });
+  }
+
+  response.targets.sort((left, right) =>
+    left.sourceRelativePath.localeCompare(right.sourceRelativePath)
+  );
+  response.conflicts.sort((left, right) =>
+    left.sourceRelativePath.localeCompare(right.sourceRelativePath)
+  );
+
+  return {
+    ...response,
+    indexGeneratedAt: index.generatedAt
+  };
 }
 
 export async function createOrUpdateNavidromePlaylistFromSpotify(
@@ -2904,6 +3064,72 @@ async function nextAvailableRelativeTrackPath({
 
 function toLibraryRelativePath(libraryPath: string, filePath: string) {
   return normalizeRelativePath(path.relative(libraryPath, filePath));
+}
+
+function naviCleanRequestMatchesIndexedTrack(
+  requestedTrack: NaviCleanCanonicalTargetRequestTrack,
+  indexedTrack: NavidromeIndexedTrack
+) {
+  if (
+    typeof requestedTrack.size === "number" &&
+    requestedTrack.size > 0 &&
+    indexedTrack.sizeBytes > 0 &&
+    requestedTrack.size !== indexedTrack.sizeBytes
+  ) {
+    return false;
+  }
+
+  if (
+    typeof requestedTrack.duration === "number" &&
+    requestedTrack.duration > 0 &&
+    typeof indexedTrack.durationMs === "number" &&
+    !durationCloseEnough(requestedTrack.duration * 1000, indexedTrack.durationMs)
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function mergeNaviCleanTargetCandidates(candidates: NaviCleanCanonicalTarget[]) {
+  const candidatesByTarget = new Map<string, NaviCleanCanonicalTarget>();
+
+  for (const candidate of candidates) {
+    const targetKey = normalizeRelativePathKey(candidate.targetRelativePath);
+    const existing = candidatesByTarget.get(targetKey);
+
+    if (!existing) {
+      candidatesByTarget.set(targetKey, { ...candidate });
+      continue;
+    }
+
+    existing.playlistIds = uniqueStrings([
+      ...existing.playlistIds,
+      ...candidate.playlistIds
+    ]);
+    existing.playlistNames = uniqueStrings([
+      ...existing.playlistNames,
+      ...candidate.playlistNames
+    ]);
+    existing.spotifyTrackIds = uniqueStrings([
+      ...existing.spotifyTrackIds,
+      ...candidate.spotifyTrackIds
+    ]);
+    existing.spotifyTrackNames = uniqueStrings([
+      ...existing.spotifyTrackNames,
+      ...candidate.spotifyTrackNames
+    ]);
+  }
+
+  return Array.from(candidatesByTarget.values()).sort((left, right) =>
+    left.targetRelativePath.localeCompare(right.targetRelativePath)
+  );
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean))).sort((left, right) =>
+    left.localeCompare(right)
+  );
 }
 
 function normalizeRelativePath(relativePath: string) {
