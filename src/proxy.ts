@@ -7,6 +7,7 @@ const publicPaths = new Set([
   "/api/app-auth/logout",
   "/api/app-auth/session",
   "/api/app-info",
+  "/api/naviclean/targets",
   "/api/providers",
   "/login"
 ]);
