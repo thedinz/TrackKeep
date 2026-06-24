@@ -279,28 +279,6 @@ type LibraryOrganizeResponse = LibraryIndexResponse & LibraryMatchesResponse & {
   skippedCount: number;
 };
 
-type NaviCleanTargetConflict = {
-  sourceRelativePath: string;
-  targets: Array<{
-    album?: string;
-    albumArtist?: string;
-    playlistIds: string[];
-    playlistNames?: string[];
-    selected?: boolean;
-    spotifyTrackIds: string[];
-    spotifyTrackNames?: string[];
-    targetRelativePath: string;
-  }>;
-};
-
-type NaviCleanTargetConflictsResponse = {
-  conflicts: NaviCleanTargetConflict[];
-  indexGeneratedAt?: string;
-  resolvedCount: number;
-  unresolvedCount: number;
-  warnings: string[];
-};
-
 type NavidromePlaylistSyncResponse = {
   navidromePlaylist: {
     addedCount?: number;
@@ -615,19 +593,6 @@ export default function Home() {
   const [navidromePlaylistSkipped, setNavidromePlaylistSkipped] = useState<
     NavidromePlaylistSyncResponse["navidromePlaylist"]["skipped"]
   >([]);
-  const [naviCleanTargetConflicts, setNaviCleanTargetConflicts] =
-    useState<NaviCleanTargetConflictsResponse | null>(null);
-  const [isLoadingNaviCleanTargetConflicts, setIsLoadingNaviCleanTargetConflicts] =
-    useState(false);
-  const [resolvingNaviCleanTargetKey, setResolvingNaviCleanTargetKey] =
-    useState<string | null>(null);
-  const unresolvedNaviCleanTargetConflicts = useMemo(
-    () =>
-      naviCleanTargetConflicts?.conflicts.filter(
-        (conflict) => !conflict.targets.some((target) => target.selected)
-      ) ?? [],
-    [naviCleanTargetConflicts]
-  );
 
   const applyLibraryMatches = useCallback(
     (nextTracks: BackupTrack[], nextMatches: LibraryMatch[]) => {
@@ -776,48 +741,6 @@ export default function Home() {
     }
   }, [applyLibraryIndexResponse]);
 
-  const loadNaviCleanTargetConflicts = useCallback(async () => {
-    setIsLoadingNaviCleanTargetConflicts(true);
-
-    try {
-      setNaviCleanTargetConflicts(
-        await fetchJson<NaviCleanTargetConflictsResponse>(
-          "/api/naviclean/targets/conflicts"
-        )
-      );
-    } catch (error) {
-      setRequestError(errorMessage(error));
-    } finally {
-      setIsLoadingNaviCleanTargetConflicts(false);
-    }
-  }, []);
-
-  const resolveNaviCleanTarget = useCallback(async (
-    sourceRelativePath: string,
-    targetRelativePath: string | null
-  ) => {
-    const resolveKey = `${sourceRelativePath}:${targetRelativePath ?? ""}`;
-
-    setResolvingNaviCleanTargetKey(resolveKey);
-    setRequestError(null);
-
-    try {
-      setNaviCleanTargetConflicts(
-        await postJson<NaviCleanTargetConflictsResponse>(
-          "/api/naviclean/targets/conflicts",
-          {
-            sourceRelativePath,
-            targetRelativePath
-          }
-        )
-      );
-    } catch (error) {
-      setRequestError(errorMessage(error));
-    } finally {
-      setResolvingNaviCleanTargetKey(null);
-    }
-  }, []);
-
   const loadAppInfo = useCallback(async () => {
     try {
       setAppInfo(await fetchJson<AppInfo>("/api/app-info"));
@@ -917,7 +840,6 @@ export default function Home() {
 
       if (!scanStarted) {
         await refreshLibraryMatches();
-        await loadNaviCleanTargetConflicts();
       }
     } catch (error) {
       if (isGatewayTimeoutError(error)) {
@@ -947,7 +869,6 @@ export default function Home() {
   }, [
     applyLibraryIndexResponse,
     libraryIndex,
-    loadNaviCleanTargetConflicts,
     refreshLibraryMatches
   ]);
 
@@ -1362,13 +1283,12 @@ export default function Home() {
       setTracks(response.tracks);
       setFolderPlans(response.folderPlans);
       setLibraryMatches(response.libraryMatches);
-      void loadNaviCleanTargetConflicts();
     } catch (error) {
       setRequestError(errorMessage(error));
     } finally {
       setIsResolvingSource(false);
     }
-  }, [loadNaviCleanTargetConflicts, lookupInput, sourceKind]);
+  }, [lookupInput, sourceKind]);
 
   const changeSourceKind = useCallback((nextSourceKind: SourceKind) => {
     setSourceKind(nextSourceKind);
@@ -1448,7 +1368,6 @@ export default function Home() {
 
       void loadSpotifyAuthConfig();
       void loadLibraryIndex();
-      void loadNaviCleanTargetConflicts();
       void loadSession();
       void loadNavidromeStatus();
     }
@@ -1461,7 +1380,6 @@ export default function Home() {
   }, [
     loadAppInfo,
     loadLibraryIndex,
-    loadNaviCleanTargetConflicts,
     loadNavidromeStatus,
     loadSession,
     loadSpotifyAuthConfig
@@ -1488,7 +1406,6 @@ export default function Home() {
 
         if (response.scan?.state === "succeeded") {
           await refreshLibraryMatches();
-          await loadNaviCleanTargetConflicts();
           return;
         }
 
@@ -1522,7 +1439,6 @@ export default function Home() {
   }, [
     applyLibraryIndexResponse,
     libraryIndexScan?.state,
-    loadNaviCleanTargetConflicts,
     refreshLibraryMatches
   ]);
 
@@ -1591,7 +1507,6 @@ export default function Home() {
               response.libraryMatches
             )
           }));
-          void loadNaviCleanTargetConflicts();
         }
       } catch (error) {
         if (!cancelled) {
@@ -1611,7 +1526,6 @@ export default function Home() {
     };
   }, [
     clearBackupWorkflowState,
-    loadNaviCleanTargetConflicts,
     selectedPlaylistId,
     sourceKind
   ]);
@@ -2801,107 +2715,6 @@ export default function Home() {
                           )} more destinations`}
                     </button>
                   ) : null}
-                </div>
-              ) : null}
-
-              {(unresolvedNaviCleanTargetConflicts.length > 0 ||
-                isLoadingNaviCleanTargetConflicts) ? (
-                <div className="naviclean-conflict-panel">
-                  <div className="section-heading naviclean-conflict-heading">
-                    <span className="stat-label">NaviClean target conflicts</span>
-                    <p>
-                      Resolve files where saved Spotify metadata points the same
-                      Navidrome file at more than one organization target.
-                    </p>
-                    <button
-                      className="folder-plan-toggle"
-                      disabled={isLoadingNaviCleanTargetConflicts}
-                      onClick={() => void loadNaviCleanTargetConflicts()}
-                      type="button"
-                    >
-                      {isLoadingNaviCleanTargetConflicts ? (
-                        <Loader2 className="spin" size={16} />
-                      ) : (
-                        <RefreshCw size={16} />
-                      )}
-                      Refresh
-                    </button>
-                  </div>
-                  {naviCleanTargetConflicts ? (
-                    <div className="naviclean-conflict-summary">
-                      <span>
-                        {numberFormatter.format(naviCleanTargetConflicts.unresolvedCount)} unresolved
-                      </span>
-                      <span>
-                        {numberFormatter.format(naviCleanTargetConflicts.resolvedCount)} resolved
-                      </span>
-                    </div>
-                  ) : null}
-                  {naviCleanTargetConflicts?.warnings.map((warning) => (
-                    <p className="naviclean-conflict-warning" key={warning}>
-                      {warning}
-                    </p>
-                  ))}
-                  <div className="naviclean-conflict-list">
-                    {unresolvedNaviCleanTargetConflicts.map((conflict) => (
-                      <div className="naviclean-conflict" key={conflict.sourceRelativePath}>
-                        <div className="naviclean-conflict-source">
-                          <HardDrive size={18} />
-                          <span>
-                            <strong>{naviCleanConflictStatusLabel(conflict)}</strong>
-                            <span>{conflict.sourceRelativePath}</span>
-                          </span>
-                          {conflict.targets.some((target) => target.selected) ? (
-                            <button
-                              className="folder-plan-toggle"
-                              disabled={Boolean(resolvingNaviCleanTargetKey)}
-                              onClick={() =>
-                                void resolveNaviCleanTarget(conflict.sourceRelativePath, null)
-                              }
-                              type="button"
-                            >
-                              Clear
-                            </button>
-                          ) : null}
-                        </div>
-                        <div className="naviclean-target-options">
-                          {conflict.targets.map((target) => {
-                            const resolveKey = `${conflict.sourceRelativePath}:${target.targetRelativePath}`;
-
-                            return (
-                              <button
-                                className={
-                                  target.selected
-                                    ? "naviclean-target-option selected"
-                                    : "naviclean-target-option"
-                                }
-                                disabled={Boolean(resolvingNaviCleanTargetKey)}
-                                key={target.targetRelativePath}
-                                onClick={() =>
-                                  void resolveNaviCleanTarget(
-                                    conflict.sourceRelativePath,
-                                    target.targetRelativePath
-                                  )
-                                }
-                                type="button"
-                              >
-                                <span>
-                                  <strong>{naviCleanTargetChoiceLabel(target)}</strong>
-                                  <span>{target.targetRelativePath}</span>
-                                </span>
-                                <em>{naviCleanTargetChoiceContext(target)}</em>
-                                {resolvingNaviCleanTargetKey === resolveKey ? (
-                                  <Loader2 className="spin" size={16} />
-                                ) : target.selected ? (
-                                  <CheckCircle2 size={16} />
-                                ) : null}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
                 </div>
               ) : null}
 
@@ -4507,36 +4320,6 @@ function folderPlanCountLabel(
   }
 
   return parts.length ? parts.join(", ") : trackCountLabel(trackCount);
-}
-
-function naviCleanConflictStatusLabel(conflict: NaviCleanTargetConflict) {
-  return conflict.targets.some((target) => target.selected)
-    ? "Resolved target"
-    : "Choose target";
-}
-
-function naviCleanTargetChoiceLabel(
-  target: NaviCleanTargetConflict["targets"][number]
-) {
-  const trackName = target.spotifyTrackNames?.[0];
-  const album = target.album || "Unknown Album";
-  const albumArtist = target.albumArtist || "Unknown Artist";
-
-  return trackName ? `${trackName} - ${albumArtist} / ${album}` : `${albumArtist} / ${album}`;
-}
-
-function naviCleanTargetChoiceContext(
-  target: NaviCleanTargetConflict["targets"][number]
-) {
-  const playlists = target.playlistNames?.length
-    ? target.playlistNames.join(", ")
-    : "";
-  const trackCount = target.spotifyTrackIds.length;
-
-  return [
-    playlists ? `Playlists: ${playlists}` : "",
-    trackCount ? `${numberFormatter.format(trackCount)} Spotify track${trackCount === 1 ? "" : "s"}` : ""
-  ].filter(Boolean).join(" - ");
 }
 
 function trackCountLabel(trackCount: number) {

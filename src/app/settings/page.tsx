@@ -425,7 +425,7 @@ export default function SettingsPage() {
               <SlidersHorizontal size={20} />
               <div>
                 <h2>Organize Scheme</h2>
-                <p className="muted">Match SpotifyBU and NaviClean with a shared layout</p>
+                <p className="muted">Choose how SpotifyBU stages organized Navidrome files</p>
               </div>
             </div>
           </div>

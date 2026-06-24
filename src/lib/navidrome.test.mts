@@ -4,20 +4,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
 import {
-  buildNaviCleanCanonicalTargets,
-  getNaviCleanTargetConflicts,
   matchNavidromeTracksWithIndex,
   planNavidromeAlbumFolders,
   readCurrentNavidromeLibraryIndex,
-  resolveNaviCleanTargetConflict,
   scanNavidromeLibraryIndex,
   type NavidromeLibraryIndex
 } from "./navidrome.ts";
 import type { BackupTrack } from "./spotify.ts";
-
-const nodeSqliteAvailable = await import("node:sqlite")
-  .then(() => true)
-  .catch(() => false);
 
 test("standard album folder uses artist album year layout", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
@@ -88,169 +81,6 @@ test("standard matching keeps Spotify year canonical when local year differs", a
   });
 });
 
-test("NaviClean targets use saved Spotify metadata for matched files", {
-  skip: nodeSqliteAvailable ? false : "node:sqlite is not available in this Node runtime"
-}, async (t) => {
-  await withDefaultOrganizeSettings(t, async () => {
-    const libraryPath = await mkdtemp(
-      path.join(tmpdir(), "spotifybu-naviclean-")
-    );
-    const previousLibraryPath = process.env.NAVIDROME_LIBRARY_PATH;
-    const sourceRelativePath =
-      "Example Artist/Example Artist - Example Record (2025)/Example Artist - Example Record (2025) - 01 - Opening.mp3";
-
-    process.env.NAVIDROME_LIBRARY_PATH = libraryPath;
-    t.after(async () => {
-      if (typeof previousLibraryPath === "string") {
-        process.env.NAVIDROME_LIBRARY_PATH = previousLibraryPath;
-      } else {
-        delete process.env.NAVIDROME_LIBRARY_PATH;
-      }
-
-      await rm(libraryPath, {
-        force: true,
-        recursive: true
-      });
-    });
-
-    await mkdir(path.join(libraryPath, ".spotifybu"), {
-      recursive: true
-    });
-    await mkdir(path.join(libraryPath, path.dirname(sourceRelativePath)), {
-      recursive: true
-    });
-    await writeFile(path.join(libraryPath, sourceRelativePath), "audio", "utf8");
-    await writeFile(
-      path.join(libraryPath, ".spotifybu", "library-index.json"),
-      `${JSON.stringify({
-        generatedAt: new Date(0).toISOString(),
-        libraryPath,
-        tracks: [
-          {
-            album: "Example Record",
-            albumArtist: "Example Artist",
-            artist: "Example Artist",
-            artists: ["Example Artist"],
-            durationMs: 180_000,
-            fileName: "Example Artist - Example Record (2025) - 01 - Opening.mp3",
-            mtimeMs: 0,
-            relativeDirectory:
-              "Example Artist/Example Artist - Example Record (2025)",
-            relativePath: sourceRelativePath,
-            sizeBytes: 123,
-            source: "tags",
-            title: "Opening",
-            trackNumber: 1
-          }
-        ],
-        version: 1
-      } satisfies NavidromeLibraryIndex, null, 2)}\n`,
-      "utf8"
-    );
-    const { persistPlaylistBackup } = await import("./backup-store.ts");
-
-    persistPlaylistBackup({
-      playlist: {
-        id: "playlist-1",
-        imageUrl: undefined,
-        name: "Example Playlist",
-        owner: "Tester",
-        ownerId: "tester",
-        tracksTotal: 1
-      },
-      source: "playlist-load",
-      tracks: [exampleTrack]
-    });
-
-    const result = await buildNaviCleanCanonicalTargets([
-      {
-        duration: 180,
-        relativePath: sourceRelativePath,
-        size: 123
-      }
-    ]);
-
-    assert.equal(result.conflicts.length, 0);
-    assert.equal(result.targets.length, 1);
-    assert.equal(result.targets[0].sourceRelativePath, sourceRelativePath);
-    assert.equal(
-      result.targets[0].targetRelativePath,
-      "Example Artist/Example Artist - Example Record (2026)/Example Artist - Example Record (2026) - 01 - Opening.mp3"
-    );
-
-    persistPlaylistBackup({
-      playlist: {
-        id: "playlist-2",
-        imageUrl: undefined,
-        name: "Conflicting Playlist",
-        owner: "Tester",
-        ownerId: "tester",
-        tracksTotal: 1
-      },
-      source: "playlist-load",
-      tracks: [
-        {
-          ...exampleTrack,
-          album: "Example Record Deluxe",
-          albumId: "album-deluxe",
-          id: "track-deluxe",
-          isrc: undefined
-        }
-      ]
-    });
-
-    const conflictingResult = await buildNaviCleanCanonicalTargets([
-      {
-        duration: 180,
-        relativePath: sourceRelativePath,
-        size: 123
-      }
-    ]);
-
-    assert.equal(conflictingResult.targets.length, 0);
-    assert.equal(conflictingResult.conflicts.length, 1);
-    assert.equal(conflictingResult.conflicts[0].targets.length, 2);
-
-    const conflicts = await getNaviCleanTargetConflicts();
-
-    assert.equal(conflicts.unresolvedCount, 1);
-    assert.equal(conflicts.resolvedCount, 0);
-    assert.equal(conflicts.conflicts[0].sourceRelativePath, sourceRelativePath);
-    assert.equal(conflicts.conflicts[0].targets.length, 2);
-
-    await resolveNaviCleanTargetConflict({
-      sourceRelativePath,
-      targetRelativePath:
-        "Example Artist/Example Artist - Example Record (2026)/Example Artist - Example Record (2026) - 01 - Opening.mp3"
-    });
-
-    const resolvedConflicts = await getNaviCleanTargetConflicts();
-
-    assert.equal(resolvedConflicts.unresolvedCount, 0);
-    assert.equal(resolvedConflicts.resolvedCount, 1);
-    assert.equal(
-      resolvedConflicts.conflicts[0].targets.filter((target) => target.selected)
-        .length,
-      1
-    );
-
-    const resolvedResult = await buildNaviCleanCanonicalTargets([
-      {
-        duration: 180,
-        relativePath: sourceRelativePath,
-        size: 123
-      }
-    ]);
-
-    assert.equal(resolvedResult.conflicts.length, 0);
-    assert.equal(resolvedResult.targets.length, 1);
-    assert.equal(
-      resolvedResult.targets[0].targetRelativePath,
-      "Example Artist/Example Artist - Example Record (2026)/Example Artist - Example Record (2026) - 01 - Opening.mp3"
-    );
-  });
-});
-
 test("standard matching finds indexed title variants but keeps Spotify naming canonical", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
     const spotifyTrack = {
@@ -295,7 +125,7 @@ test("standard matching finds indexed title variants but keeps Spotify naming ca
   });
 });
 
-test("standard matching uses NaviClean path token normalization", async (t) => {
+test("standard matching uses shared path token normalization", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
     const spotifyTrack = {
       ...exampleTrack,
