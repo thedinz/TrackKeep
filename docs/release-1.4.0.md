@@ -1,7 +1,6 @@
 # SpotifyBU 1.4.0
 
-SpotifyBU 1.4.0 adds configurable organize schemes so SpotifyBU and NaviClean
-can agree on library layout.
+SpotifyBU 1.4.0 adds configurable organize schemes for staged Navidrome files.
 
 ## Added
 
