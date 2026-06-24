@@ -16,7 +16,7 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - Local SpotifyBU login with default `admin/admin` credentials
 - Settings page for switching between internal login and external reverse-proxy auth
 - Settings page for changing the SpotifyBU app username and password
-- Settings page for matching SpotifyBU and NaviClean with standard or manual organize schemes
+- Settings page for standard or manual organize schemes
 - Playlist listing with private and collaborative playlist scopes
 - Playlist rail badges for fully backed-up playlists and changed playlists with unbacked-up track counts
 - SQLite-backed playlist metadata backup snapshots saved under the SpotifyBU config directory
