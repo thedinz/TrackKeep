@@ -3062,6 +3062,21 @@ function findIndexedTrackMatch(
     return unambiguousArtistTitleMatch;
   }
 
+  const contextualTitleMatch = unambiguousIndexedTrackMatch(
+    track,
+    indexedTitleCandidates(track, lookup).filter(
+      (candidate) =>
+        indexedTrackTitleLooselyMatches(track, candidate.track) &&
+        indexedTrackHasSpotifyContext(track, candidate.track)
+    ),
+    "metadata",
+    naming
+  );
+
+  if (contextualTitleMatch) {
+    return contextualTitleMatch;
+  }
+
   return null;
 }
 
@@ -3073,6 +3088,21 @@ function indexedArtistCandidates(
 
   for (const artist of artists) {
     for (const candidate of lookup.artistMatches.get(artist) ?? []) {
+      candidates.set(candidate.track.relativePath, candidate);
+    }
+  }
+
+  return Array.from(candidates.values());
+}
+
+function indexedTitleCandidates(
+  track: BackupTrack,
+  lookup: NavidromeTrackLookup
+) {
+  const candidates = new Map<string, NavidromeTrackLookupEntry>();
+
+  for (const titleKey of titleMatchKeys(track.name, [track.album])) {
+    for (const candidate of lookup.titleMatches.get(titleKey) ?? []) {
       candidates.set(candidate.track.relativePath, candidate);
     }
   }
@@ -3258,6 +3288,14 @@ function indexedTrackMatchScore(
     score += 10;
   }
 
+  if (indexedTrackHasSpotifyArtistContext(track, indexedTrack)) {
+    score += 8;
+  }
+
+  if (indexedTrackHasSpotifyAlbumContext(track, indexedTrack)) {
+    score += 6;
+  }
+
   if (normalizeText(track.album) === normalizeText(indexedTrack.album)) {
     score += 5;
   }
@@ -3319,8 +3357,8 @@ function buildNavidromeTrackLookup(
       entry
     );
 
-    if (entry.titleKey) {
-      appendNavidromeLookupEntry(lookup.titleMatches, entry.titleKey, entry);
+    for (const titleKey of titleMatchKeys(track.title, [track.album])) {
+      appendNavidromeLookupEntry(lookup.titleMatches, titleKey, entry);
     }
   }
 
@@ -3388,13 +3426,98 @@ function hasArtistOverlap(left: Set<string>, right: Set<string>) {
     return true;
   }
 
-  for (const artist of left) {
-    if (right.has(artist)) {
+  for (const leftArtist of left) {
+    for (const rightArtist of right) {
+      if (artistKeysCompatible(leftArtist, rightArtist)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function artistKeysCompatible(left: string, right: string) {
+  const leftKey = canonicalArtistKey(left);
+  const rightKey = canonicalArtistKey(right);
+
+  if (!leftKey || !rightKey) {
+    return false;
+  }
+
+  if (leftKey === rightKey) {
+    return true;
+  }
+
+  const leftTokenCount = leftKey.split(/\s+/).filter(Boolean).length;
+  const rightTokenCount = rightKey.split(/\s+/).filter(Boolean).length;
+
+  return (
+    leftTokenCount >= 2 &&
+    rightTokenCount >= 2 &&
+    (titleTokenCoverage(leftKey, rightKey) === 1 ||
+      titleTokenCoverage(rightKey, leftKey) === 1)
+  );
+}
+
+function canonicalArtistKey(value: string) {
+  return value.replace(/^the\s+/, "").trim();
+}
+
+function indexedTrackHasSpotifyContext(
+  track: BackupTrack,
+  indexedTrack: NavidromeIndexedTrack
+) {
+  return (
+    indexedTrackHasSpotifyArtistContext(track, indexedTrack) ||
+    indexedTrackHasSpotifyAlbumContext(track, indexedTrack)
+  );
+}
+
+function indexedTrackHasSpotifyArtistContext(
+  track: BackupTrack,
+  indexedTrack: NavidromeIndexedTrack
+) {
+  const pathText = indexedTrackContextText(indexedTrack);
+
+  for (const artist of normalizedSpotifyArtists(track)) {
+    if (normalizedTextContainsKey(pathText, artist)) {
       return true;
     }
   }
 
   return false;
+}
+
+function indexedTrackHasSpotifyAlbumContext(
+  track: BackupTrack,
+  indexedTrack: NavidromeIndexedTrack
+) {
+  const album = normalizeText(track.album);
+
+  return Boolean(album) && normalizedTextContainsKey(indexedTrackContextText(indexedTrack), album);
+}
+
+function indexedTrackContextText(indexedTrack: NavidromeIndexedTrack) {
+  return normalizeText(
+    [
+      indexedTrack.relativePath,
+      indexedTrack.relativeDirectory,
+      indexedTrack.fileName,
+      indexedTrack.album,
+      indexedTrack.albumArtist,
+      indexedTrack.artist,
+      ...indexedTrack.artists
+    ].filter(Boolean).join(" ")
+  );
+}
+
+function normalizedTextContainsKey(text: string, key: string) {
+  if (!text || !key) {
+    return false;
+  }
+
+  return ` ${text} `.includes(` ${key} `);
 }
 
 function durationCloseEnough(leftMs: number, rightMs?: number) {

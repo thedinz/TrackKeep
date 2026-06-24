@@ -546,6 +546,108 @@ test("matching finds moved artist-title files without tag duration or track numb
   });
 });
 
+test("matching finds moved title-only files with artist context in the path", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const libraryPath = await mkdtemp(
+      path.join(tmpdir(), "spotifybu-library-")
+    );
+    const previousLibraryPath = process.env.NAVIDROME_LIBRARY_PATH;
+    const relativePath = "Marilyn Manson/Lest We Forget/Tainted Love.mp3";
+    const filePath = path.join(libraryPath, ...relativePath.split("/"));
+    const spotifyTrack = {
+      ...exampleTrack,
+      album: "Lest We Forget - The Best Of",
+      albumArtist: "Marilyn Manson",
+      albumId: "album-manson-best-of-title-only",
+      albumReleaseDate: "2004-01-01",
+      artists: ["Marilyn Manson"],
+      id: "track-tainted-love-title-only",
+      isrc: undefined,
+      name: "Tainted Love",
+      trackNumber: 17
+    } satisfies BackupTrack;
+
+    process.env.NAVIDROME_LIBRARY_PATH = libraryPath;
+    t.after(async () => {
+      if (typeof previousLibraryPath === "string") {
+        process.env.NAVIDROME_LIBRARY_PATH = previousLibraryPath;
+      } else {
+        delete process.env.NAVIDROME_LIBRARY_PATH;
+      }
+
+      await rm(libraryPath, {
+        force: true,
+        recursive: true
+      });
+    });
+
+    await mkdir(path.dirname(filePath), {
+      recursive: true
+    });
+    await writeFile(filePath, "not real audio", "utf8");
+
+    await scanNavidromeLibraryIndex();
+    const index = await readCurrentNavidromeLibraryIndex();
+    assert.ok(index);
+    const indexedTrack = index.tracks[0];
+
+    assert.equal(index.tracks.length, 1);
+    assert.equal(indexedTrack.artist, undefined);
+    assert.equal(indexedTrack.title, "Tainted Love");
+
+    const matches = await matchNavidromeTracksWithIndex([spotifyTrack], index);
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].needsMove, true);
+    assert.equal(matches[0].matchedTrack?.relativePath, relativePath);
+  });
+});
+
+test("matching accepts comma-joined local artist tags", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const spotifyTrack = {
+      ...exampleTrack,
+      album: "Live From Europe",
+      albumArtist: "Cody Carnes",
+      albumId: "album-cody-comma",
+      albumReleaseDate: "2024-08-16",
+      artists: ["Cody Carnes"],
+      id: "track-cody-comma",
+      isrc: undefined,
+      name: "Firm Foundation (He Won't)",
+      trackNumber: 4
+    } satisfies BackupTrack;
+    const matches = await matchNavidromeTracksWithIndex([spotifyTrack], {
+      generatedAt: new Date(0).toISOString(),
+      libraryPath: "/music",
+      tracks: [
+        {
+          album: "Live From Europe",
+          albumArtist: "Kari Jobe Carnes, Cody Carnes",
+          artist: "Kari Jobe Carnes, Cody Carnes",
+          artists: ["Kari Jobe Carnes, Cody Carnes"],
+          durationMs: undefined,
+          fileName:
+            "Kari Jobe Carnes, Cody Carnes - Live From Europe (2024) - 04 - Firm Foundation (He Won't).mp3",
+          mtimeMs: 0,
+          relativeDirectory:
+            "Kari Jobe Carnes, Cody Carnes/Kari Jobe Carnes, Cody Carnes - Live From Europe (2024)",
+          relativePath:
+            "Kari Jobe Carnes, Cody Carnes/Kari Jobe Carnes, Cody Carnes - Live From Europe (2024)/Kari Jobe Carnes, Cody Carnes - Live From Europe (2024) - 04 - Firm Foundation (He Won't).mp3",
+          sizeBytes: 1,
+          source: "tags",
+          title: "Firm Foundation (He Won't)",
+          trackNumber: 4
+        }
+      ],
+      version: 1
+    } satisfies NavidromeLibraryIndex);
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].needsMove, true);
+  });
+});
+
 test("library index parses standard folders when parent artist stripped trailing punctuation", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
     const libraryPath = await mkdtemp(
