@@ -553,7 +553,11 @@ export function rankSpotifyTrackSearchMatches(
   }
 
   return candidates
-    .filter(isCatalogSpotifyTrack)
+    .filter(
+      (candidate) =>
+        isCatalogSpotifyTrack(candidate) &&
+        !isProviderPollutedRecoveryVariant(localTrack, candidate)
+    )
     .map((candidate): SpotifyTrackSearchMatch | null => {
       const candidateMetadata = {
         album: candidate.album?.name,
@@ -1090,10 +1094,7 @@ function spotifyCatalogRecoveryTitleVariants(track: SpotifyTrackObject) {
   );
   const fallbackTitle = spotifySanitizedLocalTrackTitle(track);
 
-  return uniqueSpotifySearchValues([
-    ...spotifyTitleSearchVariants(fallbackTitle || cleanedTitle || title),
-    ...spotifyTitleSearchVariants(cleanedTitle || title)
-  ]);
+  return spotifyTitleSearchVariants(fallbackTitle || cleanedTitle || title);
 }
 
 function spotifySanitizedLocalTrackTitle(track: SpotifyTrackObject) {
@@ -1114,19 +1115,10 @@ function spotifySanitizedLocalTrackTitle(track: SpotifyTrackObject) {
 
 function spotifyTitleSearchVariants(value: string | undefined) {
   const normalizedValue = normalizeSpotifySearchValue(value);
-  const dequalifiedValue = stripTrailingTitleQualifiers(normalizedValue);
   const plainValue = normalizeSpotifySearchValue(
     normalizedValue.replace(/[()[\]{}]/g, " ")
   );
-  const plainDequalifiedValue = normalizeSpotifySearchValue(
-    dequalifiedValue.replace(/[()[\]{}]/g, " ")
-  );
-  const baseValues = uniqueSpotifySearchValues([
-    dequalifiedValue,
-    plainDequalifiedValue,
-    normalizedValue,
-    plainValue
-  ]);
+  const baseValues = uniqueSpotifySearchValues([normalizedValue, plainValue]);
   const variants: string[] = [];
 
   for (const baseValue of baseValues) {
@@ -1140,6 +1132,23 @@ function spotifyTitleSearchVariants(value: string | undefined) {
   return uniqueSpotifySearchValues(variants);
 }
 
+function isProviderPollutedRecoveryVariant(
+  localTrack: SpotifyTrackObject,
+  candidate: SpotifyTrackObject
+) {
+  return (
+    hasProviderPollutedSpotifyMetadata(localTrack) &&
+    hasTrailingTitleQualifier(candidate.name ?? "")
+  );
+}
+
+function hasTrailingTitleQualifier(value: string) {
+  const normalizedValue = normalizeSpotifySearchValue(value);
+
+  return Boolean(normalizedValue) &&
+    stripTrailingTitleQualifiers(normalizedValue) !== normalizedValue;
+}
+
 function stripTrailingTitleQualifiers(value: string) {
   let strippedValue = value;
 
@@ -1147,6 +1156,10 @@ function stripTrailingTitleQualifiers(value: string) {
     const nextValue = strippedValue
       .replace(
         /\s*[\[(]\s*[^()[\]{}]*(?:audio|clip|edit|live|mix|remaster(?:ed)?|remix|version|video|visualizer)[^()[\]{}]*[\])]\s*$/i,
+        ""
+      )
+      .replace(
+        /\s+[-\u2013\u2014]\s*[^-\u2013\u2014]*(?:audio|clip|edit|live|mix|remaster(?:ed)?|remix|version|video|visualizer)[^-]*$/i,
         ""
       )
       .trim();
