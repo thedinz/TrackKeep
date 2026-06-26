@@ -1160,6 +1160,12 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   color: #ffc4b5;
 }
 
+.track-status.repair {
+  background: rgba(243, 184, 75, 0.12);
+  border-color: rgba(243, 184, 75, 0.5);
+  color: #ffe5a6;
+}
+
 .track-note {
   color: var(--muted);
   display: block;
@@ -1381,6 +1387,10 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   gap: 12px;
   margin-bottom: 16px;
   padding: 12px;
+}
+
+.backup-workflow-warning {
+  align-items: center;
 }
 
 .backup-workflow:focus-visible {

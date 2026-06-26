@@ -22,7 +22,11 @@ import {
   type NavidromeLibraryIndexSummary
 } from "@/lib/navidrome";
 import { getSpotifyBuDatabase } from "@/lib/database";
-import type { BackupTrack } from "@/lib/spotify";
+import {
+  isUnresolvedSpotifyLocalBackupTrack,
+  unresolvedSpotifyLocalTrackMessage,
+  type BackupTrack
+} from "@/lib/spotify";
 import { scoreProviderCandidate } from "./scoring";
 import {
   providerSearchQuery,
@@ -2106,6 +2110,10 @@ function validateTrack(track: BackupTrack) {
 
   if (!Array.isArray(track.artists)) {
     throw new Error("Send Spotify track artists before downloading.");
+  }
+
+  if (isUnresolvedSpotifyLocalBackupTrack(track)) {
+    throw new Error(track.metadataWarning ?? unresolvedSpotifyLocalTrackMessage);
   }
 }
 

@@ -10,7 +10,12 @@ import {
   organizeNamingSettingsKey,
   type OrganizeNamingSettings
 } from "./organize-settings.ts";
-import type { BackupTrack, PlaylistSummary } from "./spotify";
+import {
+  isUnresolvedSpotifyLocalBackupTrack,
+  unresolvedSpotifyLocalTrackMessage,
+  type BackupTrack,
+  type PlaylistSummary
+} from "./spotify";
 
 export type NavidromeLibraryState =
   | "not_configured"
@@ -1081,6 +1086,15 @@ export async function createOrUpdateNavidromePlaylistFromSpotify(
   const skipped: NavidromePlaylistSyncResult["skipped"] = [];
 
   for (const track of tracks) {
+    if (isUnresolvedSpotifyLocalBackupTrack(track)) {
+      skipped.push({
+        reason: track.metadataWarning ?? unresolvedSpotifyLocalTrackMessage,
+        trackName: track.name,
+        trackPosition: track.position
+      });
+      continue;
+    }
+
     const match = matches.find(
       (candidate) => candidate.trackPosition === track.position
     );

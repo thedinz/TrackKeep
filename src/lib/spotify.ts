@@ -117,6 +117,8 @@ type SpotifySearchResponse = {
 
 type PlaylistTrackItem = {
   addedAt: string | undefined;
+  metadataStatus?: BackupTrackMetadataStatus;
+  metadataWarning?: string;
   track: SpotifyTrackObject;
 };
 
@@ -163,6 +165,11 @@ export type AlbumSummary = {
   tracksTotal: number;
 };
 
+export type BackupTrackMetadataStatus =
+  | "spotify"
+  | "spotify-local-resolved"
+  | "spotify-local-unresolved";
+
 export type BackupTrack = {
   addedAt?: string;
   album: string;
@@ -180,6 +187,8 @@ export type BackupTrack = {
   explicit: boolean;
   id?: string;
   isrc?: string;
+  metadataStatus?: BackupTrackMetadataStatus;
+  metadataWarning?: string;
   name: string;
   position: number;
   spotifyUri?: string;
@@ -206,6 +215,15 @@ export const SPOTIFY_SCOPES = [
   "playlist-read-collaborative",
   "user-library-read"
 ];
+
+export const unresolvedSpotifyLocalTrackMessage =
+  "Spotify returned this playlist row as a local file instead of a catalog track. Remove and re-add the Spotify catalog track before backing it up.";
+
+export function isUnresolvedSpotifyLocalBackupTrack(
+  track: Pick<BackupTrack, "metadataStatus">
+) {
+  return track.metadataStatus === "spotify-local-unresolved";
+}
 
 const playlistMetadataFields = [
   "collaborative",
@@ -376,7 +394,13 @@ export async function getPlaylistTracks(
   );
 
   return resolvedTracks.map((item, index) =>
-    mapTrackObject(item.track, index, item.addedAt)
+    mapTrackObject(
+      item.track,
+      index,
+      item.addedAt,
+      item.metadataStatus,
+      item.metadataWarning
+    )
   );
 }
 
@@ -409,7 +433,16 @@ async function resolveLocalPlaylistTracks(
   const replacementByIndex = new Map(
     resolvedEntries.map((entry) => [
       entry.index,
-      entry.match?.track ?? sanitizeUnresolvedLocalSpotifyTrack(entry.localTrack)
+      {
+        metadataStatus: entry.match
+          ? "spotify-local-resolved"
+          : "spotify-local-unresolved",
+        metadataWarning: entry.match ? undefined : unresolvedSpotifyLocalTrackMessage,
+        track: entry.match?.track ?? sanitizeUnresolvedLocalSpotifyTrack(entry.localTrack)
+      } satisfies Pick<
+        PlaylistTrackItem,
+        "metadataStatus" | "metadataWarning" | "track"
+      >
     ] as const)
   );
 
@@ -441,9 +474,16 @@ async function resolveLocalPlaylistTracks(
   }
 
   return playlistTracks.map((item, index) => {
-    const replacementTrack = replacementByIndex.get(index);
+    const replacement = replacementByIndex.get(index);
 
-    return replacementTrack ? { ...item, track: replacementTrack } : item;
+    return replacement
+      ? {
+          ...item,
+          metadataStatus: replacement.metadataStatus,
+          metadataWarning: replacement.metadataWarning,
+          track: replacement.track
+        }
+      : item;
   });
 }
 
@@ -1276,7 +1316,9 @@ function mapAlbum(album: SpotifyAlbumObject) {
 function mapTrackObject(
   track: SpotifyTrackObject | SpotifyAlbumTrackObject | null | undefined,
   index: number,
-  addedAt?: string
+  addedAt?: string,
+  metadataStatus: BackupTrackMetadataStatus = "spotify",
+  metadataWarning?: string
 ) {
   const fullTrack = track as SpotifyTrackObject | null | undefined;
   const album = fullTrack?.album;
@@ -1306,6 +1348,8 @@ function mapTrackObject(
     explicit: Boolean(track?.explicit),
     id: track?.id,
     isrc: fullTrack?.external_ids?.isrc,
+    metadataStatus,
+    metadataWarning,
     name: track?.name ?? "Unknown track",
     position: index + 1,
     spotifyUri: track?.uri,

@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  CircleAlert,
   Clock3,
   Download,
   HardDrive,
@@ -233,6 +234,11 @@ type BackupTrack = {
   explicit: boolean;
   id?: string;
   isrc?: string;
+  metadataStatus?:
+    | "spotify"
+    | "spotify-local-resolved"
+    | "spotify-local-unresolved";
+  metadataWarning?: string;
   name: string;
   position: number;
   spotifyUri?: string;
@@ -1115,15 +1121,22 @@ export default function Home() {
 
   const searchProviderTrack = useCallback(async (track: BackupTrack) => {
     setDownloadTrackPosition(String(track.position));
-    setIsSearchingProvider(true);
     setProviderCandidates([]);
     setSelectedProviderCandidateId("");
     setProviderDownloadMessage(null);
-    setProviderDownloadError(null);
     setProviderDownloadStatusLabel(null);
     setRequestError(null);
     setManualProviderSourceUrl("");
     setIsManualProviderSourceOpen(false);
+
+    if (isUnresolvedSpotifyLocalTrack(track)) {
+      setIsSearchingProvider(false);
+      setProviderDownloadError(spotifyLocalRepairMessage(track));
+      return;
+    }
+
+    setIsSearchingProvider(true);
+    setProviderDownloadError(null);
 
     try {
       const response = await postJson<ProviderSearchResponse>(
@@ -1187,6 +1200,11 @@ export default function Home() {
       return;
     }
 
+    if (isUnresolvedSpotifyLocalTrack(selectedTrack)) {
+      setProviderDownloadError(spotifyLocalRepairMessage(selectedTrack));
+      return;
+    }
+
     await searchProviderTrack(selectedTrack);
   }, [
     downloadTrackPosition,
@@ -1231,6 +1249,11 @@ export default function Home() {
 
     if (!selectedTrack) {
       setRequestError("Choose a track before downloading.");
+      return;
+    }
+
+    if (isUnresolvedSpotifyLocalTrack(selectedTrack)) {
+      setRequestError(spotifyLocalRepairMessage(selectedTrack));
       return;
     }
 
@@ -1666,7 +1689,11 @@ export default function Home() {
     [libraryMatches]
   );
   const hasUsableLibraryIndex = Boolean(libraryIndex && !libraryIndex.stale);
-  const indexedTrackCount = libraryMatches.filter((match) => match.exists).length;
+  const indexedTrackCount = tracks.filter((track) => {
+    const match = libraryMatchesByPosition.get(track.position);
+
+    return Boolean(match?.exists) && !isUnresolvedSpotifyLocalTrack(track);
+  }).length;
   const moveNeededCount = libraryMatches.filter((match) => match.needsMove).length;
   const missingBackupTracks = useMemo(
     () =>
@@ -1674,10 +1701,18 @@ export default function Home() {
         ? tracks.filter((track) => {
             const match = libraryMatchesByPosition.get(track.position);
 
-            return !match?.exists;
+            return !match?.exists || isUnresolvedSpotifyLocalTrack(track);
           })
         : tracks,
     [hasUsableLibraryIndex, libraryMatchesByPosition, tracks]
+  );
+  const unresolvedSpotifyLocalTracks = useMemo(
+    () => tracks.filter(isUnresolvedSpotifyLocalTrack),
+    [tracks]
+  );
+  const downloadTrackOptions = useMemo(
+    () => missingBackupTracks.filter((track) => !isUnresolvedSpotifyLocalTrack(track)),
+    [missingBackupTracks]
   );
   const missingBackupCount = hasUsableLibraryIndex
     ? missingBackupTracks.length
@@ -1704,7 +1739,6 @@ export default function Home() {
       ? `${Math.round((indexedTrackCount / tracks.length) * 100)}%`
       : "Scan"
     : "0%";
-  const downloadTrackOptions = missingBackupTracks;
   useEffect(() => {
     const nextDownloadTrackPosition = downloadTrackOptions[0]
       ? String(downloadTrackOptions[0].position)
@@ -2779,6 +2813,29 @@ export default function Home() {
                         : "Run Index"}
                     </span>
                   </div>
+                  {unresolvedSpotifyLocalTracks.length ? (
+                    <div
+                      className="provider-warning backup-workflow-warning"
+                      role="status"
+                    >
+                      <CircleAlert size={18} />
+                      <div>
+                        <h3>Spotify local rows need repair</h3>
+                        <p>
+                          Spotify returned{" "}
+                          {numberFormatter.format(
+                            unresolvedSpotifyLocalTracks.length
+                          )}{" "}
+                          playlist row
+                          {unresolvedSpotifyLocalTracks.length === 1
+                            ? ""
+                            : "s"}{" "}
+                          as local files, so SpotifyBU will not search or
+                          download provider sources for them.
+                        </p>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="provider-throttle-grid compact backup-workflow-settings">
                     <label className="provider-field">
                       <span>Quality</span>
@@ -2842,9 +2899,11 @@ export default function Home() {
                             ))
                           ) : (
                             <option value="">
-                              {tracks.length
-                                ? "No missing backup tracks"
-                                : "Resolve Spotify tracks first"}
+                              {unresolvedSpotifyLocalTracks.length
+                                ? "Repair Spotify local rows first"
+                                : tracks.length
+                                  ? "No missing backup tracks"
+                                  : "Resolve Spotify tracks first"}
                             </option>
                           )}
                         </select>
@@ -3086,6 +3145,11 @@ export default function Home() {
                         <p className="provider-queue-note">
                           {numberFormatter.format(downloadTrackOptions.length)}{" "}
                           missing tracks ready
+                        </p>
+                      ) : unresolvedSpotifyLocalTracks.length ? (
+                        <p className="provider-queue-note">
+                          No downloadable missing tracks until Spotify local rows
+                          are repaired.
                         </p>
                       ) : null}
                       <button
@@ -3332,10 +3396,11 @@ export default function Home() {
                             </span>
                           </span>
                           <span className="track-cell">
-                            {track.album || "Unknown"}
+                            {trackAlbumLabel(track)}
                           </span>
                           <span className="track-cell library-cell">
                             {renderLibraryMatch(
+                              track,
                               libraryMatch,
                               libraryIndex,
                               {
@@ -4041,7 +4106,9 @@ function getPlaylistBackupStatus(
     libraryMatches.map((match) => [match.trackPosition, match] as const)
   );
   const missingTrackCount = tracks.filter(
-    (track) => !matchesByPosition.get(track.position)?.exists
+    (track) =>
+      isUnresolvedSpotifyLocalTrack(track) ||
+      !matchesByPosition.get(track.position)?.exists
   ).length;
 
   return {
@@ -4049,6 +4116,23 @@ function getPlaylistBackupStatus(
     missingTrackCount,
     trackCount: tracks.length
   };
+}
+
+function isUnresolvedSpotifyLocalTrack(track: BackupTrack) {
+  return track.metadataStatus === "spotify-local-unresolved";
+}
+
+function spotifyLocalRepairMessage(track: BackupTrack) {
+  return (
+    track.metadataWarning ??
+    "Spotify returned this playlist row as a local file instead of a catalog track. Remove and re-add the Spotify catalog track before backing it up."
+  );
+}
+
+function trackAlbumLabel(track: BackupTrack) {
+  return isUnresolvedSpotifyLocalTrack(track)
+    ? "Spotify local file"
+    : track.album || "Unknown";
 }
 
 function getPlaylistMissingBackupTrackCount(
@@ -4077,6 +4161,7 @@ function playlistMissingBackupTitle(missingTrackCount: number) {
 }
 
 function renderLibraryMatch(
+  track: BackupTrack,
   match: LibraryMatch | undefined,
   libraryIndex: NavidromeLibraryIndexSummary | null,
   options: {
@@ -4101,6 +4186,23 @@ function renderLibraryMatch(
         title="Run Library Index to refresh organization status"
       >
         Index needed
+      </span>
+    );
+  }
+
+  if (isUnresolvedSpotifyLocalTrack(track)) {
+    return (
+      <span className="track-status-stack">
+        <span className="track-status-actions">
+          <span
+            className="track-status repair"
+            title={spotifyLocalRepairMessage(track)}
+          >
+            Repair Spotify
+          </span>
+          {match?.exists ? renderDeleteLibraryTrackButton(match, options) : null}
+        </span>
+        <span className="track-note">{spotifyLocalRepairMessage(track)}</span>
       </span>
     );
   }

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  getPlaylistTracks,
   pickBestSpotifyTrackSearchMatch,
   spotifyLocalTrackSearchQueries,
   spotifyTrackNeedsCatalogResolution,
+  unresolvedSpotifyLocalTrackMessage,
   type SpotifyTrackObject
 } from "./spotify.ts";
 
@@ -216,6 +218,66 @@ test("does not resolve a local playlist track to a weak catalog match", () => {
   assert.equal(match, null);
 });
 
+test("marks unresolved local playlist tracks as not safe to download", async () => {
+  const originalFetch = globalThis.fetch;
+  const requestedUrls: string[] = [];
+
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    requestedUrls.push(url);
+
+    if (url.includes("/playlists/playlist-id/items")) {
+      return jsonResponse({
+        items: [
+          {
+            added_at: "2018-09-01T00:00:00Z",
+            track: spotifyTrack({
+              album: spotifyAlbum("ClipConverter.cc"),
+              artists: [spotifyArtist("Jeremih")],
+              duration_ms: 250,
+              is_local: true,
+              name: "Fuck You All The Time (Shlohmo Remix) (video clip)",
+              uri: "spotify:local:Jeremih:ClipConverter.cc:Fuck+You+All+The+Time+%28Shlohmo+Remix%29+%28video+clip%29:250"
+            })
+          }
+        ],
+        next: null
+      });
+    }
+
+    if (url.includes("/search?")) {
+      return jsonResponse({
+        tracks: {
+          items: [],
+          next: null
+        }
+      });
+    }
+
+    throw new Error(`Unexpected Spotify test request: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const tracks = await getPlaylistTracks(
+      {
+        access_token: "token",
+        expires_at: Date.now() + 60_000,
+        token_type: "Bearer"
+      },
+      "playlist-id"
+    );
+
+    assert.equal(tracks.length, 1);
+    assert.equal(tracks[0].metadataStatus, "spotify-local-unresolved");
+    assert.equal(tracks[0].metadataWarning, unresolvedSpotifyLocalTrackMessage);
+    assert.equal(tracks[0].album, "Unknown Album");
+    assert.equal(tracks[0].name, "Fuck You All The Time");
+    assert.ok(requestedUrls.some((url) => url.includes("/search?")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 function spotifyTrack(track: Partial<SpotifyTrackObject>): SpotifyTrackObject {
   return {
     type: "track",
@@ -233,4 +295,13 @@ function spotifyArtist(name: string) {
   return {
     name
   };
+}
+
+function jsonResponse(body: unknown) {
+  return new Response(JSON.stringify(body), {
+    headers: {
+      "Content-Type": "application/json"
+    },
+    status: 200
+  });
 }
