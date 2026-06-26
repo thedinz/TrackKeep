@@ -8,7 +8,7 @@
     "build": "next build",
     "check:yt-dlp": "node scripts/check-yt-dlp-update.mjs",
     "start": "next start",
-    "test": "tsx --test src/lib/providers/scoring.test.mts src/lib/providers/search-query.test.mts src/lib/providers/tagging.test.mts src/lib/navidrome.test.mts src/lib/organize-settings.test.mts",
+    "test": "tsx --test src/lib/providers/scoring.test.mts src/lib/providers/search-query.test.mts src/lib/providers/tagging.test.mts src/lib/navidrome-auto-scan.test.mts src/lib/navidrome.test.mts src/lib/organize-settings.test.mts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

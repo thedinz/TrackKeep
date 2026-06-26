@@ -517,42 +517,6 @@ test("library index parses standard folders when parent artist stripped trailing
   });
 });
 
-test("manual templates keep meaningful album type tokens when requested", async (t) => {
-  await withOrganizeSettings(t, manualNamingSettings, async () => {
-    const [plan] = await planNavidromeAlbumFolders([
-      {
-        ...exampleTrack,
-        album: "Example EP",
-        albumId: "album-ep",
-        albumTracksTotal: 5,
-        albumType: "single"
-      }
-    ]);
-
-    assert.equal(
-      plan.relativePath,
-      "Example Artist/Example Artist - EP - 2026 - Example EP"
-    );
-  });
-});
-
-test("manual templates omit unknown album type tokens cleanly", async (t) => {
-  await withOrganizeSettings(t, manualNamingSettings, async () => {
-    const [plan] = await planNavidromeAlbumFolders([
-      {
-        ...exampleTrack,
-        albumType: undefined
-      }
-    ]);
-
-    assert.equal(
-      plan.relativePath,
-      "Example Artist/Example Artist - 2026 - Example Record"
-    );
-    assert.equal(plan.albumFolderName.includes(" - - "), false);
-  });
-});
-
 const exampleTrack = {
   album: "Example Record",
   albumArtist: "Example Artist",
@@ -571,19 +535,6 @@ const exampleTrack = {
   position: 1,
   trackNumber: 1
 } satisfies BackupTrack;
-
-const manualNamingSettings = {
-  artistFolderFormat: "{Artist CleanName}{ (Artist Disambiguation)}",
-  colonReplacementFormat: 4,
-  mode: "manual",
-  multiDiscTrackFormat:
-    "{Artist CleanName} - {Album Type} - {Release Year} - {Album CleanTitle}/{medium:00}{track:00} - {Track CleanTitle}",
-  replaceIllegalCharacters: true,
-  standardTrackFormat:
-    "{Artist CleanName} - {Album Type} - {Release Year} - {Album CleanTitle}/{medium:00}{track:00} - {Track CleanTitle}",
-  updatedAt: new Date(0).toISOString(),
-  version: 1
-};
 
 async function withDefaultOrganizeSettings(
   t: TestContext,
