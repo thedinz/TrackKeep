@@ -406,12 +406,20 @@ async function resolveLocalPlaylistTracks(
       .filter(hasSpotifyTrackSearchMatch)
       .map((entry) => [entry.index, entry.match.track] as const)
   );
+  const replacementByIndex = new Map(
+    resolvedEntries.map((entry) => [
+      entry.index,
+      entry.match?.track ?? sanitizeUnresolvedLocalSpotifyTrack(entry.localTrack)
+    ] as const)
+  );
 
   await appendDiagnosticLog("spotify.playlist.local_track_resolution", {
     examples: resolvedEntries.slice(0, 5).map((entry) => ({
       localAlbum: entry.localTrack.album?.name,
       localArtists: spotifyTrackArtistNames(entry.localTrack),
+      localDurationMs: spotifyTrackDurationMs(entry.localTrack),
       localName: entry.localTrack.name,
+      localRawDurationMs: entry.localTrack.duration_ms,
       localUri: entry.localTrack.uri,
       resolutionReasons: spotifyTrackCatalogResolutionReasons(entry.localTrack),
       resolvedAlbum: entry.match?.track.album?.name,
@@ -420,20 +428,22 @@ async function resolveLocalPlaylistTracks(
         : undefined,
       resolvedName: entry.match?.track.name,
       resolvedScore: entry.match?.score.overall,
-      resolvedTrackId: entry.match?.track.id
+      resolvedTrackId: entry.match?.track.id,
+      sanitizedFallback: !entry.match
     })),
     localTrackCount: localEntries.length,
-    resolvedTrackCount: resolvedByIndex.size
+    resolvedTrackCount: resolvedByIndex.size,
+    sanitizedFallbackCount: resolvedEntries.length - resolvedByIndex.size
   });
 
-  if (!resolvedByIndex.size) {
+  if (!replacementByIndex.size) {
     return playlistTracks;
   }
 
   return playlistTracks.map((item, index) => {
-    const resolvedTrack = resolvedByIndex.get(index);
+    const replacementTrack = replacementByIndex.get(index);
 
-    return resolvedTrack ? { ...item, track: resolvedTrack } : item;
+    return replacementTrack ? { ...item, track: replacementTrack } : item;
   });
 }
 
@@ -447,13 +457,15 @@ async function resolveLocalSpotifyTrack(
   tokenSet: SpotifyTokenSet,
   track: SpotifyTrackObject
 ) {
+  const searchQueries = spotifyLocalTrackSearchQueries(track);
+
   try {
     const searchResults: SpotifyTrackObject[] = [];
 
-    for (const query of spotifyLocalTrackSearchQueries(track)) {
+    for (const query of searchQueries) {
       const response = await spotifyFetch<SpotifySearchResponse>(
         tokenSet,
-        `/search?type=track&limit=10&q=${encodeURIComponent(query)}`
+        `/search?type=track&limit=20&q=${encodeURIComponent(query)}`
       );
       const candidates = response.tracks?.items ?? [];
 
@@ -465,21 +477,166 @@ async function resolveLocalSpotifyTrack(
       );
     }
 
-    return pickBestSpotifyTrackSearchMatch(
-      track,
-      uniqueSpotifyTracks(searchResults)
-    );
+    const uniqueCandidates = uniqueSpotifyTracks(searchResults);
+    const rankedMatches = rankSpotifyTrackSearchMatches(track, uniqueCandidates);
+    const match = rankedMatches.find(isConfidentSpotifyTrackSearchMatch) ?? null;
+
+    if (!match) {
+      await appendDiagnosticLog("spotify.playlist.local_track_unresolved", {
+        candidateCount: uniqueCandidates.length,
+        localAlbum: track.album?.name,
+        localArtists: spotifyTrackArtistNames(track),
+        localDurationMs: spotifyTrackDurationMs(track),
+        localName: track.name,
+        localRawDurationMs: track.duration_ms,
+        localUri: track.uri,
+        searchQueries,
+        topCandidates: rankedMatches
+          .slice(0, 5)
+          .map(formatSpotifyTrackSearchMatch)
+      });
+    }
+
+    return match;
   } catch (error) {
     await appendDiagnosticLog("spotify.playlist.local_track_resolve_failed", {
       error: diagnosticError(error),
       localAlbum: track.album?.name,
       localArtists: spotifyTrackArtistNames(track),
+      localDurationMs: spotifyTrackDurationMs(track),
       localName: track.name,
-      localUri: track.uri
+      localRawDurationMs: track.duration_ms,
+      localUri: track.uri,
+      searchQueries
     });
 
     return null;
   }
+}
+
+function formatSpotifyTrackSearchMatch(match: SpotifyTrackSearchMatch) {
+  return {
+    album: match.track.album?.name,
+    artists: spotifyTrackArtistNames(match.track),
+    durationDeltaMs: match.score.durationDeltaMs,
+    durationMs: spotifyTrackDurationMs(match.track),
+    id: match.track.id,
+    name: match.track.name,
+    score: match.score.overall,
+    titleScore: match.score.titleScore,
+    uri: match.track.uri
+  };
+}
+
+function sanitizeUnresolvedLocalSpotifyTrack(
+  track: SpotifyTrackObject
+): SpotifyTrackObject {
+  const sanitizedName = normalizeSpotifySearchValue(
+    stripLocalTrackTitleNoise(track.name ?? "")
+  );
+
+  return {
+    ...track,
+    album: hasProviderPollutedSpotifyMetadata(track) ? undefined : track.album,
+    duration_ms: spotifyTrackDurationMs(track),
+    name: sanitizedName || track.name
+  };
+}
+
+export function rankSpotifyTrackSearchMatches(
+  localTrack: SpotifyTrackObject,
+  candidates: SpotifyTrackObject[]
+) {
+  const localTitle = normalizeSpotifySearchValue(
+    stripLocalTrackTitleNoise(localTrack.name ?? "") || (localTrack.name ?? "")
+  );
+  const localArtists = spotifyTrackArtistNames(localTrack);
+
+  if (!localTitle || !localArtists.length) {
+    return [];
+  }
+
+  return candidates
+    .filter(isCatalogSpotifyTrack)
+    .map((candidate) => ({
+      score: scoreProviderCandidate(
+        {
+          artists: localArtists,
+          durationMs:
+            spotifyTrackDurationMs(localTrack) ??
+            spotifyTrackDurationMs(candidate) ??
+            0,
+          name: localTitle
+        },
+        {
+          album: candidate.album?.name,
+          artists: spotifyTrackArtistNames(candidate),
+          durationMs: spotifyTrackDurationMs(candidate),
+          title: candidate.name ?? ""
+        }
+      ),
+      track: candidate
+    }))
+    .sort(compareSpotifyTrackSearchMatches);
+}
+
+export function pickBestSpotifyTrackSearchMatch(
+  localTrack: SpotifyTrackObject,
+  candidates: SpotifyTrackObject[]
+): SpotifyTrackSearchMatch | null {
+  const bestMatch = rankSpotifyTrackSearchMatches(localTrack, candidates)[0];
+
+  return bestMatch && isConfidentSpotifyTrackSearchMatch(bestMatch)
+    ? bestMatch
+    : null;
+}
+
+function spotifyTrackDurationMs(track: SpotifyTrackObject) {
+  if (typeof track.duration_ms === "number" && Number.isFinite(track.duration_ms)) {
+    if (
+      track.duration_ms > 0 &&
+      track.duration_ms < 3_000 &&
+      spotifyTrackNeedsCatalogResolution(track)
+    ) {
+      return track.duration_ms * 1000;
+    }
+
+    return track.duration_ms;
+  }
+
+  const localUriDurationSeconds = spotifyLocalUriDurationSeconds(track.uri);
+
+  return localUriDurationSeconds ? localUriDurationSeconds * 1000 : undefined;
+}
+
+function spotifyLocalUriDurationSeconds(uri: string | undefined) {
+  if (!uri?.startsWith("spotify:local:")) {
+    return null;
+  }
+
+  const durationValue = uri.split(":").at(-1);
+  const durationSeconds = durationValue ? Number(durationValue) : Number.NaN;
+
+  return Number.isFinite(durationSeconds) &&
+    durationSeconds > 0 &&
+    durationSeconds < 24 * 60 * 60
+    ? durationSeconds
+    : null;
+}
+
+export function spotifyLocalTrackSearchQueries(track: SpotifyTrackObject) {
+  const title = normalizeSpotifySearchValue(track.name ?? "");
+  const cleanedTitle = normalizeSpotifySearchValue(
+    stripLocalTrackTitleNoise(title)
+  );
+  const artistText = spotifyTrackArtistNames(track).slice(0, 2).join(" ");
+  const titleVariants = spotifyTitleSearchVariants(cleanedTitle || title);
+
+  return uniqueSpotifySearchQueries(
+    titleVariants.map((titleVariant) =>
+      [titleVariant, artistText].filter(Boolean).join(" ")
+    )
+  );
 }
 
 export async function getTrack(tokenSet: SpotifyTokenSet, trackId: string) {
@@ -798,65 +955,6 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-export function spotifyLocalTrackSearchQueries(track: SpotifyTrackObject) {
-  const title = normalizeSpotifySearchValue(track.name ?? "");
-  const cleanedTitle = normalizeSpotifySearchValue(
-    stripLocalTrackTitleNoise(title)
-  );
-  const artistText = spotifyTrackArtistNames(track).slice(0, 2).join(" ");
-  const titleVariants = uniqueSpotifySearchValues([
-    cleanedTitle,
-    ...spotifyTitleSpellingVariants(cleanedTitle),
-    title,
-    ...spotifyTitleSpellingVariants(title)
-  ]);
-
-  return uniqueSpotifySearchQueries(
-    titleVariants.map((titleVariant) =>
-      [titleVariant, artistText].filter(Boolean).join(" ")
-    )
-  );
-}
-
-export function pickBestSpotifyTrackSearchMatch(
-  localTrack: SpotifyTrackObject,
-  candidates: SpotifyTrackObject[]
-): SpotifyTrackSearchMatch | null {
-  const localTitle = normalizeSpotifySearchValue(
-    stripLocalTrackTitleNoise(localTrack.name ?? "") || (localTrack.name ?? "")
-  );
-  const localArtists = spotifyTrackArtistNames(localTrack);
-
-  if (!localTitle || !localArtists.length) {
-    return null;
-  }
-
-  const rankedMatches = candidates
-    .filter(isCatalogSpotifyTrack)
-    .map((candidate) => ({
-      score: scoreProviderCandidate(
-        {
-          artists: localArtists,
-          durationMs: localTrack.duration_ms ?? candidate.duration_ms ?? 0,
-          name: localTitle
-        },
-        {
-          album: candidate.album?.name,
-          artists: spotifyTrackArtistNames(candidate),
-          durationMs: candidate.duration_ms,
-          title: candidate.name ?? ""
-        }
-      ),
-      track: candidate
-    }))
-    .sort(compareSpotifyTrackSearchMatches);
-  const bestMatch = rankedMatches[0];
-
-  return bestMatch && isConfidentSpotifyTrackSearchMatch(bestMatch)
-    ? bestMatch
-    : null;
-}
-
 export function spotifyTrackNeedsCatalogResolution(track: SpotifyTrackObject) {
   return spotifyTrackCatalogResolutionReasons(track).length > 0;
 }
@@ -965,6 +1063,25 @@ function spotifyTrackArtistNames(track: SpotifyTrackObject) {
   return (track.artists ?? [])
     .map((artist) => artist.name.trim())
     .filter(Boolean);
+}
+
+function spotifyTitleSearchVariants(value: string) {
+  const normalizedValue = normalizeSpotifySearchValue(value);
+  const plainValue = normalizeSpotifySearchValue(
+    normalizedValue.replace(/[()[\]{}]/g, " ")
+  );
+  const baseValues = uniqueSpotifySearchValues([normalizedValue, plainValue]);
+  const variants: string[] = [];
+
+  for (const baseValue of baseValues) {
+    variants.push(baseValue);
+
+    for (const spellingVariant of spotifyTitleSpellingVariants(baseValue)) {
+      variants.push(spellingVariant);
+    }
+  }
+
+  return uniqueSpotifySearchValues(variants);
 }
 
 function spotifyTitleSpellingVariants(value: string) {

@@ -22,8 +22,8 @@ test("builds local Spotify track search queries without video clip noise", () =>
   assert.deepEqual(queries, [
     "Fuck You All The Time (Shlohmo Remix) Jeremih",
     "Fuck U All The Time (Shlohmo Remix) Jeremih",
-    "Fuck You All The Time (Shlohmo Remix) (video clip) Jeremih",
-    "Fuck U All The Time (Shlohmo Remix) (video clip) Jeremih"
+    "Fuck You All The Time Shlohmo Remix Jeremih",
+    "Fuck U All The Time Shlohmo Remix Jeremih"
   ]);
 });
 
@@ -84,6 +84,31 @@ test("resolves you/u title spelling differences to the matching catalog track", 
         duration_ms: 264_000,
         id: "spotify-shlohmo-remix",
         name: "Fuck U All The Time - Shlohmo Remix",
+        uri: "spotify:track:spotify-shlohmo-remix"
+      })
+    ]
+  );
+
+  assert.equal(match?.track.id, "spotify-shlohmo-remix");
+});
+
+test("treats local Spotify URI duration values as seconds during catalog resolution", () => {
+  const match = pickBestSpotifyTrackSearchMatch(
+    spotifyTrack({
+      album: spotifyAlbum("ClipConverter.cc"),
+      artists: [spotifyArtist("Jeremih")],
+      duration_ms: 250,
+      is_local: true,
+      name: "Fuck You All The Time (Shlohmo Remix) (video clip)",
+      uri: "spotify:local:Jeremih:ClipConverter.cc:Fuck+You+All+The+Time+%28Shlohmo+Remix%29+%28video+clip%29:250"
+    }),
+    [
+      spotifyTrack({
+        album: spotifyAlbum("Fuck U All The Time (Shlohmo Remix)"),
+        artists: [spotifyArtist("Jeremih")],
+        duration_ms: 250_000,
+        id: "spotify-shlohmo-remix",
+        name: "Fuck U All The Time (Shlohmo Remix)",
         uri: "spotify:track:spotify-shlohmo-remix"
       })
     ]
