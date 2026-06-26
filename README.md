@@ -23,7 +23,6 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - Song, album, and pasted track-list metadata lookup from Spotify URLs, URIs, or IDs
 - Playlist track preview
 - Optional Navidrome playlist creation from matched Spotify playlist tracks
-- JSON and CSV metadata exports
 - Navidrome library folder status checks
 - Navidrome library indexing for local backup coverage checks
 - Navidrome folder planning using clean artist, album, and track paths

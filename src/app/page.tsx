@@ -6,8 +6,6 @@ import {
   ChevronUp,
   Clock3,
   Download,
-  FileJson,
-  FileText,
   HardDrive,
   Link2,
   ListMusic,
@@ -2080,7 +2078,6 @@ export default function Home() {
       } satisfies ResolvedSource)
     : null;
   const activeSource = sourceKind === "playlist" ? playlistSource : resolvedSource;
-  const canExportPlaylist = sourceKind === "playlist" && Boolean(selectedPlaylistId);
   const selectedTracksLabel =
     sourceKind === "playlist" ? "Selected Tracks" : "Resolved Tracks";
   const bulkProgressFinished = bulkDownloadProgress
@@ -2528,38 +2525,6 @@ export default function Home() {
                     </button>
                   </>
                 ) : null}
-                <a
-                  className={`command secondary ${
-                    canExportPlaylist ? "" : "disabled"
-                  }`}
-                  href={
-                    canExportPlaylist
-                      ? `/api/spotify/playlists/${selectedPlaylistId}/export?format=json`
-                      : "#"
-                  }
-                  aria-disabled={!canExportPlaylist}
-                  tabIndex={canExportPlaylist ? undefined : -1}
-                  title="Export JSON"
-                >
-                  <FileJson size={18} />
-                  JSON
-                </a>
-                <a
-                  className={`command secondary ${
-                    canExportPlaylist ? "" : "disabled"
-                  }`}
-                  href={
-                    canExportPlaylist
-                      ? `/api/spotify/playlists/${selectedPlaylistId}/export?format=csv`
-                      : "#"
-                  }
-                  aria-disabled={!canExportPlaylist}
-                  tabIndex={canExportPlaylist ? undefined : -1}
-                  title="Export CSV"
-                >
-                  <FileText size={18} />
-                  CSV
-                </a>
                 <button
                   className={`command secondary ${
                     canOrganizeLibrary ? "" : "disabled"
@@ -3551,7 +3516,7 @@ export default function Home() {
             <div className="signal-grid">
               <div className="signal ready">
                 <h3>Spotify source</h3>
-                <p className="muted">Playlists, songs, albums, and metadata exports</p>
+                <p className="muted">Playlists, songs, albums, and metadata backups</p>
               </div>
               <div className="signal locked">
                 <h3>Local backup target</h3>
