@@ -531,9 +531,7 @@ function formatSpotifyTrackSearchMatch(match: SpotifyTrackSearchMatch) {
 function sanitizeUnresolvedLocalSpotifyTrack(
   track: SpotifyTrackObject
 ): SpotifyTrackObject {
-  const sanitizedName = normalizeSpotifySearchValue(
-    stripLocalTrackTitleNoise(track.name ?? "")
-  );
+  const sanitizedName = spotifySanitizedLocalTrackTitle(track);
 
   return {
     ...track,
@@ -547,36 +545,48 @@ export function rankSpotifyTrackSearchMatches(
   localTrack: SpotifyTrackObject,
   candidates: SpotifyTrackObject[]
 ) {
-  const localTitle = normalizeSpotifySearchValue(
-    stripLocalTrackTitleNoise(localTrack.name ?? "") || (localTrack.name ?? "")
-  );
+  const localTitles = spotifyCatalogRecoveryTitleVariants(localTrack);
   const localArtists = spotifyTrackArtistNames(localTrack);
 
-  if (!localTitle || !localArtists.length) {
+  if (!localTitles.length || !localArtists.length) {
     return [];
   }
 
   return candidates
     .filter(isCatalogSpotifyTrack)
-    .map((candidate) => ({
-      score: scoreProviderCandidate(
-        {
-          artists: localArtists,
-          durationMs:
-            spotifyTrackDurationMs(localTrack) ??
-            spotifyTrackDurationMs(candidate) ??
-            0,
-          name: localTitle
-        },
-        {
-          album: candidate.album?.name,
-          artists: spotifyTrackArtistNames(candidate),
-          durationMs: spotifyTrackDurationMs(candidate),
-          title: candidate.name ?? ""
-        }
-      ),
-      track: candidate
-    }))
+    .map((candidate): SpotifyTrackSearchMatch | null => {
+      const candidateMetadata = {
+        album: candidate.album?.name,
+        artists: spotifyTrackArtistNames(candidate),
+        durationMs: spotifyTrackDurationMs(candidate),
+        title: candidate.name ?? ""
+      };
+      const score = localTitles
+        .map((localTitle) =>
+          scoreProviderCandidate(
+            {
+              artists: localArtists,
+              durationMs:
+                spotifyTrackDurationMs(localTrack) ??
+                spotifyTrackDurationMs(candidate) ??
+                0,
+              name: localTitle
+            },
+            candidateMetadata
+          )
+        )
+        .sort(compareCandidateScores)[0];
+
+      if (!score) {
+        return null;
+      }
+
+      return {
+        score,
+        track: candidate
+      };
+    })
+    .filter((match): match is SpotifyTrackSearchMatch => Boolean(match))
     .sort(compareSpotifyTrackSearchMatches);
 }
 
@@ -625,15 +635,10 @@ function spotifyLocalUriDurationSeconds(uri: string | undefined) {
 }
 
 export function spotifyLocalTrackSearchQueries(track: SpotifyTrackObject) {
-  const title = normalizeSpotifySearchValue(track.name ?? "");
-  const cleanedTitle = normalizeSpotifySearchValue(
-    stripLocalTrackTitleNoise(title)
-  );
   const artistText = spotifyTrackArtistNames(track).slice(0, 2).join(" ");
-  const titleVariants = spotifyTitleSearchVariants(cleanedTitle || title);
 
   return uniqueSpotifySearchQueries(
-    titleVariants.map((titleVariant) =>
+    spotifyCatalogRecoveryTitleVariants(track).map((titleVariant) =>
       [titleVariant, artistText].filter(Boolean).join(" ")
     )
   );
@@ -1011,6 +1016,19 @@ function isConfidentSpotifyTrackSearchMatch(match: SpotifyTrackSearchMatch) {
   );
 }
 
+function compareCandidateScores(
+  left: SpotifyTrackSearchMatch["score"],
+  right: SpotifyTrackSearchMatch["score"]
+) {
+  return (
+    right.overall - left.overall ||
+    right.titleScore - left.titleScore ||
+    right.artistScore - left.artistScore ||
+    (left.durationDeltaMs ?? Number.MAX_SAFE_INTEGER) -
+      (right.durationDeltaMs ?? Number.MAX_SAFE_INTEGER)
+  );
+}
+
 function compareSpotifyTrackSearchMatches(
   left: SpotifyTrackSearchMatch,
   right: SpotifyTrackSearchMatch
@@ -1065,12 +1083,50 @@ function spotifyTrackArtistNames(track: SpotifyTrackObject) {
     .filter(Boolean);
 }
 
-function spotifyTitleSearchVariants(value: string) {
+function spotifyCatalogRecoveryTitleVariants(track: SpotifyTrackObject) {
+  const title = normalizeSpotifySearchValue(track.name ?? "");
+  const cleanedTitle = normalizeSpotifySearchValue(
+    stripLocalTrackTitleNoise(title)
+  );
+  const fallbackTitle = spotifySanitizedLocalTrackTitle(track);
+
+  return uniqueSpotifySearchValues([
+    ...spotifyTitleSearchVariants(fallbackTitle || cleanedTitle || title),
+    ...spotifyTitleSearchVariants(cleanedTitle || title)
+  ]);
+}
+
+function spotifySanitizedLocalTrackTitle(track: SpotifyTrackObject) {
+  const title = normalizeSpotifySearchValue(
+    stripLocalTrackTitleNoise(track.name ?? "")
+  );
+
+  if (!title) {
+    return track.name;
+  }
+
+  if (!hasProviderPollutedSpotifyMetadata(track)) {
+    return title;
+  }
+
+  return stripTrailingTitleQualifiers(title) || title;
+}
+
+function spotifyTitleSearchVariants(value: string | undefined) {
   const normalizedValue = normalizeSpotifySearchValue(value);
+  const dequalifiedValue = stripTrailingTitleQualifiers(normalizedValue);
   const plainValue = normalizeSpotifySearchValue(
     normalizedValue.replace(/[()[\]{}]/g, " ")
   );
-  const baseValues = uniqueSpotifySearchValues([normalizedValue, plainValue]);
+  const plainDequalifiedValue = normalizeSpotifySearchValue(
+    dequalifiedValue.replace(/[()[\]{}]/g, " ")
+  );
+  const baseValues = uniqueSpotifySearchValues([
+    dequalifiedValue,
+    plainDequalifiedValue,
+    normalizedValue,
+    plainValue
+  ]);
   const variants: string[] = [];
 
   for (const baseValue of baseValues) {
@@ -1082,6 +1138,25 @@ function spotifyTitleSearchVariants(value: string) {
   }
 
   return uniqueSpotifySearchValues(variants);
+}
+
+function stripTrailingTitleQualifiers(value: string) {
+  let strippedValue = value;
+
+  for (;;) {
+    const nextValue = strippedValue
+      .replace(
+        /\s*[\[(]\s*[^()[\]{}]*(?:audio|clip|edit|live|mix|remaster(?:ed)?|remix|version|video|visualizer)[^()[\]{}]*[\])]\s*$/i,
+        ""
+      )
+      .trim();
+
+    if (nextValue === strippedValue) {
+      return strippedValue;
+    }
+
+    strippedValue = nextValue;
+  }
 }
 
 function spotifyTitleSpellingVariants(value: string) {
@@ -1150,8 +1225,8 @@ function stripLocalTrackTitleNoise(value: string) {
     );
 }
 
-function normalizeSpotifySearchValue(value: string) {
-  return value.replace(/\s+/g, " ").trim();
+function normalizeSpotifySearchValue(value: string | undefined) {
+  return (value ?? "").replace(/\s+/g, " ").trim();
 }
 
 function normalizeSpotifyMetadataKey(value: string) {
