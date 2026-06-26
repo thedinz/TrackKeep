@@ -426,63 +426,6 @@ export function buildBackupPayload(
   } satisfies BackupPayload;
 }
 
-export function backupFilename(playlist: PlaylistSummary, extension: string) {
-  const slug =
-    playlist.name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 64) || "spotify-playlist";
-
-  return `${slug}.${extension}`;
-}
-
-export function backupTracksToCsv(
-  playlist: PlaylistSummary,
-  tracks: BackupTrack[]
-) {
-  const rows = [
-    [
-      "playlist_id",
-      "playlist_name",
-      "position",
-      "track_id",
-      "track_name",
-      "artists",
-      "album_artist",
-      "album",
-      "disc_number",
-      "track_number",
-      "duration_ms",
-      "isrc",
-      "spotify_uri",
-      "spotify_url",
-      "added_at",
-      "explicit"
-    ],
-    ...tracks.map((track) => [
-      playlist.id,
-      playlist.name,
-      String(track.position),
-      track.id ?? "",
-      track.name,
-      track.artists.join("; "),
-      track.albumArtist,
-      track.album,
-      track.discNumber ? String(track.discNumber) : "",
-      track.trackNumber ? String(track.trackNumber) : "",
-      String(track.durationMs),
-      track.isrc ?? "",
-      track.spotifyUri ?? "",
-      track.spotifyUrl ?? "",
-      track.addedAt ?? "",
-      String(track.explicit)
-    ])
-  ];
-
-  return rows.map((row) => row.map(csvCell).join(",")).join("\n");
-}
-
 export type SpotifyItemType = "album" | "playlist" | "track";
 
 export function parseSpotifyItemId(input: string, expectedType: SpotifyItemType) {
@@ -835,10 +778,6 @@ async function responseErrorMessage(response: Response) {
   } catch {
     return text || `Spotify request failed with ${response.status}.`;
   }
-}
-
-function csvCell(value: string) {
-  return `"${value.replace(/"/g, '""')}"`;
 }
 
 class SpotifyApiError extends Error {
