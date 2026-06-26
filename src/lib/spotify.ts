@@ -465,7 +465,7 @@ async function resolveLocalSpotifyTrack(
     for (const query of searchQueries) {
       const response = await spotifyFetch<SpotifySearchResponse>(
         tokenSet,
-        `/search?type=track&limit=20&q=${encodeURIComponent(query)}`
+        `/search?type=track&limit=50&q=${encodeURIComponent(query)}`
       );
       const candidates = response.tracks?.items ?? [];
 
@@ -639,13 +639,22 @@ function spotifyLocalUriDurationSeconds(uri: string | undefined) {
 }
 
 export function spotifyLocalTrackSearchQueries(track: SpotifyTrackObject) {
-  const artistText = spotifyTrackArtistNames(track).slice(0, 2).join(" ");
-
-  return uniqueSpotifySearchQueries(
-    spotifyCatalogRecoveryTitleVariants(track).map((titleVariant) =>
-      [titleVariant, artistText].filter(Boolean).join(" ")
-    )
+  const artistNames = spotifyTrackArtistNames(track).slice(0, 2);
+  const artistText = artistNames.join(" ");
+  const primaryArtist = artistNames[0];
+  const searchQueries = spotifyCatalogRecoveryTitleVariants(track).flatMap(
+    (titleVariant) => [
+      [titleVariant, artistText].filter(Boolean).join(" "),
+      primaryArtist
+        ? `track:"${titleVariant}" artist:"${primaryArtist}"`
+        : "",
+      primaryArtist
+        ? `artist:"${primaryArtist}" track:"${titleVariant}"`
+        : ""
+    ]
   );
+
+  return uniqueSpotifySearchQueries(searchQueries);
 }
 
 export async function getTrack(tokenSet: SpotifyTokenSet, trackId: string) {

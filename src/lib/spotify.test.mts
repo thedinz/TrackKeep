@@ -21,7 +21,11 @@ test("builds local Spotify track search queries without video clip noise", () =>
 
   assert.deepEqual(queries, [
     "Fuck You All The Time Jeremih",
-    "Fuck U All The Time Jeremih"
+    "track:\"Fuck You All The Time\" artist:\"Jeremih\"",
+    "artist:\"Jeremih\" track:\"Fuck You All The Time\"",
+    "Fuck U All The Time Jeremih",
+    "track:\"Fuck U All The Time\" artist:\"Jeremih\"",
+    "artist:\"Jeremih\" track:\"Fuck U All The Time\""
   ]);
 });
 
