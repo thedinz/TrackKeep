@@ -33,6 +33,7 @@ import {
   type SourceCandidate,
   type SourceProviderCatalogEntry
 } from "./types";
+import { tagDownloadedFile } from "./tagging";
 
 type DownloadProviderId = "jiosaavn" | "youtube";
 type DownloadFormat = "mp3";
@@ -972,6 +973,7 @@ async function downloadAuthorizedProviderTrackInner(
 ) {
   const diagnosticId = request.diagnosticId ?? providerDownloadDiagnosticId();
   let stage = "validating request";
+  let stagingDirectory: string | null = null;
   let attemptBase: Omit<
     ProviderDownloadAttemptLogEntry,
     "error" | "status" | "timestamp"
@@ -1048,7 +1050,7 @@ async function downloadAuthorizedProviderTrackInner(
       relativePathSegments(folderPlan.relativePath)
     );
     const fileBase = await buildNavidromeTrackFileBase(request.track);
-    const stagingDirectory = await createDownloadStagingDirectory(libraryPath);
+    stagingDirectory = await createDownloadStagingDirectory(libraryPath);
     const outputTemplate = path.join(
       /* turbopackIgnore: true */ stagingDirectory,
       `${fileBase}.%(ext)s`
@@ -1075,6 +1077,9 @@ async function downloadAuthorizedProviderTrackInner(
       targetDirectory: stagingDirectory
     });
 
+    stage = "tagging downloaded file";
+    await tagDownloadedFile(stagedPath, request.track);
+
     stage = "moving file to library";
     const finalPath = await moveStagedDownloadToTarget({
       fileBase,
@@ -1082,9 +1087,6 @@ async function downloadAuthorizedProviderTrackInner(
       stagedPath,
       targetDirectory
     });
-
-    stage = "tagging downloaded file";
-    await tagDownloadedFile(finalPath, request.track);
 
     let libraryIndex: NavidromeLibraryIndexSummary | undefined;
     stage = "updating library index";
@@ -1145,6 +1147,10 @@ async function downloadAuthorizedProviderTrackInner(
       sourceUrl: source.sourceUrl
     } satisfies AuthorizedProviderDownloadResult;
   } catch (error) {
+    if (stagingDirectory) {
+      await cleanupDirectory(stagingDirectory).catch(() => undefined);
+    }
+
     if (attemptBase) {
       await recordProviderDownloadAttempt({
         ...attemptBase,
@@ -2444,181 +2450,6 @@ async function findDownloadedPath({
   }
 
   throw new Error("The provider download finished but no output file was found.");
-}
-
-async function tagDownloadedFile(filePath: string, track: BackupTrack) {
-  const parsedPath = path.parse(filePath);
-  const tempPath = path.join(
-    /* turbopackIgnore: true */ parsedPath.dir,
-    `${parsedPath.name}.spotifybu-tagging${parsedPath.ext}`
-  );
-  let coverPath: string | null = null;
-  const metadataArgs = [
-    "-metadata",
-    `title=${track.name}`,
-    "-metadata",
-    `artist=${track.artists.join("; ")}`,
-    "-metadata",
-    `album=${track.album}`,
-    "-metadata",
-    `album_artist=${track.albumArtist}`,
-    "-metadata",
-    `track=${track.trackNumber ?? track.position}`,
-    "-metadata",
-    `disc=${track.discNumber ?? 1}`
-  ];
-
-  if (track.isrc) {
-    metadataArgs.push("-metadata", `isrc=${track.isrc}`);
-  }
-
-  try {
-    coverPath = await downloadSpotifyAlbumCover(
-      parsedPath.dir,
-      parsedPath.name,
-      track.albumImageUrl
-    );
-    await writeTaggedAudioFile(filePath, tempPath, metadataArgs, coverPath);
-    await rename(tempPath, filePath);
-  } catch (error) {
-    if (await canAccess(tempPath, constants.F_OK)) {
-      await rm(tempPath, {
-        force: true
-      }).catch(() => undefined);
-    }
-
-    if (coverPath) {
-      try {
-        await writeTaggedAudioFile(filePath, tempPath, metadataArgs, null);
-        await rename(tempPath, filePath);
-      } catch {
-        if (await canAccess(tempPath, constants.F_OK)) {
-          await rm(tempPath, {
-            force: true
-          }).catch(() => undefined);
-        }
-      }
-    }
-  } finally {
-    if (coverPath) {
-      await rm(coverPath, {
-        force: true
-      }).catch(() => undefined);
-    }
-  }
-}
-
-async function writeTaggedAudioFile(
-  filePath: string,
-  tempPath: string,
-  metadataArgs: string[],
-  coverPath: string | null
-) {
-  await execFileAsync(
-    "ffmpeg",
-    [
-      "-y",
-      "-i",
-      filePath,
-      ...(coverPath ? ["-i", coverPath] : []),
-      "-map",
-      "0:a:0",
-      ...(coverPath ? ["-map", "1:v:0"] : []),
-      "-map_metadata",
-      "-1",
-      "-c:a",
-      "copy",
-      ...(coverPath
-        ? [
-            "-c:v",
-            "mjpeg",
-            "-disposition:v:0",
-            "attached_pic",
-            "-metadata:s:v",
-            "title=Album cover",
-            "-metadata:s:v",
-            "comment=Cover (front)"
-          ]
-        : []),
-      "-id3v2_version",
-      "3",
-      ...metadataArgs,
-      tempPath
-    ],
-    {
-      maxBuffer: 1024 * 1024 * 2,
-      timeout: 60000
-    }
-  );
-}
-
-async function downloadSpotifyAlbumCover(
-  directory: string,
-  fileBase: string,
-  imageUrl?: string
-) {
-  if (!imageUrl) {
-    return null;
-  }
-
-  let url: URL;
-
-  try {
-    url = new URL(imageUrl);
-  } catch {
-    return null;
-  }
-
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    return null;
-  }
-
-  try {
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(10000)
-    });
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const contentType = response.headers.get("content-type") ?? "";
-
-    if (contentType && !contentType.toLowerCase().startsWith("image/")) {
-      return null;
-    }
-
-    const bytes = Buffer.from(await response.arrayBuffer());
-
-    if (!bytes.length) {
-      return null;
-    }
-
-    const coverPath = path.join(
-      /* turbopackIgnore: true */ directory,
-      `${fileBase}.spotifybu-cover${coverExtension(contentType)}`
-    );
-
-    await writeFile(coverPath, bytes);
-
-    return coverPath;
-  } catch {
-    return null;
-  }
-}
-
-function coverExtension(contentType: string) {
-  const normalizedContentType = contentType.toLowerCase();
-
-  if (normalizedContentType.includes("png")) {
-    return ".png";
-  }
-
-  if (normalizedContentType.includes("webp")) {
-    return ".webp";
-  }
-
-  return ".jpg";
 }
 
 async function recordProviderDownload(entry: ProviderDownloadLogEntry) {
