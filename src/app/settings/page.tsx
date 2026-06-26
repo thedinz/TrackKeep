@@ -3,6 +3,7 @@
 import {
   ArrowLeft,
   CheckCircle2,
+  Clock,
   LockKeyhole,
   RefreshCw,
   Save,
@@ -18,12 +19,10 @@ type AppAuthStatus = {
   username?: string;
 };
 
-type NamingMode = "standard" | "manual";
-
 type OrganizeNamingSettings = {
   artistFolderFormat: string;
   colonReplacementFormat: number;
-  mode: NamingMode;
+  mode: "standard";
   multiDiscTrackFormat: string;
   replaceIllegalCharacters: boolean;
   standardTrackFormat: string;
@@ -33,35 +32,35 @@ type OrganizeSettingsResponse = {
   naming: OrganizeNamingSettings;
 };
 
-const defaultOrganizeNamingTemplates = {
-  artistFolderFormat: "{Album Artist Name}",
-  colonReplacementFormat: 4,
-  multiDiscTrackFormat:
-    "{Album Artist Name} - {Album Title} ({Release Year})/{Album Artist Name} - {Album Title} ({Release Year}) - {medium:00}-{track:00} - {Track Title}",
-  replaceIllegalCharacters: true,
-  standardTrackFormat:
-    "{Album Artist Name} - {Album Title} ({Release Year})/{Album Artist Name} - {Album Title} ({Release Year}) - {track:00} - {Track Title}"
+type NavidromeAutoScanSettings = {
+  enabled: boolean;
+  time: string;
+  timeZone: string;
 };
 
-const namingModes: Array<{ id: NamingMode; label: string }> = [
-  { id: "standard", label: "Standard" },
-  { id: "manual", label: "Manual" }
-];
+type NavidromeAutoScanStatus = {
+  lastScheduledAt?: string;
+  nextRunAt?: string;
+  scan: {
+    completedAt?: string;
+    error?: string;
+    startedAt?: string;
+    state: "failed" | "idle" | "running" | "succeeded";
+  };
+  settings: NavidromeAutoScanSettings;
+};
 
-const colonReplacementOptions = [
-  { label: "Remove colon", value: 0 },
-  { label: "Dash", value: 1 },
-  { label: "Space dash", value: 2 },
-  { label: "Spaced dash", value: 3 },
-  { label: "Smart dash", value: 4 }
-];
+type NavidromeAutoScanResponse = {
+  autoScan: NavidromeAutoScanStatus;
+};
 
 export default function SettingsPage() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingAuthMode, setIsSavingAuthMode] = useState(false);
-  const [isSavingNaming, setIsSavingNaming] = useState(false);
+  const [isSavingAutoScan, setIsSavingAutoScan] = useState(false);
+  const [autoScan, setAutoScan] = useState<NavidromeAutoScanStatus | null>(null);
   const [namingSettings, setNamingSettings] =
     useState<OrganizeNamingSettings | null>(null);
   const [newPassword, setNewPassword] = useState("");
@@ -89,6 +88,15 @@ export default function SettingsPage() {
       })
       .catch(() => {
         setError("Could not load organize settings.");
+      });
+
+    void fetch("/api/navidrome/library/auto-scan")
+      .then(readJson<NavidromeAutoScanResponse>)
+      .then((response) => {
+        setAutoScan(withBrowserTimeZoneDefault(response.autoScan));
+      })
+      .catch(() => {
+        setError("Could not load Navidrome auto scan settings.");
       });
   }, []);
 
@@ -191,13 +199,16 @@ export default function SettingsPage() {
     [authMode]
   );
 
-  const updateNamingSettings = useCallback(
-    (update: Partial<OrganizeNamingSettings>) => {
-      setNamingSettings((current) =>
+  const updateAutoScanSettings = useCallback(
+    (update: Partial<NavidromeAutoScanSettings>) => {
+      setAutoScan((current) =>
         current
           ? {
               ...current,
-              ...update
+              settings: {
+                ...current.settings,
+                ...update
+              }
             }
           : current
       );
@@ -205,73 +216,43 @@ export default function SettingsPage() {
     []
   );
 
-  const changeNamingMode = useCallback((mode: NamingMode) => {
-    setNamingSettings((current) => {
-      if (!current) {
-        return current;
-      }
-
-      if (mode === "standard") {
-        return {
-          ...current,
-          ...defaultOrganizeNamingTemplates,
-          mode
-        };
-      }
-
-      return {
-        ...current,
-        mode
-      };
-    });
-    setSuccess(null);
-    setError(null);
-  }, []);
-
-  const submitNamingSettings = useCallback(
+  const submitAutoScanSettings = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
 
-      if (!namingSettings) {
+      if (!autoScan) {
         return;
       }
 
       setError(null);
       setSuccess(null);
-      setIsSavingNaming(true);
+      setIsSavingAutoScan(true);
 
       try {
-        const response = await fetch("/api/organize-settings", {
+        const response = await fetch("/api/navidrome/library/auto-scan", {
           body: JSON.stringify({
-            naming: {
-              artistFolderFormat: namingSettings.artistFolderFormat,
-              colonReplacementFormat: namingSettings.colonReplacementFormat,
-              mode: namingSettings.mode,
-              multiDiscTrackFormat: namingSettings.multiDiscTrackFormat,
-              replaceIllegalCharacters: namingSettings.replaceIllegalCharacters,
-              standardTrackFormat: namingSettings.standardTrackFormat
-            }
+            autoScan: autoScan.settings
           }),
           headers: {
             "Content-Type": "application/json"
           },
           method: "POST"
         });
-        const body = await readJson<OrganizeSettingsResponse>(response);
+        const body = await readJson<NavidromeAutoScanResponse>(response);
 
-        setNamingSettings(body.naming);
-        setSuccess("Organize scheme saved.");
+        setAutoScan(withBrowserTimeZoneDefault(body.autoScan));
+        setSuccess("Navidrome auto scan schedule saved.");
       } catch (settingsError) {
         setError(
           settingsError instanceof Error
             ? settingsError.message
-            : "Could not save organize settings."
+            : "Could not save Navidrome auto scan settings."
         );
       } finally {
-        setIsSavingNaming(false);
+        setIsSavingAutoScan(false);
       }
     },
-    [namingSettings]
+    [autoScan]
   );
 
   const internalAuthEnabled = authMode === "internal";
@@ -422,6 +403,77 @@ export default function SettingsPage() {
         <div className="panel settings-panel">
           <div className="panel-header">
             <div className="panel-title">
+              <Clock size={20} />
+              <div>
+                <h2>Navidrome Auto Scan</h2>
+                <p className="muted">Daily library index and server rescan</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="settings-body">
+            {autoScan ? (
+              <form className="auth-form" onSubmit={submitAutoScanSettings}>
+                <label className="checkbox-field">
+                  <input
+                    checked={autoScan.settings.enabled}
+                    onChange={(event) =>
+                      updateAutoScanSettings({
+                        enabled: event.target.checked,
+                        timeZone: autoScan.settings.timeZone || browserTimeZone()
+                      })
+                    }
+                    type="checkbox"
+                  />
+                  <span>Run daily scan</span>
+                </label>
+
+                <div className="settings-inline-grid">
+                  <label className="form-field">
+                    <span className="stat-label">Scan Time</span>
+                    <input
+                      onChange={(event) =>
+                        updateAutoScanSettings({
+                          time: event.target.value
+                        })
+                      }
+                      type="time"
+                      value={autoScan.settings.time}
+                    />
+                  </label>
+
+                  <label className="form-field">
+                    <span className="stat-label">Time Zone</span>
+                    <input readOnly value={autoScan.settings.timeZone} />
+                  </label>
+                </div>
+
+                <div className="auth-note">
+                  <Clock size={18} />
+                  <span>{autoScanScheduleLabel(autoScan)}</span>
+                </div>
+
+                <button
+                  className="command green"
+                  disabled={isSavingAutoScan || !autoScan.settings.time}
+                  type="submit"
+                >
+                  <Save size={18} />
+                  Save auto scan
+                </button>
+              </form>
+            ) : (
+              <div className="auth-note">
+                <RefreshCw className="spin" size={18} />
+                <span>Loading auto scan settings</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="panel settings-panel">
+          <div className="panel-header">
+            <div className="panel-title">
               <SlidersHorizontal size={20} />
               <div>
                 <h2>Organize Scheme</h2>
@@ -432,46 +484,20 @@ export default function SettingsPage() {
 
           <div className="settings-body">
             {namingSettings ? (
-              <form className="auth-form organize-form" onSubmit={submitNamingSettings}>
-                <div
-                  aria-label="Organize naming mode"
-                  className="segmented-control"
-                  role="radiogroup"
-                >
-                  {namingModes.map((mode) => (
-                    <button
-                      aria-checked={namingSettings.mode === mode.id}
-                      className={namingSettings.mode === mode.id ? "active" : ""}
-                      key={mode.id}
-                      onClick={() => changeNamingMode(mode.id)}
-                      role="radio"
-                      type="button"
-                    >
-                      {mode.label}
-                    </button>
-                  ))}
+              <div className="auth-form organize-form">
+                <div className="auth-note">
+                  <CheckCircle2 size={18} />
+                  <span>
+                    SpotifyBU uses one Spotify metadata layout for organized
+                    Navidrome files.
+                  </span>
                 </div>
-
-                {namingSettings.mode === "standard" ? (
-                  <div className="auth-note">
-                    <CheckCircle2 size={18} />
-                    <span>
-                      Uses the shared default: Artist / Artist - Album (Year) /
-                      Artist - Album (Year) - 01 - Track Title.
-                    </span>
-                  </div>
-                ) : null}
 
                 <div className="settings-subsection">
                   <label className="form-field">
                     <span className="stat-label">Artist Folder Format</span>
                     <input
-                      disabled={namingSettings.mode !== "manual"}
-                      onChange={(event) =>
-                        updateNamingSettings({
-                          artistFolderFormat: event.target.value
-                        })
-                      }
+                      readOnly
                       value={namingSettings.artistFolderFormat}
                     />
                   </label>
@@ -479,12 +505,7 @@ export default function SettingsPage() {
                   <label className="form-field wide-field">
                     <span className="stat-label">Standard Track Format</span>
                     <textarea
-                      disabled={namingSettings.mode !== "manual"}
-                      onChange={(event) =>
-                        updateNamingSettings({
-                          standardTrackFormat: event.target.value
-                        })
-                      }
+                      readOnly
                       value={namingSettings.standardTrackFormat}
                     />
                   </label>
@@ -492,61 +513,12 @@ export default function SettingsPage() {
                   <label className="form-field wide-field">
                     <span className="stat-label">Multi-Disc Track Format</span>
                     <textarea
-                      disabled={namingSettings.mode !== "manual"}
-                      onChange={(event) =>
-                        updateNamingSettings({
-                          multiDiscTrackFormat: event.target.value
-                        })
-                      }
+                      readOnly
                       value={namingSettings.multiDiscTrackFormat}
                     />
                   </label>
-
-                  <div className="settings-inline-grid">
-                    <label className="checkbox-field">
-                      <input
-                        checked={namingSettings.replaceIllegalCharacters}
-                        disabled={namingSettings.mode !== "manual"}
-                        onChange={(event) =>
-                          updateNamingSettings({
-                            replaceIllegalCharacters: event.target.checked
-                          })
-                        }
-                        type="checkbox"
-                      />
-                      <span>Replace illegal characters</span>
-                    </label>
-
-                    <label className="form-field">
-                      <span className="stat-label">Colon Replacement</span>
-                      <select
-                        disabled={namingSettings.mode !== "manual"}
-                        onChange={(event) =>
-                          updateNamingSettings({
-                            colonReplacementFormat: Number(event.target.value)
-                          })
-                        }
-                        value={namingSettings.colonReplacementFormat}
-                      >
-                        {colonReplacementOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
                 </div>
-
-                <button
-                  className="command green"
-                  disabled={isSavingNaming}
-                  type="submit"
-                >
-                  <Save size={18} />
-                  Save organize scheme
-                </button>
-              </form>
+              </div>
             ) : (
               <div className="auth-note">
                 <RefreshCw className="spin" size={18} />
@@ -577,4 +549,62 @@ async function readJson<T>(response: Response) {
   }
 
   return body as T;
+}
+
+function withBrowserTimeZoneDefault(
+  autoScan: NavidromeAutoScanStatus
+): NavidromeAutoScanStatus {
+  const timeZone =
+    !autoScan.settings.enabled && autoScan.settings.timeZone === "UTC"
+      ? browserTimeZone()
+      : autoScan.settings.timeZone || browserTimeZone();
+
+  return {
+    ...autoScan,
+    settings: {
+      ...autoScan.settings,
+      timeZone
+    }
+  };
+}
+
+function browserTimeZone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+function autoScanScheduleLabel(autoScan: NavidromeAutoScanStatus) {
+  if (!autoScan.settings.enabled) {
+    return "Daily scan is off.";
+  }
+
+  if (autoScan.scan.state === "running") {
+    return autoScan.scan.startedAt
+      ? `Library scan running since ${formatSettingsDateTime(
+          autoScan.scan.startedAt
+        )}.`
+      : "Library scan is running.";
+  }
+
+  if (autoScan.scan.state === "failed" && autoScan.scan.error) {
+    return `Last scan failed: ${autoScan.scan.error}`;
+  }
+
+  if (autoScan.nextRunAt) {
+    return `Next scan ${formatSettingsDateTime(autoScan.nextRunAt)}.`;
+  }
+
+  return "Next scan will be scheduled after saving.";
+}
+
+function formatSettingsDateTime(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short"
+  }).format(date);
 }

@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "fs/promises";
 import path from "path";
 
-export type OrganizeNamingMode = "standard" | "manual";
+export type OrganizeNamingMode = "standard";
 
 export type OrganizeNamingSettings = {
   artistFolderFormat: string;
@@ -57,8 +57,10 @@ async function loadStoredOrganizeNamingSettings() {
 export async function updateOrganizeNamingSettings(
   update: OrganizeNamingSettingsUpdate
 ) {
-  const current = await loadOrganizeNamingSettings();
-  const next = normalizeOrganizeNamingSettings(current, update);
+  const next = normalizeOrganizeNamingSettings(
+    defaultOrganizeNamingSettings,
+    update
+  );
 
   await saveOrganizeNamingSettings(next);
 
@@ -110,70 +112,17 @@ function normalizeOrganizeNamingSettings(
   fallback: OrganizeNamingSettings,
   partial: OrganizeNamingSettingsUpdate | Partial<StoredOrganizeNamingSettings>
 ) {
-  const mode = normalizeNamingMode(partial.mode, fallback.mode);
-  const merged = {
+  return {
     ...fallback,
-    ...compactStringValues(partial),
-    colonReplacementFormat: normalizeColonReplacementFormat(
-      partial.colonReplacementFormat,
-      fallback.colonReplacementFormat
-    ),
-    mode
+    artistFolderFormat: defaultOrganizeNamingSettings.artistFolderFormat,
+    colonReplacementFormat:
+      defaultOrganizeNamingSettings.colonReplacementFormat,
+    mode: "standard",
+    multiDiscTrackFormat: defaultOrganizeNamingSettings.multiDiscTrackFormat,
+    replaceIllegalCharacters:
+      defaultOrganizeNamingSettings.replaceIllegalCharacters,
+    standardTrackFormat: defaultOrganizeNamingSettings.standardTrackFormat
   } satisfies OrganizeNamingSettings;
-
-  if (mode === "standard") {
-    return {
-      ...merged,
-      artistFolderFormat: defaultOrganizeNamingSettings.artistFolderFormat,
-      colonReplacementFormat:
-        defaultOrganizeNamingSettings.colonReplacementFormat,
-      multiDiscTrackFormat: defaultOrganizeNamingSettings.multiDiscTrackFormat,
-      replaceIllegalCharacters:
-        defaultOrganizeNamingSettings.replaceIllegalCharacters,
-      standardTrackFormat: defaultOrganizeNamingSettings.standardTrackFormat
-    } satisfies OrganizeNamingSettings;
-  }
-
-  return merged;
-}
-
-function normalizeNamingMode(
-  value: unknown,
-  fallback: OrganizeNamingMode
-): OrganizeNamingMode {
-  if (value === "standard" || value === "manual") {
-    return value;
-  }
-
-  if (value === "spotifybu") {
-    return "standard";
-  }
-
-  if (value === "lidarr") {
-    return "manual";
-  }
-
-  return fallback;
-}
-
-function normalizeColonReplacementFormat(value: unknown, fallback: number) {
-  const parsed = Number(value);
-
-  return Number.isInteger(parsed) && parsed >= 0 && parsed <= 4
-    ? parsed
-    : fallback;
-}
-
-function compactStringValues<T extends Record<string, unknown>>(values: T) {
-  return Object.fromEntries(
-    Object.entries(values).filter(([, value]) => {
-      if (typeof value !== "string") {
-        return typeof value !== "undefined";
-      }
-
-      return value.trim().length > 0;
-    })
-  ) as Partial<T>;
 }
 
 function getOrganizeSettingsPath() {

@@ -4,7 +4,7 @@ SpotifyBU is a Docker-first web app for turning a Spotify library into a local, 
 
 The point is not to replace Navidrome search. Navidrome already tells you what is in Navidrome. SpotifyBU uses Spotify as the source-of-truth list, uses Navidrome matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
 
-Current stable release: `1.4.0`. It includes the web UI, local or external-proxy app auth, Spotify OAuth, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, Navidrome library checks, standard or manual organize schemes, library indexing, matched-file organization, Navidrome playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
+Current stable release: `1.4.0`. It includes the web UI, local or external-proxy app auth, Spotify OAuth, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, Navidrome library checks, SpotifyBU organize naming, library indexing, matched-file organization, Navidrome playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
 Download the latest stable release from GitHub: https://github.com/thedinz/SpotifyBU/releases/latest
 
@@ -16,7 +16,7 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - Local SpotifyBU login with default `admin/admin` credentials
 - Settings page for switching between internal login and external reverse-proxy auth
 - Settings page for changing the SpotifyBU app username and password
-- Settings page for standard or manual organize schemes
+- Settings page with the canonical SpotifyBU organize scheme
 - Playlist listing with private and collaborative playlist scopes
 - Playlist rail badges for fully backed-up playlists and changed playlists with unbacked-up track counts
 - SQLite-backed playlist metadata backup snapshots saved under the SpotifyBU config directory
@@ -306,11 +306,9 @@ Navidrome still needs read access to the same host folder and a scan/watch confi
 
 ### Organize Matched Files
 
-After a library scan, the Organize action compares matched local files against the same naming scheme used for new SpotifyBU downloads. The Settings page can keep the standard default or use manual templates. It moves or renames loose files, older SpotifyBU folder layouts, and other matched tracks that are not exactly in the expected structure. In standard mode, the rendered Spotify-derived target path is canonical, so a different year, folder name, or filename is treated as organization work instead of being accepted as close enough.
+After a library scan, the Organize action compares matched local files against the same naming scheme used for new SpotifyBU downloads. It moves or renames loose files, older SpotifyBU folder layouts, and other matched tracks that are not exactly in the expected structure. The rendered Spotify-derived target path is canonical, so a different year, folder name, or filename is treated as organization work instead of being accepted as close enough.
 
 Running Organize before backing up missing files is recommended, but not required. It gives SpotifyBU a clean library view first, can repair older organize runs, and reduces the chance of downloading a track that already exists under a messy path. If you skip it, new provider downloads still stage into the active organize layout.
-
-Changing the organize scheme marks the current library index stale. Run Library Index again after switching between standard and manual naming so SpotifyBU can re-check whether matched files are already organized under the newly selected layout.
 
 SpotifyBU's Library Index scan reads the mounted music folder directly. It does
 not need a Navidrome username or password for that local index. If

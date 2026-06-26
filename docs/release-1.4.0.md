@@ -1,21 +1,16 @@
 # SpotifyBU 1.4.0
 
-SpotifyBU 1.4.0 adds configurable organize schemes for staged Navidrome files.
+SpotifyBU 1.4.0 adds the canonical organize scheme for staged Navidrome files.
 
 ## Added
 
-- Settings now includes an Organize Scheme section with standard and manual
-  naming modes.
-- Standard mode uses the shared clean artist/album/year layout by default.
-- Manual mode supports editable artist, standard-track, and multi-disc track
-  templates.
+- Settings now includes an Organize Scheme section for the SpotifyBU layout.
+- The organize scheme uses the shared clean artist/album/year layout.
 
 ## Changed
 
 - Folder planning, provider download destinations, matched-file organization,
-  and playlist match status now use the active organize scheme.
-- Changing the organize scheme marks the current library index stale until the
-  Library Index action re-checks the mounted library.
+  and playlist match status now use the SpotifyBU organize scheme.
 - The Library Index action is labeled directly in the operations panel, and
   stale track badges now say `Index needed`.
 

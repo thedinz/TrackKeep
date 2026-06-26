@@ -6,12 +6,15 @@ import {
   getNavidromeLibraryIndexScanStatus,
   startNavidromeLibraryIndexScan
 } from "@/lib/navidrome";
+import { ensureNavidromeAutoScanScheduler } from "@/lib/navidrome-auto-scan";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 900;
 
 export async function GET() {
+  ensureNavidromeAutoScanScheduler();
+
   const scan = getNavidromeLibraryIndexScanStatus();
 
   if (scan.state !== "idle") {
@@ -43,6 +46,8 @@ export async function GET() {
 }
 
 export async function POST() {
+  ensureNavidromeAutoScanScheduler();
+
   try {
     const scan = startNavidromeLibraryIndexScan();
     const index =

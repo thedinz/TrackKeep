@@ -5,7 +5,8 @@ import path from "node:path";
 import test, { type TestContext } from "node:test";
 import {
   defaultOrganizeNamingSettings,
-  loadOrganizeNamingSettings
+  loadOrganizeNamingSettings,
+  updateOrganizeNamingSettings
 } from "./organize-settings.ts";
 
 test("uses standard naming by default", async (t) => {
@@ -16,13 +17,11 @@ test("uses standard naming by default", async (t) => {
   });
 });
 
-test("legacy imported naming becomes manual and keeps templates", async (t) => {
+test("legacy imported naming becomes standard defaults", async (t) => {
   await withStoredSettings(t, legacyImportedSettings, async () => {
     const settings = await loadOrganizeNamingSettings();
 
-    assert.equal(settings.mode, "manual");
-    assert.equal(settings.standardTrackFormat, "old/{track:00}");
-    assert.equal(settings.multiDiscTrackFormat, "old/{medium:00}{track:00}");
+    assert.deepEqual(settings, defaultOrganizeNamingSettings);
   });
 });
 
@@ -35,6 +34,21 @@ test("legacy default naming becomes standard defaults", async (t) => {
       settings.standardTrackFormat,
       defaultOrganizeNamingSettings.standardTrackFormat
     );
+  });
+});
+
+test("posted naming settings cannot switch away from standard defaults", async (t) => {
+  await withStoredSettings(t, null, async () => {
+    const settings = await updateOrganizeNamingSettings({
+      artistFolderFormat: "{Artist CleanName}",
+      colonReplacementFormat: 0,
+      mode: "manual" as never,
+      multiDiscTrackFormat: "old/{medium:00}{track:00}",
+      replaceIllegalCharacters: false,
+      standardTrackFormat: "old/{track:00}"
+    });
+
+    assert.deepEqual(settings, defaultOrganizeNamingSettings);
   });
 });
 
