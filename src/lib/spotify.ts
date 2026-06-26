@@ -386,7 +386,7 @@ async function resolveLocalPlaylistTracks(
 ) {
   const localEntries = playlistTracks
     .map((item, index) => ({ index, item }))
-    .filter(({ item }) => isLocalSpotifyTrack(item.track));
+    .filter(({ item }) => spotifyTrackNeedsCatalogResolution(item.track));
 
   if (!localEntries.length) {
     return playlistTracks;
@@ -413,6 +413,7 @@ async function resolveLocalPlaylistTracks(
       localArtists: spotifyTrackArtistNames(entry.localTrack),
       localName: entry.localTrack.name,
       localUri: entry.localTrack.uri,
+      resolutionReasons: spotifyTrackCatalogResolutionReasons(entry.localTrack),
       resolvedAlbum: entry.match?.track.album?.name,
       resolvedArtists: entry.match
         ? spotifyTrackArtistNames(entry.match.track)
@@ -803,11 +804,18 @@ export function spotifyLocalTrackSearchQueries(track: SpotifyTrackObject) {
     stripLocalTrackTitleNoise(title)
   );
   const artistText = spotifyTrackArtistNames(track).slice(0, 2).join(" ");
-
-  return uniqueSpotifySearchQueries([
-    [cleanedTitle, artistText].filter(Boolean).join(" "),
-    [title, artistText].filter(Boolean).join(" ")
+  const titleVariants = uniqueSpotifySearchValues([
+    cleanedTitle,
+    ...spotifyTitleSpellingVariants(cleanedTitle),
+    title,
+    ...spotifyTitleSpellingVariants(title)
   ]);
+
+  return uniqueSpotifySearchQueries(
+    titleVariants.map((titleVariant) =>
+      [titleVariant, artistText].filter(Boolean).join(" ")
+    )
+  );
 }
 
 export function pickBestSpotifyTrackSearchMatch(
@@ -849,14 +857,49 @@ export function pickBestSpotifyTrackSearchMatch(
     : null;
 }
 
-function isLocalSpotifyTrack(track: SpotifyTrackObject) {
+export function spotifyTrackNeedsCatalogResolution(track: SpotifyTrackObject) {
+  return spotifyTrackCatalogResolutionReasons(track).length > 0;
+}
+
+function spotifyTrackCatalogResolutionReasons(track: SpotifyTrackObject) {
+  const reasons: string[] = [];
+
+  if (isExplicitLocalSpotifyTrack(track)) {
+    reasons.push("local-track");
+  }
+
+  if (!track.id) {
+    reasons.push("missing-catalog-id");
+  }
+
+  if (hasProviderPollutedSpotifyMetadata(track)) {
+    reasons.push("provider-polluted-metadata");
+  }
+
+  return reasons;
+}
+
+function isExplicitLocalSpotifyTrack(track: SpotifyTrackObject) {
   return track.is_local === true || track.uri?.startsWith("spotify:local:");
 }
 
 function isCatalogSpotifyTrack(
   track: SpotifyTrackObject
 ): track is SpotifyTrackObject & { id: string; name: string } {
-  return Boolean(track.id && track.name && !isLocalSpotifyTrack(track));
+  return Boolean(track.id && track.name && !isExplicitLocalSpotifyTrack(track));
+}
+
+function hasProviderPollutedSpotifyMetadata(track: SpotifyTrackObject) {
+  const albumKey = normalizeSpotifyMetadataKey(track.album?.name ?? "");
+
+  return (
+    albumKey.includes("clipconverter") ||
+    albumKey.includes("youtube") ||
+    albumKey.includes("ytmp3") ||
+    albumKey.includes("y2mate") ||
+    albumKey.includes("soundcloud") ||
+    /\bvideo\s+clip\b/i.test(track.name ?? "")
+  );
 }
 
 function isConfidentSpotifyTrackSearchMatch(match: SpotifyTrackSearchMatch) {
@@ -924,6 +967,41 @@ function spotifyTrackArtistNames(track: SpotifyTrackObject) {
     .filter(Boolean);
 }
 
+function spotifyTitleSpellingVariants(value: string) {
+  const variants: string[] = [];
+  const youToU = value.replace(/\byou\b/gi, "U");
+  const uToYou = value.replace(/\bu\b/gi, "You");
+
+  if (youToU !== value) {
+    variants.push(youToU);
+  }
+
+  if (uToYou !== value) {
+    variants.push(uToYou);
+  }
+
+  return variants;
+}
+
+function uniqueSpotifySearchValues(values: string[]) {
+  const seen = new Set<string>();
+  const uniqueValues: string[] = [];
+
+  for (const value of values) {
+    const normalizedValue = normalizeSpotifySearchValue(value);
+    const key = normalizedValue.toLowerCase();
+
+    if (!normalizedValue || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    uniqueValues.push(normalizedValue);
+  }
+
+  return uniqueValues;
+}
+
 function uniqueSpotifySearchQueries(queries: string[]) {
   const seen = new Set<string>();
   const uniqueQueries: string[] = [];
@@ -957,6 +1035,10 @@ function stripLocalTrackTitleNoise(value: string) {
 
 function normalizeSpotifySearchValue(value: string) {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function normalizeSpotifyMetadataKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
 function mapAlbum(album: SpotifyAlbumObject) {
