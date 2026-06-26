@@ -2470,6 +2470,87 @@ async function recordProviderDownload(entry: ProviderDownloadLogEntry) {
   return logPath;
 }
 
+export async function purgeProviderDownloadLogsForRelativePath(relativePath: string) {
+  const normalizedRelativePath = normalizeRelativePathKey(relativePath);
+
+  if (!normalizedRelativePath) {
+    return {
+      attemptsRemoved: 0,
+      downloadsRemoved: 0
+    };
+  }
+
+  const [downloadsRemoved, attemptsRemoved] = await Promise.all([
+    purgeProviderDownloadLog(normalizedRelativePath),
+    purgeProviderDownloadAttemptLog(normalizedRelativePath)
+  ]);
+
+  return {
+    attemptsRemoved,
+    downloadsRemoved
+  };
+}
+
+async function purgeProviderDownloadLog(normalizedRelativePath: string) {
+  const log = await readProviderDownloadLog();
+  const downloads = log.downloads.filter(
+    (entry) => normalizeRelativePathKey(entry.relativePath) !== normalizedRelativePath
+  );
+  const removedCount = log.downloads.length - downloads.length;
+
+  if (!removedCount) {
+    return 0;
+  }
+
+  await writeProviderDownloadLog({
+    ...log,
+    downloads,
+    updatedAt: new Date().toISOString()
+  });
+
+  return removedCount;
+}
+
+async function purgeProviderDownloadAttemptLog(normalizedRelativePath: string) {
+  const log = await readProviderDownloadAttemptLog();
+  const attempts = log.attempts.filter(
+    (entry) => normalizeRelativePathKey(entry.relativePath) !== normalizedRelativePath
+  );
+  const removedCount = log.attempts.length - attempts.length;
+
+  if (!removedCount) {
+    return 0;
+  }
+
+  await writeProviderDownloadAttemptLog({
+    ...log,
+    attempts,
+    updatedAt: new Date().toISOString()
+  });
+
+  return removedCount;
+}
+
+async function writeProviderDownloadLog(log: ProviderDownloadLog) {
+  const logDirectory = await ensureNavidromeTargetDirectory([".spotifybu"]);
+  const logPath = path.join(
+    /* turbopackIgnore: true */ logDirectory,
+    "provider-downloads.json"
+  );
+
+  await writeFile(logPath, `${JSON.stringify(log, null, 2)}\n`, "utf8");
+}
+
+async function writeProviderDownloadAttemptLog(log: ProviderDownloadAttemptLog) {
+  const logDirectory = await ensureNavidromeTargetDirectory([".spotifybu"]);
+  const logPath = path.join(
+    /* turbopackIgnore: true */ logDirectory,
+    "provider-download-attempts.json"
+  );
+
+  await writeFile(logPath, `${JSON.stringify(log, null, 2)}\n`, "utf8");
+}
+
 async function recordProviderDownloadAttempt(
   entry: ProviderDownloadAttemptLogEntry
 ) {
@@ -2481,13 +2562,7 @@ async function recordProviderDownloadAttempt(
     log.attempts = log.attempts.slice(-maxAttemptLogEntries);
     log.updatedAt = now;
 
-    const logDirectory = await ensureNavidromeTargetDirectory([".spotifybu"]);
-    const logPath = path.join(
-      /* turbopackIgnore: true */ logDirectory,
-      "provider-download-attempts.json"
-    );
-
-    await writeFile(logPath, `${JSON.stringify(log, null, 2)}\n`, "utf8");
+    await writeProviderDownloadAttemptLog(log);
   } catch (error) {
     console.warn("[spotifybu.provider-download] could not write attempt log", {
       diagnosticId: entry.diagnosticId,
@@ -2564,6 +2639,10 @@ function emptyProviderDownloadAttemptLog(): ProviderDownloadAttemptLog {
     updatedAt: new Date(0).toISOString(),
     version: 1
   };
+}
+
+function normalizeRelativePathKey(relativePath: string | undefined) {
+  return (relativePath ?? "").split(path.sep).join("/").toLowerCase();
 }
 
 function providerDownloadDiagnosticId() {

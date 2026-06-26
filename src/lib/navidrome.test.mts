@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
 import {
+  deleteNavidromeLibraryTrack,
   matchNavidromeTracksWithIndex,
   planNavidromeAlbumFolders,
   readCurrentNavidromeLibraryIndex,
@@ -373,6 +374,78 @@ test("matching finds moved artist-title files without tag duration or track numb
       matches[0].recommendedRelativePath,
       "Marilyn Manson/Marilyn Manson - Lest We Forget - The Best Of (2004)/Marilyn Manson - Lest We Forget - The Best Of (2004) - 17 - Tainted Love.mp3"
     );
+  });
+});
+
+test("deleting a library track removes the file and index entry", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const libraryPath = await mkdtemp(
+      path.join(tmpdir(), "spotifybu-library-")
+    );
+    const previousLibraryPath = process.env.NAVIDROME_LIBRARY_PATH;
+    const relativePath = "Example Artist/Example Artist - Example Record (2026)/01 - Opening.mp3";
+    const filePath = path.join(libraryPath, ...relativePath.split("/"));
+    const indexPath = path.join(libraryPath, ".spotifybu", "library-index.json");
+
+    process.env.NAVIDROME_LIBRARY_PATH = libraryPath;
+    t.after(async () => {
+      if (typeof previousLibraryPath === "string") {
+        process.env.NAVIDROME_LIBRARY_PATH = previousLibraryPath;
+      } else {
+        delete process.env.NAVIDROME_LIBRARY_PATH;
+      }
+
+      await rm(libraryPath, {
+        force: true,
+        recursive: true
+      });
+    });
+
+    await mkdir(path.dirname(filePath), {
+      recursive: true
+    });
+    await mkdir(path.dirname(indexPath), {
+      recursive: true
+    });
+    await writeFile(filePath, "not real audio", "utf8");
+    await writeFile(
+      indexPath,
+      `${JSON.stringify(
+        {
+          generatedAt: new Date(0).toISOString(),
+          libraryPath,
+          tracks: [
+            {
+              album: exampleTrack.album,
+              albumArtist: exampleTrack.albumArtist,
+              artist: exampleTrack.artists[0],
+              artists: exampleTrack.artists,
+              durationMs: exampleTrack.durationMs,
+              fileName: path.posix.basename(relativePath),
+              mtimeMs: 0,
+              relativeDirectory: path.posix.dirname(relativePath),
+              relativePath,
+              sizeBytes: 1,
+              source: "tags",
+              title: exampleTrack.name,
+              trackNumber: exampleTrack.trackNumber
+            }
+          ],
+          version: 1
+        } satisfies NavidromeLibraryIndex,
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    const result = await deleteNavidromeLibraryTrack(relativePath);
+    const index = await readCurrentNavidromeLibraryIndex();
+
+    assert.equal(result.deleted, true);
+    assert.equal(result.removedFromIndex, true);
+    assert.equal(index?.tracks.length, 0);
+    await assert.rejects(readFile(filePath, "utf8"));
   });
 });
 

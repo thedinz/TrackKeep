@@ -1083,6 +1083,14 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   width: 100%;
 }
 
+.track-status-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
 .track-status {
   align-items: center;
   border: 1px solid var(--line);
@@ -1132,6 +1140,18 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   background: rgba(255, 92, 92, 0.2);
   border-color: rgba(255, 126, 126, 0.72);
   color: #ffe0e0;
+}
+
+.track-status.delete {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  padding: 5px;
+}
+
+.track-status.delete.actionable:hover:not(:disabled) {
+  background: rgba(255, 92, 92, 0.12);
+  border-color: rgba(255, 92, 92, 0.5);
+  color: #ffb7b7;
 }
 
 .track-status.stale {

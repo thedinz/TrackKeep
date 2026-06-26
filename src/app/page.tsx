@@ -19,6 +19,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Trash2,
   XCircle
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -275,6 +276,17 @@ type LibraryOrganizeResponse = LibraryIndexResponse & LibraryMatchesResponse & {
   movedCount: number;
   remainingMoveCount: number;
   skippedCount: number;
+};
+
+type LibraryTrackDeleteResponse = LibraryIndexResponse & {
+  deleted: boolean;
+  libraryMatches?: LibraryMatch[];
+  providerLogCleanup: {
+    attemptsRemoved: number;
+    downloadsRemoved: number;
+  };
+  relativePath: string;
+  removedFromIndex: boolean;
 };
 
 type NavidromePlaylistSyncResponse = {
@@ -542,6 +554,9 @@ export default function Home() {
   const [organizingTrackPositions, setOrganizingTrackPositions] = useState<
     number[]
   >([]);
+  const [deletingLibraryTrackPath, setDeletingLibraryTrackPath] = useState<
+    string | null
+  >(null);
   const [libraryOrganizeProgress, setLibraryOrganizeProgress] =
     useState<string | null>(null);
   const [isCreatingNavidromePlaylist, setIsCreatingNavidromePlaylist] =
@@ -767,6 +782,65 @@ export default function Home() {
 
     return response.libraryMatches;
   }, [applyLibraryMatches, tracks]);
+
+  const deleteLibraryTrack = useCallback(
+    async (relativePath: string) => {
+      const normalizedRelativePath = normalizeRelativePath(relativePath);
+
+      if (!normalizedRelativePath || deletingLibraryTrackPath) {
+        return;
+      }
+
+      if (
+        !window.confirm(
+          `Delete this backed-up file from the Navidrome library?\n\n${normalizedRelativePath}`
+        )
+      ) {
+        return;
+      }
+
+      setDeletingLibraryTrackPath(normalizedRelativePath);
+      setLibraryOrganizeMessage(null);
+      setRequestError(null);
+
+      try {
+        const response = await deleteJson<LibraryTrackDeleteResponse>(
+          "/api/navidrome/library/tracks",
+          {
+            relativePath: normalizedRelativePath,
+            tracks
+          }
+        );
+
+        applyLibraryIndexResponse({
+          index: response.index
+        });
+
+        if (response.libraryMatches) {
+          applyLibraryMatches(tracks, response.libraryMatches);
+        } else {
+          await refreshLibraryMatches(tracks);
+        }
+
+        setLibraryOrganizeMessage(
+          response.deleted
+            ? `Deleted ${response.relativePath} from the library.`
+            : `Removed stale index entry for ${response.relativePath}.`
+        );
+      } catch (error) {
+        setRequestError(errorMessage(error));
+      } finally {
+        setDeletingLibraryTrackPath(null);
+      }
+    },
+    [
+      applyLibraryIndexResponse,
+      applyLibraryMatches,
+      deletingLibraryTrackPath,
+      refreshLibraryMatches,
+      tracks
+    ]
+  );
 
   const markDownloadedTrackInLibrary = useCallback(
     (track: BackupTrack, relativePath: string) => {
@@ -3269,8 +3343,25 @@ export default function Home() {
                                   organizingTrackPositionSet.has(track.position),
                                 onOrganize: () =>
                                   void organizeLibraryMatches([track.position]),
+                                onDelete: libraryMatch?.matchedTrack
+                                  ?.relativePath
+                                  ? () =>
+                                      void deleteLibraryTrack(
+                                        libraryMatch.matchedTrack?.relativePath ??
+                                          ""
+                                      )
+                                  : undefined,
                                 onSearchMissing: () =>
                                   void openMissingBackupActions(track),
+                                deleteDisabled:
+                                  Boolean(deletingLibraryTrackPath) ||
+                                  isAnyOrganizationRunning ||
+                                  isSearchingProvider ||
+                                  isDownloadingProvider ||
+                                  isDownloadingBulkProvider,
+                                isDeleting:
+                                  deletingLibraryTrackPath ===
+                                  libraryMatch?.matchedTrack?.relativePath,
                                 organizeDisabled: isAnyOrganizationRunning,
                                 searchDisabled:
                                   isSearchingProvider ||
@@ -3566,6 +3657,19 @@ async function postJson<T>(url: string, body: unknown) {
       "Content-Type": "application/json"
     },
     method: "POST"
+  });
+
+  return responseJson<T>(response);
+}
+
+async function deleteJson<T>(url: string, body: unknown) {
+  const response = await fetch(url, {
+    body: JSON.stringify(body),
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    method: "DELETE"
   });
 
   return responseJson<T>(response);
@@ -3976,7 +4080,10 @@ function renderLibraryMatch(
   match: LibraryMatch | undefined,
   libraryIndex: NavidromeLibraryIndexSummary | null,
   options: {
+    deleteDisabled?: boolean;
     isOrganizing?: boolean;
+    isDeleting?: boolean;
+    onDelete?: () => void;
     onOrganize?: () => void;
     onSearchMissing?: () => void;
     organizeDisabled?: boolean;
@@ -4019,22 +4126,25 @@ function renderLibraryMatch(
   if (match.needsMove) {
     return (
       <span className="track-status-stack">
-        <button
-          className="track-status move actionable"
-          disabled={options.organizeDisabled}
-          onClick={options.onOrganize}
-          title={`Orginize into ${
-            match.recommendedRelativePath ?? match.expectedFolder
-          }`}
-          type="button"
-        >
-          {options.isOrganizing ? (
-            <Loader2 className="spin" size={13} />
-          ) : (
-            <RotateCcw size={13} />
-          )}
-          {options.isOrganizing ? "Orginizing" : "Orginize"}
-        </button>
+        <span className="track-status-actions">
+          <button
+            className="track-status move actionable"
+            disabled={options.organizeDisabled}
+            onClick={options.onOrganize}
+            title={`Orginize into ${
+              match.recommendedRelativePath ?? match.expectedFolder
+            }`}
+            type="button"
+          >
+            {options.isOrganizing ? (
+              <Loader2 className="spin" size={13} />
+            ) : (
+              <RotateCcw size={13} />
+            )}
+            {options.isOrganizing ? "Orginizing" : "Orginize"}
+          </button>
+          {renderDeleteLibraryTrackButton(match, options)}
+        </span>
         <span className="track-note">
           Move to {match.recommendedRelativePath ?? match.expectedFolder}
         </span>
@@ -4044,11 +4154,44 @@ function renderLibraryMatch(
 
   return (
     <span className="track-status-stack">
-      <span className="track-status exists">Orginized</span>
+      <span className="track-status-actions">
+        <span className="track-status exists">Orginized</span>
+        {renderDeleteLibraryTrackButton(match, options)}
+      </span>
       <span className="track-note">
         {match.matchedTrack?.relativePath ?? match.matchedBy ?? "Indexed"}
       </span>
     </span>
+  );
+}
+
+function renderDeleteLibraryTrackButton(
+  match: LibraryMatch,
+  options: {
+    deleteDisabled?: boolean;
+    isDeleting?: boolean;
+    onDelete?: () => void;
+  }
+) {
+  if (!match.matchedTrack?.relativePath || !options.onDelete) {
+    return null;
+  }
+
+  return (
+    <button
+      aria-label={`Delete ${match.matchedTrack.relativePath}`}
+      className="track-status delete actionable"
+      disabled={options.deleteDisabled}
+      onClick={options.onDelete}
+      title={`Delete ${match.matchedTrack.relativePath}`}
+      type="button"
+    >
+      {options.isDeleting ? (
+        <Loader2 className="spin" size={13} />
+      ) : (
+        <Trash2 size={13} />
+      )}
+    </button>
   );
 }
 
