@@ -4143,7 +4143,6 @@ function renderLibraryMatch(
             )}
             {options.isOrganizing ? "Orginizing" : "Orginize"}
           </button>
-          {renderDeleteLibraryTrackButton(match, options)}
         </span>
         <span className="track-note">
           Move to {match.recommendedRelativePath ?? match.expectedFolder}

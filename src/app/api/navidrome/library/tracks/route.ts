@@ -29,10 +29,13 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    const [deleteResult, providerLogCleanup] = await Promise.all([
-      deleteNavidromeLibraryTrack(relativePath),
-      purgeProviderDownloadLogsForRelativePath(relativePath)
-    ]);
+    const deleteResult = await deleteNavidromeLibraryTrack(relativePath);
+    const providerLogCleanup = deleteResult.deleted
+      ? await purgeProviderDownloadLogsForRelativePath(relativePath)
+      : {
+          attemptsRemoved: 0,
+          downloadsRemoved: 0
+        };
     const libraryMatches = tracks
       ? await matchNavidromeTracks(tracks)
       : undefined;
