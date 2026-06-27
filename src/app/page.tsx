@@ -4,10 +4,9 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  CircleAlert,
   Clock3,
   Download,
-  FileJson,
-  FileText,
   HardDrive,
   Link2,
   ListMusic,
@@ -21,6 +20,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Trash2,
   XCircle
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -234,6 +234,11 @@ type BackupTrack = {
   explicit: boolean;
   id?: string;
   isrc?: string;
+  metadataStatus?:
+    | "spotify"
+    | "spotify-local-resolved"
+    | "spotify-local-unresolved";
+  metadataWarning?: string;
   name: string;
   position: number;
   spotifyUri?: string;
@@ -277,6 +282,17 @@ type LibraryOrganizeResponse = LibraryIndexResponse & LibraryMatchesResponse & {
   movedCount: number;
   remainingMoveCount: number;
   skippedCount: number;
+};
+
+type LibraryTrackDeleteResponse = LibraryIndexResponse & {
+  deleted: boolean;
+  libraryMatches?: LibraryMatch[];
+  providerLogCleanup: {
+    attemptsRemoved: number;
+    downloadsRemoved: number;
+  };
+  relativePath: string;
+  removedFromIndex: boolean;
 };
 
 type NavidromePlaylistSyncResponse = {
@@ -544,6 +560,9 @@ export default function Home() {
   const [organizingTrackPositions, setOrganizingTrackPositions] = useState<
     number[]
   >([]);
+  const [deletingLibraryTrackPath, setDeletingLibraryTrackPath] = useState<
+    string | null
+  >(null);
   const [libraryOrganizeProgress, setLibraryOrganizeProgress] =
     useState<string | null>(null);
   const [isCreatingNavidromePlaylist, setIsCreatingNavidromePlaylist] =
@@ -769,6 +788,65 @@ export default function Home() {
 
     return response.libraryMatches;
   }, [applyLibraryMatches, tracks]);
+
+  const deleteLibraryTrack = useCallback(
+    async (relativePath: string) => {
+      const normalizedRelativePath = normalizeRelativePath(relativePath);
+
+      if (!normalizedRelativePath || deletingLibraryTrackPath) {
+        return;
+      }
+
+      if (
+        !window.confirm(
+          `Delete this backed-up file from the Navidrome library?\n\n${normalizedRelativePath}`
+        )
+      ) {
+        return;
+      }
+
+      setDeletingLibraryTrackPath(normalizedRelativePath);
+      setLibraryOrganizeMessage(null);
+      setRequestError(null);
+
+      try {
+        const response = await deleteJson<LibraryTrackDeleteResponse>(
+          "/api/navidrome/library/tracks",
+          {
+            relativePath: normalizedRelativePath,
+            tracks
+          }
+        );
+
+        applyLibraryIndexResponse({
+          index: response.index
+        });
+
+        if (response.libraryMatches) {
+          applyLibraryMatches(tracks, response.libraryMatches);
+        } else {
+          await refreshLibraryMatches(tracks);
+        }
+
+        setLibraryOrganizeMessage(
+          response.deleted
+            ? `Deleted ${response.relativePath} from the library.`
+            : `Removed stale index entry for ${response.relativePath}.`
+        );
+      } catch (error) {
+        setRequestError(errorMessage(error));
+      } finally {
+        setDeletingLibraryTrackPath(null);
+      }
+    },
+    [
+      applyLibraryIndexResponse,
+      applyLibraryMatches,
+      deletingLibraryTrackPath,
+      refreshLibraryMatches,
+      tracks
+    ]
+  );
 
   const markDownloadedTrackInLibrary = useCallback(
     (track: BackupTrack, relativePath: string) => {
@@ -1043,15 +1121,22 @@ export default function Home() {
 
   const searchProviderTrack = useCallback(async (track: BackupTrack) => {
     setDownloadTrackPosition(String(track.position));
-    setIsSearchingProvider(true);
     setProviderCandidates([]);
     setSelectedProviderCandidateId("");
     setProviderDownloadMessage(null);
-    setProviderDownloadError(null);
     setProviderDownloadStatusLabel(null);
     setRequestError(null);
     setManualProviderSourceUrl("");
     setIsManualProviderSourceOpen(false);
+
+    if (isUnresolvedSpotifyLocalTrack(track)) {
+      setIsSearchingProvider(false);
+      setProviderDownloadError(spotifyLocalRepairMessage(track));
+      return;
+    }
+
+    setIsSearchingProvider(true);
+    setProviderDownloadError(null);
 
     try {
       const response = await postJson<ProviderSearchResponse>(
@@ -1115,6 +1200,11 @@ export default function Home() {
       return;
     }
 
+    if (isUnresolvedSpotifyLocalTrack(selectedTrack)) {
+      setProviderDownloadError(spotifyLocalRepairMessage(selectedTrack));
+      return;
+    }
+
     await searchProviderTrack(selectedTrack);
   }, [
     downloadTrackPosition,
@@ -1159,6 +1249,11 @@ export default function Home() {
 
     if (!selectedTrack) {
       setRequestError("Choose a track before downloading.");
+      return;
+    }
+
+    if (isUnresolvedSpotifyLocalTrack(selectedTrack)) {
+      setRequestError(spotifyLocalRepairMessage(selectedTrack));
       return;
     }
 
@@ -1594,7 +1689,11 @@ export default function Home() {
     [libraryMatches]
   );
   const hasUsableLibraryIndex = Boolean(libraryIndex && !libraryIndex.stale);
-  const indexedTrackCount = libraryMatches.filter((match) => match.exists).length;
+  const indexedTrackCount = tracks.filter((track) => {
+    const match = libraryMatchesByPosition.get(track.position);
+
+    return Boolean(match?.exists) && !isUnresolvedSpotifyLocalTrack(track);
+  }).length;
   const moveNeededCount = libraryMatches.filter((match) => match.needsMove).length;
   const missingBackupTracks = useMemo(
     () =>
@@ -1602,10 +1701,18 @@ export default function Home() {
         ? tracks.filter((track) => {
             const match = libraryMatchesByPosition.get(track.position);
 
-            return !match?.exists;
+            return !match?.exists || isUnresolvedSpotifyLocalTrack(track);
           })
         : tracks,
     [hasUsableLibraryIndex, libraryMatchesByPosition, tracks]
+  );
+  const unresolvedSpotifyLocalTracks = useMemo(
+    () => tracks.filter(isUnresolvedSpotifyLocalTrack),
+    [tracks]
+  );
+  const downloadTrackOptions = useMemo(
+    () => missingBackupTracks.filter((track) => !isUnresolvedSpotifyLocalTrack(track)),
+    [missingBackupTracks]
   );
   const missingBackupCount = hasUsableLibraryIndex
     ? missingBackupTracks.length
@@ -1632,7 +1739,6 @@ export default function Home() {
       ? `${Math.round((indexedTrackCount / tracks.length) * 100)}%`
       : "Scan"
     : "0%";
-  const downloadTrackOptions = missingBackupTracks;
   useEffect(() => {
     const nextDownloadTrackPosition = downloadTrackOptions[0]
       ? String(downloadTrackOptions[0].position)
@@ -2080,7 +2186,6 @@ export default function Home() {
       } satisfies ResolvedSource)
     : null;
   const activeSource = sourceKind === "playlist" ? playlistSource : resolvedSource;
-  const canExportPlaylist = sourceKind === "playlist" && Boolean(selectedPlaylistId);
   const selectedTracksLabel =
     sourceKind === "playlist" ? "Selected Tracks" : "Resolved Tracks";
   const bulkProgressFinished = bulkDownloadProgress
@@ -2528,38 +2633,6 @@ export default function Home() {
                     </button>
                   </>
                 ) : null}
-                <a
-                  className={`command secondary ${
-                    canExportPlaylist ? "" : "disabled"
-                  }`}
-                  href={
-                    canExportPlaylist
-                      ? `/api/spotify/playlists/${selectedPlaylistId}/export?format=json`
-                      : "#"
-                  }
-                  aria-disabled={!canExportPlaylist}
-                  tabIndex={canExportPlaylist ? undefined : -1}
-                  title="Export JSON"
-                >
-                  <FileJson size={18} />
-                  JSON
-                </a>
-                <a
-                  className={`command secondary ${
-                    canExportPlaylist ? "" : "disabled"
-                  }`}
-                  href={
-                    canExportPlaylist
-                      ? `/api/spotify/playlists/${selectedPlaylistId}/export?format=csv`
-                      : "#"
-                  }
-                  aria-disabled={!canExportPlaylist}
-                  tabIndex={canExportPlaylist ? undefined : -1}
-                  title="Export CSV"
-                >
-                  <FileText size={18} />
-                  CSV
-                </a>
                 <button
                   className={`command secondary ${
                     canOrganizeLibrary ? "" : "disabled"
@@ -2740,6 +2813,29 @@ export default function Home() {
                         : "Run Index"}
                     </span>
                   </div>
+                  {unresolvedSpotifyLocalTracks.length ? (
+                    <div
+                      className="provider-warning backup-workflow-warning"
+                      role="status"
+                    >
+                      <CircleAlert size={18} />
+                      <div>
+                        <h3>Spotify local rows need repair</h3>
+                        <p>
+                          Spotify returned{" "}
+                          {numberFormatter.format(
+                            unresolvedSpotifyLocalTracks.length
+                          )}{" "}
+                          playlist row
+                          {unresolvedSpotifyLocalTracks.length === 1
+                            ? ""
+                            : "s"}{" "}
+                          as local files, so SpotifyBU will not search or
+                          download provider sources for them.
+                        </p>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="provider-throttle-grid compact backup-workflow-settings">
                     <label className="provider-field">
                       <span>Quality</span>
@@ -2803,9 +2899,11 @@ export default function Home() {
                             ))
                           ) : (
                             <option value="">
-                              {tracks.length
-                                ? "No missing backup tracks"
-                                : "Resolve Spotify tracks first"}
+                              {unresolvedSpotifyLocalTracks.length
+                                ? "Repair Spotify local rows first"
+                                : tracks.length
+                                  ? "No missing backup tracks"
+                                  : "Resolve Spotify tracks first"}
                             </option>
                           )}
                         </select>
@@ -3047,6 +3145,11 @@ export default function Home() {
                         <p className="provider-queue-note">
                           {numberFormatter.format(downloadTrackOptions.length)}{" "}
                           missing tracks ready
+                        </p>
+                      ) : unresolvedSpotifyLocalTracks.length ? (
+                        <p className="provider-queue-note">
+                          No downloadable missing tracks until Spotify local rows
+                          are repaired.
                         </p>
                       ) : null}
                       <button
@@ -3293,10 +3396,11 @@ export default function Home() {
                             </span>
                           </span>
                           <span className="track-cell">
-                            {track.album || "Unknown"}
+                            {trackAlbumLabel(track)}
                           </span>
                           <span className="track-cell library-cell">
                             {renderLibraryMatch(
+                              track,
                               libraryMatch,
                               libraryIndex,
                               {
@@ -3304,8 +3408,25 @@ export default function Home() {
                                   organizingTrackPositionSet.has(track.position),
                                 onOrganize: () =>
                                   void organizeLibraryMatches([track.position]),
+                                onDelete: libraryMatch?.matchedTrack
+                                  ?.relativePath
+                                  ? () =>
+                                      void deleteLibraryTrack(
+                                        libraryMatch.matchedTrack?.relativePath ??
+                                          ""
+                                      )
+                                  : undefined,
                                 onSearchMissing: () =>
                                   void openMissingBackupActions(track),
+                                deleteDisabled:
+                                  Boolean(deletingLibraryTrackPath) ||
+                                  isAnyOrganizationRunning ||
+                                  isSearchingProvider ||
+                                  isDownloadingProvider ||
+                                  isDownloadingBulkProvider,
+                                isDeleting:
+                                  deletingLibraryTrackPath ===
+                                  libraryMatch?.matchedTrack?.relativePath,
                                 organizeDisabled: isAnyOrganizationRunning,
                                 searchDisabled:
                                   isSearchingProvider ||
@@ -3551,7 +3672,7 @@ export default function Home() {
             <div className="signal-grid">
               <div className="signal ready">
                 <h3>Spotify source</h3>
-                <p className="muted">Playlists, songs, albums, and metadata exports</p>
+                <p className="muted">Playlists, songs, albums, and metadata backups</p>
               </div>
               <div className="signal locked">
                 <h3>Local backup target</h3>
@@ -3601,6 +3722,19 @@ async function postJson<T>(url: string, body: unknown) {
       "Content-Type": "application/json"
     },
     method: "POST"
+  });
+
+  return responseJson<T>(response);
+}
+
+async function deleteJson<T>(url: string, body: unknown) {
+  const response = await fetch(url, {
+    body: JSON.stringify(body),
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    method: "DELETE"
   });
 
   return responseJson<T>(response);
@@ -3972,7 +4106,9 @@ function getPlaylistBackupStatus(
     libraryMatches.map((match) => [match.trackPosition, match] as const)
   );
   const missingTrackCount = tracks.filter(
-    (track) => !matchesByPosition.get(track.position)?.exists
+    (track) =>
+      isUnresolvedSpotifyLocalTrack(track) ||
+      !matchesByPosition.get(track.position)?.exists
   ).length;
 
   return {
@@ -3980,6 +4116,23 @@ function getPlaylistBackupStatus(
     missingTrackCount,
     trackCount: tracks.length
   };
+}
+
+function isUnresolvedSpotifyLocalTrack(track: BackupTrack) {
+  return track.metadataStatus === "spotify-local-unresolved";
+}
+
+function spotifyLocalRepairMessage(track: BackupTrack) {
+  return (
+    track.metadataWarning ??
+    "Spotify returned this playlist row as a local file instead of a catalog track. Remove and re-add the Spotify catalog track before backing it up."
+  );
+}
+
+function trackAlbumLabel(track: BackupTrack) {
+  return isUnresolvedSpotifyLocalTrack(track)
+    ? "Spotify local file"
+    : track.album || "Unknown";
 }
 
 function getPlaylistMissingBackupTrackCount(
@@ -4008,10 +4161,14 @@ function playlistMissingBackupTitle(missingTrackCount: number) {
 }
 
 function renderLibraryMatch(
+  track: BackupTrack,
   match: LibraryMatch | undefined,
   libraryIndex: NavidromeLibraryIndexSummary | null,
   options: {
+    deleteDisabled?: boolean;
     isOrganizing?: boolean;
+    isDeleting?: boolean;
+    onDelete?: () => void;
     onOrganize?: () => void;
     onSearchMissing?: () => void;
     organizeDisabled?: boolean;
@@ -4029,6 +4186,23 @@ function renderLibraryMatch(
         title="Run Library Index to refresh organization status"
       >
         Index needed
+      </span>
+    );
+  }
+
+  if (isUnresolvedSpotifyLocalTrack(track)) {
+    return (
+      <span className="track-status-stack">
+        <span className="track-status-actions">
+          <span
+            className="track-status repair"
+            title={spotifyLocalRepairMessage(track)}
+          >
+            Repair Spotify
+          </span>
+          {match?.exists ? renderDeleteLibraryTrackButton(match, options) : null}
+        </span>
+        <span className="track-note">{spotifyLocalRepairMessage(track)}</span>
       </span>
     );
   }
@@ -4054,22 +4228,24 @@ function renderLibraryMatch(
   if (match.needsMove) {
     return (
       <span className="track-status-stack">
-        <button
-          className="track-status move actionable"
-          disabled={options.organizeDisabled}
-          onClick={options.onOrganize}
-          title={`Orginize into ${
-            match.recommendedRelativePath ?? match.expectedFolder
-          }`}
-          type="button"
-        >
-          {options.isOrganizing ? (
-            <Loader2 className="spin" size={13} />
-          ) : (
-            <RotateCcw size={13} />
-          )}
-          {options.isOrganizing ? "Orginizing" : "Orginize"}
-        </button>
+        <span className="track-status-actions">
+          <button
+            className="track-status move actionable"
+            disabled={options.organizeDisabled}
+            onClick={options.onOrganize}
+            title={`Orginize into ${
+              match.recommendedRelativePath ?? match.expectedFolder
+            }`}
+            type="button"
+          >
+            {options.isOrganizing ? (
+              <Loader2 className="spin" size={13} />
+            ) : (
+              <RotateCcw size={13} />
+            )}
+            {options.isOrganizing ? "Orginizing" : "Orginize"}
+          </button>
+        </span>
         <span className="track-note">
           Move to {match.recommendedRelativePath ?? match.expectedFolder}
         </span>
@@ -4079,11 +4255,44 @@ function renderLibraryMatch(
 
   return (
     <span className="track-status-stack">
-      <span className="track-status exists">Orginized</span>
+      <span className="track-status-actions">
+        <span className="track-status exists">Orginized</span>
+        {renderDeleteLibraryTrackButton(match, options)}
+      </span>
       <span className="track-note">
         {match.matchedTrack?.relativePath ?? match.matchedBy ?? "Indexed"}
       </span>
     </span>
+  );
+}
+
+function renderDeleteLibraryTrackButton(
+  match: LibraryMatch,
+  options: {
+    deleteDisabled?: boolean;
+    isDeleting?: boolean;
+    onDelete?: () => void;
+  }
+) {
+  if (!match.matchedTrack?.relativePath || !options.onDelete) {
+    return null;
+  }
+
+  return (
+    <button
+      aria-label={`Delete ${match.matchedTrack.relativePath}`}
+      className="track-status delete actionable"
+      disabled={options.deleteDisabled}
+      onClick={options.onDelete}
+      title={`Delete ${match.matchedTrack.relativePath}`}
+      type="button"
+    >
+      {options.isDeleting ? (
+        <Loader2 className="spin" size={13} />
+      ) : (
+        <Trash2 size={13} />
+      )}
+    </button>
   );
 }
 

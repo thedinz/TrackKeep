@@ -1,7 +1,7 @@
 import { execFile } from "child_process";
 import { createHash, randomBytes } from "crypto";
 import { constants, type Dirent } from "fs";
-import { access, mkdir, readdir, readFile, rename, stat, writeFile } from "fs/promises";
+import { access, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "fs/promises";
 import path from "path";
 import { promisify } from "util";
 import {
@@ -10,7 +10,12 @@ import {
   organizeNamingSettingsKey,
   type OrganizeNamingSettings
 } from "./organize-settings.ts";
-import type { BackupTrack, PlaylistSummary } from "./spotify";
+import {
+  isUnresolvedSpotifyLocalBackupTrack,
+  unresolvedSpotifyLocalTrackMessage,
+  type BackupTrack,
+  type PlaylistSummary
+} from "./spotify";
 
 export type NavidromeLibraryState =
   | "not_configured"
@@ -849,6 +854,78 @@ export async function upsertNavidromeLibraryIndexTrack(filePath: string) {
   return summary;
 }
 
+export async function deleteNavidromeLibraryTrack(relativePath: string) {
+  const libraryPath = getNavidromeLibraryPath();
+
+  if (!libraryPath) {
+    throw new Error("NAVIDROME_LIBRARY_PATH is not configured.");
+  }
+
+  const normalizedRelativePath = normalizeRelativePath(relativePath);
+
+  if (
+    !normalizedRelativePath ||
+    normalizedRelativePath === "." ||
+    normalizedRelativePath.startsWith(".spotifybu/") ||
+    normalizedRelativePath === ".spotifybu"
+  ) {
+    throw new Error("Choose a backed-up track file to delete.");
+  }
+
+  const targetPath = absoluteLibraryPath(libraryPath, normalizedRelativePath);
+  const existed = await canAccess(targetPath, constants.F_OK);
+  const existingIndex = await readNavidromeLibraryIndex();
+
+  await rm(targetPath, {
+    force: true
+  });
+
+  const naming = await loadOrganizeNamingSettings();
+  const namingSchemeKey = organizeNamingSettingsKey(naming);
+  const index =
+    existingIndex?.libraryPath === libraryPath
+      ? existingIndex
+      : ({
+          generatedAt: new Date(0).toISOString(),
+          libraryPath,
+          namingSchemeKey,
+          skipped: [],
+          tracks: [],
+          version: 1
+        } satisfies NavidromeLibraryIndex);
+  const deletedTrackKey = normalizeRelativePathKey(normalizedRelativePath);
+  const tracks = index.tracks.filter(
+    (track) => normalizeRelativePathKey(track.relativePath) !== deletedTrackKey
+  );
+  const removedFromIndex = tracks.length !== index.tracks.length;
+  const updatedIndex = {
+    ...index,
+    generatedAt: new Date().toISOString(),
+    libraryPath,
+    namingSchemeKey,
+    tracks,
+    skipped: index.skipped?.filter(
+      (entry) => normalizeRelativePathKey(entry.relativePath) !== deletedTrackKey
+    )
+  } satisfies NavidromeLibraryIndex;
+
+  await writeNavidromeLibraryIndex(updatedIndex);
+
+  const summary = summarizeNavidromeLibraryIndex(
+    updatedIndex,
+    libraryPath,
+    namingSchemeKey
+  );
+  lastLibraryIndexSummary = summary;
+
+  return {
+    deleted: existed,
+    index: summary,
+    relativePath: normalizedRelativePath,
+    removedFromIndex
+  };
+}
+
 export async function matchNavidromeTracks(tracks: BackupTrack[]) {
   const libraryPath = getNavidromeLibraryPath();
   const index = await readCurrentNavidromeLibraryIndex();
@@ -1009,6 +1086,15 @@ export async function createOrUpdateNavidromePlaylistFromSpotify(
   const skipped: NavidromePlaylistSyncResult["skipped"] = [];
 
   for (const track of tracks) {
+    if (isUnresolvedSpotifyLocalBackupTrack(track)) {
+      skipped.push({
+        reason: track.metadataWarning ?? unresolvedSpotifyLocalTrackMessage,
+        trackName: track.name,
+        trackPosition: track.position
+      });
+      continue;
+    }
+
     const match = matches.find(
       (candidate) => candidate.trackPosition === track.position
     );

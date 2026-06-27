@@ -1,5 +1,6 @@
 import { getAppBaseUrl } from "./app-url";
 import { appendDiagnosticLog, diagnosticError } from "./diagnostics";
+import { scoreProviderCandidate } from "./providers/scoring";
 
 export type SpotifyTokenSet = {
   access_token: string;
@@ -49,7 +50,7 @@ type SpotifyAlbumSummaryObject = {
   total_tracks?: number;
 };
 
-type SpotifyTrackObject = {
+export type SpotifyTrackObject = {
   album?: SpotifyAlbumSummaryObject;
   artists?: SpotifyArtist[];
   disc_number?: number;
@@ -60,6 +61,7 @@ type SpotifyTrackObject = {
   };
   external_urls?: SpotifyExternalUrls;
   id?: string;
+  is_local?: boolean;
   name?: string;
   track_number?: number;
   type?: string;
@@ -109,6 +111,28 @@ type SpotifyPlaylistTrackItem = {
   track?: SpotifyTrackObject | null;
 };
 
+type SpotifySearchResponse = {
+  tracks?: SpotifyPaging<SpotifyTrackObject>;
+};
+
+type PlaylistTrackItem = {
+  addedAt: string | undefined;
+  metadataStatus?: BackupTrackMetadataStatus;
+  metadataWarning?: string;
+  track: SpotifyTrackObject;
+};
+
+type LocalTrackResolutionEntry = {
+  index: number;
+  localTrack: SpotifyTrackObject;
+  match: SpotifyTrackSearchMatch | null;
+};
+
+export type SpotifyTrackSearchMatch = {
+  score: ReturnType<typeof scoreProviderCandidate>;
+  track: SpotifyTrackObject;
+};
+
 export type SpotifyUserProfile = {
   displayName: string;
   email?: string;
@@ -141,6 +165,11 @@ export type AlbumSummary = {
   tracksTotal: number;
 };
 
+export type BackupTrackMetadataStatus =
+  | "spotify"
+  | "spotify-local-resolved"
+  | "spotify-local-unresolved";
+
 export type BackupTrack = {
   addedAt?: string;
   album: string;
@@ -158,6 +187,8 @@ export type BackupTrack = {
   explicit: boolean;
   id?: string;
   isrc?: string;
+  metadataStatus?: BackupTrackMetadataStatus;
+  metadataWarning?: string;
   name: string;
   position: number;
   spotifyUri?: string;
@@ -184,6 +215,15 @@ export const SPOTIFY_SCOPES = [
   "playlist-read-collaborative",
   "user-library-read"
 ];
+
+export const unresolvedSpotifyLocalTrackMessage =
+  "Spotify returned this playlist row as a local file instead of a catalog track. Remove and re-add the Spotify catalog track before backing it up.";
+
+export function isUnresolvedSpotifyLocalBackupTrack(
+  track: Pick<BackupTrack, "metadataStatus">
+) {
+  return track.metadataStatus === "spotify-local-unresolved";
+}
 
 const playlistMetadataFields = [
   "collaborative",
@@ -342,13 +382,319 @@ export async function getPlaylistTracks(
     throw error;
   }
 
-  return items
+  const playlistTracks = items
     .map((item) => ({
       addedAt: item.added_at,
       track: item.item ?? item.track
     }))
-    .filter((item) => item.track?.type === "track")
-    .map((item, index) => mapTrackObject(item.track, index, item.addedAt));
+    .filter((item): item is PlaylistTrackItem => item.track?.type === "track");
+  const resolvedTracks = await resolveLocalPlaylistTracks(
+    tokenSet,
+    playlistTracks
+  );
+
+  return resolvedTracks.map((item, index) =>
+    mapTrackObject(
+      item.track,
+      index,
+      item.addedAt,
+      item.metadataStatus,
+      item.metadataWarning
+    )
+  );
+}
+
+async function resolveLocalPlaylistTracks(
+  tokenSet: SpotifyTokenSet,
+  playlistTracks: PlaylistTrackItem[]
+) {
+  const localEntries = playlistTracks
+    .map((item, index) => ({ index, item }))
+    .filter(({ item }) => spotifyTrackNeedsCatalogResolution(item.track));
+
+  if (!localEntries.length) {
+    return playlistTracks;
+  }
+
+  const resolvedEntries: LocalTrackResolutionEntry[] = await mapWithConcurrency(
+    localEntries,
+    4,
+    async ({ index, item }) => ({
+      index,
+      localTrack: item.track,
+      match: await resolveLocalSpotifyTrack(tokenSet, item.track)
+    })
+  );
+  const resolvedByIndex = new Map(
+    resolvedEntries
+      .filter(hasSpotifyTrackSearchMatch)
+      .map((entry) => [entry.index, entry.match.track] as const)
+  );
+  const replacementByIndex = new Map(
+    resolvedEntries.map((entry) => [
+      entry.index,
+      {
+        metadataStatus: entry.match
+          ? "spotify-local-resolved"
+          : "spotify-local-unresolved",
+        metadataWarning: entry.match ? undefined : unresolvedSpotifyLocalTrackMessage,
+        track: entry.match?.track ?? sanitizeUnresolvedLocalSpotifyTrack(entry.localTrack)
+      } satisfies Pick<
+        PlaylistTrackItem,
+        "metadataStatus" | "metadataWarning" | "track"
+      >
+    ] as const)
+  );
+
+  await appendDiagnosticLog("spotify.playlist.local_track_resolution", {
+    examples: resolvedEntries.slice(0, 5).map((entry) => ({
+      localAlbum: entry.localTrack.album?.name,
+      localArtists: spotifyTrackArtistNames(entry.localTrack),
+      localDurationMs: spotifyTrackDurationMs(entry.localTrack),
+      localName: entry.localTrack.name,
+      localRawDurationMs: entry.localTrack.duration_ms,
+      localUri: entry.localTrack.uri,
+      resolutionReasons: spotifyTrackCatalogResolutionReasons(entry.localTrack),
+      resolvedAlbum: entry.match?.track.album?.name,
+      resolvedArtists: entry.match
+        ? spotifyTrackArtistNames(entry.match.track)
+        : undefined,
+      resolvedName: entry.match?.track.name,
+      resolvedScore: entry.match?.score.overall,
+      resolvedTrackId: entry.match?.track.id,
+      sanitizedFallback: !entry.match
+    })),
+    localTrackCount: localEntries.length,
+    resolvedTrackCount: resolvedByIndex.size,
+    sanitizedFallbackCount: resolvedEntries.length - resolvedByIndex.size
+  });
+
+  if (!replacementByIndex.size) {
+    return playlistTracks;
+  }
+
+  return playlistTracks.map((item, index) => {
+    const replacement = replacementByIndex.get(index);
+
+    return replacement
+      ? {
+          ...item,
+          metadataStatus: replacement.metadataStatus,
+          metadataWarning: replacement.metadataWarning,
+          track: replacement.track
+        }
+      : item;
+  });
+}
+
+function hasSpotifyTrackSearchMatch(
+  entry: LocalTrackResolutionEntry
+): entry is LocalTrackResolutionEntry & { match: SpotifyTrackSearchMatch } {
+  return Boolean(entry.match);
+}
+
+async function resolveLocalSpotifyTrack(
+  tokenSet: SpotifyTokenSet,
+  track: SpotifyTrackObject
+) {
+  const searchQueries = spotifyLocalTrackSearchQueries(track);
+
+  try {
+    const searchResults: SpotifyTrackObject[] = [];
+
+    for (const query of searchQueries) {
+      const response = await spotifyFetch<SpotifySearchResponse>(
+        tokenSet,
+        `/search?type=track&limit=50&q=${encodeURIComponent(query)}`
+      );
+      const candidates = response.tracks?.items ?? [];
+
+      searchResults.push(
+        ...candidates.filter(
+          (candidate): candidate is SpotifyTrackObject =>
+            candidate?.type === "track"
+        )
+      );
+    }
+
+    const uniqueCandidates = uniqueSpotifyTracks(searchResults);
+    const rankedMatches = rankSpotifyTrackSearchMatches(track, uniqueCandidates);
+    const match = rankedMatches.find(isConfidentSpotifyTrackSearchMatch) ?? null;
+
+    if (!match) {
+      await appendDiagnosticLog("spotify.playlist.local_track_unresolved", {
+        candidateCount: uniqueCandidates.length,
+        localAlbum: track.album?.name,
+        localArtists: spotifyTrackArtistNames(track),
+        localDurationMs: spotifyTrackDurationMs(track),
+        localName: track.name,
+        localRawDurationMs: track.duration_ms,
+        localUri: track.uri,
+        searchQueries,
+        topCandidates: rankedMatches
+          .slice(0, 5)
+          .map(formatSpotifyTrackSearchMatch)
+      });
+    }
+
+    return match;
+  } catch (error) {
+    await appendDiagnosticLog("spotify.playlist.local_track_resolve_failed", {
+      error: diagnosticError(error),
+      localAlbum: track.album?.name,
+      localArtists: spotifyTrackArtistNames(track),
+      localDurationMs: spotifyTrackDurationMs(track),
+      localName: track.name,
+      localRawDurationMs: track.duration_ms,
+      localUri: track.uri,
+      searchQueries
+    });
+
+    return null;
+  }
+}
+
+function formatSpotifyTrackSearchMatch(match: SpotifyTrackSearchMatch) {
+  return {
+    album: match.track.album?.name,
+    artists: spotifyTrackArtistNames(match.track),
+    durationDeltaMs: match.score.durationDeltaMs,
+    durationMs: spotifyTrackDurationMs(match.track),
+    id: match.track.id,
+    name: match.track.name,
+    score: match.score.overall,
+    titleScore: match.score.titleScore,
+    uri: match.track.uri
+  };
+}
+
+function sanitizeUnresolvedLocalSpotifyTrack(
+  track: SpotifyTrackObject
+): SpotifyTrackObject {
+  const sanitizedName = spotifySanitizedLocalTrackTitle(track);
+
+  return {
+    ...track,
+    album: hasProviderPollutedSpotifyMetadata(track) ? undefined : track.album,
+    duration_ms: spotifyTrackDurationMs(track),
+    name: sanitizedName || track.name
+  };
+}
+
+export function rankSpotifyTrackSearchMatches(
+  localTrack: SpotifyTrackObject,
+  candidates: SpotifyTrackObject[]
+) {
+  const localTitles = spotifyCatalogRecoveryTitleVariants(localTrack);
+  const localArtists = spotifyTrackArtistNames(localTrack);
+
+  if (!localTitles.length || !localArtists.length) {
+    return [];
+  }
+
+  return candidates
+    .filter(
+      (candidate) =>
+        isCatalogSpotifyTrack(candidate) &&
+        !isProviderPollutedRecoveryVariant(localTrack, candidate)
+    )
+    .map((candidate): SpotifyTrackSearchMatch | null => {
+      const candidateMetadata = {
+        album: candidate.album?.name,
+        artists: spotifyTrackArtistNames(candidate),
+        durationMs: spotifyTrackDurationMs(candidate),
+        title: candidate.name ?? ""
+      };
+      const score = localTitles
+        .map((localTitle) =>
+          scoreProviderCandidate(
+            {
+              artists: localArtists,
+              durationMs:
+                spotifyTrackDurationMs(localTrack) ??
+                spotifyTrackDurationMs(candidate) ??
+                0,
+              name: localTitle
+            },
+            candidateMetadata
+          )
+        )
+        .sort(compareCandidateScores)[0];
+
+      if (!score) {
+        return null;
+      }
+
+      return {
+        score,
+        track: candidate
+      };
+    })
+    .filter((match): match is SpotifyTrackSearchMatch => Boolean(match))
+    .sort(compareSpotifyTrackSearchMatches);
+}
+
+export function pickBestSpotifyTrackSearchMatch(
+  localTrack: SpotifyTrackObject,
+  candidates: SpotifyTrackObject[]
+): SpotifyTrackSearchMatch | null {
+  const bestMatch = rankSpotifyTrackSearchMatches(localTrack, candidates)[0];
+
+  return bestMatch && isConfidentSpotifyTrackSearchMatch(bestMatch)
+    ? bestMatch
+    : null;
+}
+
+function spotifyTrackDurationMs(track: SpotifyTrackObject) {
+  if (typeof track.duration_ms === "number" && Number.isFinite(track.duration_ms)) {
+    if (
+      track.duration_ms > 0 &&
+      track.duration_ms < 3_000 &&
+      spotifyTrackNeedsCatalogResolution(track)
+    ) {
+      return track.duration_ms * 1000;
+    }
+
+    return track.duration_ms;
+  }
+
+  const localUriDurationSeconds = spotifyLocalUriDurationSeconds(track.uri);
+
+  return localUriDurationSeconds ? localUriDurationSeconds * 1000 : undefined;
+}
+
+function spotifyLocalUriDurationSeconds(uri: string | undefined) {
+  if (!uri?.startsWith("spotify:local:")) {
+    return null;
+  }
+
+  const durationValue = uri.split(":").at(-1);
+  const durationSeconds = durationValue ? Number(durationValue) : Number.NaN;
+
+  return Number.isFinite(durationSeconds) &&
+    durationSeconds > 0 &&
+    durationSeconds < 24 * 60 * 60
+    ? durationSeconds
+    : null;
+}
+
+export function spotifyLocalTrackSearchQueries(track: SpotifyTrackObject) {
+  const artistNames = spotifyTrackArtistNames(track).slice(0, 2);
+  const artistText = artistNames.join(" ");
+  const primaryArtist = artistNames[0];
+  const searchQueries = spotifyCatalogRecoveryTitleVariants(track).flatMap(
+    (titleVariant) => [
+      [titleVariant, artistText].filter(Boolean).join(" "),
+      primaryArtist
+        ? `track:"${titleVariant}" artist:"${primaryArtist}"`
+        : "",
+      primaryArtist
+        ? `artist:"${primaryArtist}" track:"${titleVariant}"`
+        : ""
+    ]
+  );
+
+  return uniqueSpotifySearchQueries(searchQueries);
 }
 
 export async function getTrack(tokenSet: SpotifyTokenSet, trackId: string) {
@@ -424,63 +770,6 @@ export function buildBackupPayload(
     tracks,
     version: 1
   } satisfies BackupPayload;
-}
-
-export function backupFilename(playlist: PlaylistSummary, extension: string) {
-  const slug =
-    playlist.name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 64) || "spotify-playlist";
-
-  return `${slug}.${extension}`;
-}
-
-export function backupTracksToCsv(
-  playlist: PlaylistSummary,
-  tracks: BackupTrack[]
-) {
-  const rows = [
-    [
-      "playlist_id",
-      "playlist_name",
-      "position",
-      "track_id",
-      "track_name",
-      "artists",
-      "album_artist",
-      "album",
-      "disc_number",
-      "track_number",
-      "duration_ms",
-      "isrc",
-      "spotify_uri",
-      "spotify_url",
-      "added_at",
-      "explicit"
-    ],
-    ...tracks.map((track) => [
-      playlist.id,
-      playlist.name,
-      String(track.position),
-      track.id ?? "",
-      track.name,
-      track.artists.join("; "),
-      track.albumArtist,
-      track.album,
-      track.discNumber ? String(track.discNumber) : "",
-      track.trackNumber ? String(track.trackNumber) : "",
-      String(track.durationMs),
-      track.isrc ?? "",
-      track.spotifyUri ?? "",
-      track.spotifyUrl ?? "",
-      track.addedAt ?? "",
-      String(track.explicit)
-    ])
-  ];
-
-  return rows.map((row) => row.map(csvCell).join(",")).join("\n");
 }
 
 export type SpotifyItemType = "album" | "playlist" | "track";
@@ -724,6 +1013,288 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
+export function spotifyTrackNeedsCatalogResolution(track: SpotifyTrackObject) {
+  return spotifyTrackCatalogResolutionReasons(track).length > 0;
+}
+
+function spotifyTrackCatalogResolutionReasons(track: SpotifyTrackObject) {
+  const reasons: string[] = [];
+
+  if (isExplicitLocalSpotifyTrack(track)) {
+    reasons.push("local-track");
+  }
+
+  if (!track.id) {
+    reasons.push("missing-catalog-id");
+  }
+
+  if (hasProviderPollutedSpotifyMetadata(track)) {
+    reasons.push("provider-polluted-metadata");
+  }
+
+  return reasons;
+}
+
+function isExplicitLocalSpotifyTrack(track: SpotifyTrackObject) {
+  return track.is_local === true || track.uri?.startsWith("spotify:local:");
+}
+
+function isCatalogSpotifyTrack(
+  track: SpotifyTrackObject
+): track is SpotifyTrackObject & { id: string; name: string } {
+  return Boolean(track.id && track.name && !isExplicitLocalSpotifyTrack(track));
+}
+
+function hasProviderPollutedSpotifyMetadata(track: SpotifyTrackObject) {
+  const albumKey = normalizeSpotifyMetadataKey(track.album?.name ?? "");
+
+  return (
+    albumKey.includes("clipconverter") ||
+    albumKey.includes("youtube") ||
+    albumKey.includes("ytmp3") ||
+    albumKey.includes("y2mate") ||
+    albumKey.includes("soundcloud") ||
+    /\bvideo\s+clip\b/i.test(track.name ?? "")
+  );
+}
+
+function isConfidentSpotifyTrackSearchMatch(match: SpotifyTrackSearchMatch) {
+  const durationDeltaMs = match.score.durationDeltaMs;
+
+  return (
+    match.score.overall >= 82 &&
+    match.score.titleScore >= 72 &&
+    match.score.artistScore >= 55 &&
+    (typeof durationDeltaMs !== "number" || durationDeltaMs <= 45_000)
+  );
+}
+
+function compareCandidateScores(
+  left: SpotifyTrackSearchMatch["score"],
+  right: SpotifyTrackSearchMatch["score"]
+) {
+  return (
+    right.overall - left.overall ||
+    right.titleScore - left.titleScore ||
+    right.artistScore - left.artistScore ||
+    (left.durationDeltaMs ?? Number.MAX_SAFE_INTEGER) -
+      (right.durationDeltaMs ?? Number.MAX_SAFE_INTEGER)
+  );
+}
+
+function compareSpotifyTrackSearchMatches(
+  left: SpotifyTrackSearchMatch,
+  right: SpotifyTrackSearchMatch
+) {
+  return (
+    right.score.overall - left.score.overall ||
+    right.score.titleScore - left.score.titleScore ||
+    right.score.artistScore - left.score.artistScore ||
+    durationDeltaForSort(left) - durationDeltaForSort(right)
+  );
+}
+
+function durationDeltaForSort(match: SpotifyTrackSearchMatch) {
+  return match.score.durationDeltaMs ?? Number.MAX_SAFE_INTEGER;
+}
+
+function uniqueSpotifyTracks(candidates: SpotifyTrackObject[]) {
+  const seen = new Set<string>();
+  const uniqueCandidates: SpotifyTrackObject[] = [];
+
+  for (const candidate of candidates) {
+    const key = spotifyTrackIdentity(candidate);
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    uniqueCandidates.push(candidate);
+  }
+
+  return uniqueCandidates;
+}
+
+function spotifyTrackIdentity(track: SpotifyTrackObject) {
+  return (
+    track.id ||
+    track.uri ||
+    [
+      normalizeSpotifySearchValue(track.name ?? "").toLowerCase(),
+      spotifyTrackArtistNames(track)
+        .map((artist) => artist.toLowerCase())
+        .join("|"),
+      track.duration_ms ?? ""
+    ].join("::")
+  );
+}
+
+function spotifyTrackArtistNames(track: SpotifyTrackObject) {
+  return (track.artists ?? [])
+    .map((artist) => artist.name.trim())
+    .filter(Boolean);
+}
+
+function spotifyCatalogRecoveryTitleVariants(track: SpotifyTrackObject) {
+  const title = normalizeSpotifySearchValue(track.name ?? "");
+  const cleanedTitle = normalizeSpotifySearchValue(
+    stripLocalTrackTitleNoise(title)
+  );
+  const fallbackTitle = spotifySanitizedLocalTrackTitle(track);
+
+  return spotifyTitleSearchVariants(fallbackTitle || cleanedTitle || title);
+}
+
+function spotifySanitizedLocalTrackTitle(track: SpotifyTrackObject) {
+  const title = normalizeSpotifySearchValue(
+    stripLocalTrackTitleNoise(track.name ?? "")
+  );
+
+  if (!title) {
+    return track.name;
+  }
+
+  if (!hasProviderPollutedSpotifyMetadata(track)) {
+    return title;
+  }
+
+  return stripTrailingTitleQualifiers(title) || title;
+}
+
+function spotifyTitleSearchVariants(value: string | undefined) {
+  const normalizedValue = normalizeSpotifySearchValue(value);
+  const plainValue = normalizeSpotifySearchValue(
+    normalizedValue.replace(/[()[\]{}]/g, " ")
+  );
+  const baseValues = uniqueSpotifySearchValues([normalizedValue, plainValue]);
+  const variants: string[] = [];
+
+  for (const baseValue of baseValues) {
+    variants.push(baseValue);
+
+    for (const spellingVariant of spotifyTitleSpellingVariants(baseValue)) {
+      variants.push(spellingVariant);
+    }
+  }
+
+  return uniqueSpotifySearchValues(variants);
+}
+
+function isProviderPollutedRecoveryVariant(
+  localTrack: SpotifyTrackObject,
+  candidate: SpotifyTrackObject
+) {
+  return (
+    hasProviderPollutedSpotifyMetadata(localTrack) &&
+    hasTrailingTitleQualifier(candidate.name ?? "")
+  );
+}
+
+function hasTrailingTitleQualifier(value: string) {
+  const normalizedValue = normalizeSpotifySearchValue(value);
+
+  return Boolean(normalizedValue) &&
+    stripTrailingTitleQualifiers(normalizedValue) !== normalizedValue;
+}
+
+function stripTrailingTitleQualifiers(value: string) {
+  let strippedValue = value;
+
+  for (;;) {
+    const nextValue = strippedValue
+      .replace(
+        /\s*[\[(]\s*[^()[\]{}]*(?:audio|clip|edit|live|mix|remaster(?:ed)?|remix|version|video|visualizer)[^()[\]{}]*[\])]\s*$/i,
+        ""
+      )
+      .replace(
+        /\s+[-\u2013\u2014]\s*[^-\u2013\u2014]*(?:audio|clip|edit|live|mix|remaster(?:ed)?|remix|version|video|visualizer)[^-]*$/i,
+        ""
+      )
+      .trim();
+
+    if (nextValue === strippedValue) {
+      return strippedValue;
+    }
+
+    strippedValue = nextValue;
+  }
+}
+
+function spotifyTitleSpellingVariants(value: string) {
+  const variants: string[] = [];
+  const youToU = value.replace(/\byou\b/gi, "U");
+  const uToYou = value.replace(/\bu\b/gi, "You");
+
+  if (youToU !== value) {
+    variants.push(youToU);
+  }
+
+  if (uToYou !== value) {
+    variants.push(uToYou);
+  }
+
+  return variants;
+}
+
+function uniqueSpotifySearchValues(values: string[]) {
+  const seen = new Set<string>();
+  const uniqueValues: string[] = [];
+
+  for (const value of values) {
+    const normalizedValue = normalizeSpotifySearchValue(value);
+    const key = normalizedValue.toLowerCase();
+
+    if (!normalizedValue || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    uniqueValues.push(normalizedValue);
+  }
+
+  return uniqueValues;
+}
+
+function uniqueSpotifySearchQueries(queries: string[]) {
+  const seen = new Set<string>();
+  const uniqueQueries: string[] = [];
+
+  for (const query of queries) {
+    const normalizedQuery = normalizeSpotifySearchValue(query);
+    const key = normalizedQuery.toLowerCase();
+
+    if (!normalizedQuery || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    uniqueQueries.push(normalizedQuery);
+  }
+
+  return uniqueQueries;
+}
+
+function stripLocalTrackTitleNoise(value: string) {
+  return value
+    .replace(
+      /\s*[\[(]\s*(?:official\s+)?(?:(?:music|lyric)\s+)?(?:video\s+clip|video|audio|lyrics?|visualizer|clip)\s*[\])]\s*/gi,
+      " "
+    )
+    .replace(
+      /\b(?:video\s+clip|official\s+video|music\s+video|official\s+audio)\b/gi,
+      " "
+    );
+}
+
+function normalizeSpotifySearchValue(value: string | undefined) {
+  return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeSpotifyMetadataKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
 function mapAlbum(album: SpotifyAlbumObject) {
   const artists = album.artists ?? [];
 
@@ -745,7 +1316,9 @@ function mapAlbum(album: SpotifyAlbumObject) {
 function mapTrackObject(
   track: SpotifyTrackObject | SpotifyAlbumTrackObject | null | undefined,
   index: number,
-  addedAt?: string
+  addedAt?: string,
+  metadataStatus: BackupTrackMetadataStatus = "spotify",
+  metadataWarning?: string
 ) {
   const fullTrack = track as SpotifyTrackObject | null | undefined;
   const album = fullTrack?.album;
@@ -775,6 +1348,8 @@ function mapTrackObject(
     explicit: Boolean(track?.explicit),
     id: track?.id,
     isrc: fullTrack?.external_ids?.isrc,
+    metadataStatus,
+    metadataWarning,
     name: track?.name ?? "Unknown track",
     position: index + 1,
     spotifyUri: track?.uri,
@@ -835,10 +1410,6 @@ async function responseErrorMessage(response: Response) {
   } catch {
     return text || `Spotify request failed with ${response.status}.`;
   }
-}
-
-function csvCell(value: string) {
-  return `"${value.replace(/"/g, '""')}"`;
 }
 
 class SpotifyApiError extends Error {

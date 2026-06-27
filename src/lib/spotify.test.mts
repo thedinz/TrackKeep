@@ -1,0 +1,307 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  getPlaylistTracks,
+  pickBestSpotifyTrackSearchMatch,
+  spotifyLocalTrackSearchQueries,
+  spotifyTrackNeedsCatalogResolution,
+  unresolvedSpotifyLocalTrackMessage,
+  type SpotifyTrackObject
+} from "./spotify.ts";
+
+test("builds local Spotify track search queries without video clip noise", () => {
+  const queries = spotifyLocalTrackSearchQueries(
+    spotifyTrack({
+      album: spotifyAlbum("ClipConverter.cc"),
+      artists: [spotifyArtist("Jeremih")],
+      duration_ms: 250_000,
+      is_local: true,
+      name: "Fuck You All The Time (Shlohmo Remix) (video clip)",
+      uri: "spotify:local:Jeremih:ClipConverter.cc:Fuck%20You%20All%20The%20Time:250"
+    })
+  );
+
+  assert.deepEqual(queries, [
+    "Fuck You All The Time Jeremih",
+    "track:\"Fuck You All The Time\" artist:\"Jeremih\"",
+    "artist:\"Jeremih\" track:\"Fuck You All The Time\"",
+    "Fuck U All The Time Jeremih",
+    "track:\"Fuck U All The Time\" artist:\"Jeremih\"",
+    "artist:\"Jeremih\" track:\"Fuck U All The Time\""
+  ]);
+});
+
+test("treats polluted playlist metadata as needing catalog resolution without a local flag", () => {
+  assert.equal(
+    spotifyTrackNeedsCatalogResolution(
+      spotifyTrack({
+        album: spotifyAlbum("ClipConverter.cc"),
+        artists: [spotifyArtist("Jeremih")],
+        duration_ms: 250_000,
+        name: "Fuck You All The Time (Shlohmo Remix) (video clip)"
+      })
+    ),
+    true
+  );
+
+  assert.equal(
+    spotifyTrackNeedsCatalogResolution(
+      spotifyTrack({
+        album: spotifyAlbum("Late Nights with Jeremih"),
+        artists: [spotifyArtist("Jeremih")],
+        duration_ms: 250_000,
+        id: "spotify-track-id",
+        name: "Fuck U All the Time",
+        uri: "spotify:track:spotify-track-id"
+      })
+    ),
+    false
+  );
+});
+
+test("treats missing Spotify catalog ids as needing catalog resolution", () => {
+  assert.equal(
+    spotifyTrackNeedsCatalogResolution(
+      spotifyTrack({
+        album: spotifyAlbum("Imported Album"),
+        artists: [spotifyArtist("Jeremih")],
+        duration_ms: 250_000,
+        name: "Fuck You All The Time (Shlohmo Remix)"
+      })
+    ),
+    true
+  );
+});
+
+test("resolves you/u title spelling differences to the original catalog track", () => {
+  const match = pickBestSpotifyTrackSearchMatch(
+    spotifyTrack({
+      album: spotifyAlbum("ClipConverter.cc"),
+      artists: [spotifyArtist("Jeremih")],
+      duration_ms: 250_000,
+      name: "Fuck You All The Time (Shlohmo Remix) (video clip)"
+    }),
+    [
+      spotifyTrack({
+        album: spotifyAlbum("Late Nights with Jeremih"),
+        artists: [spotifyArtist("Jeremih")],
+        duration_ms: 248_000,
+        id: "spotify-original",
+        name: "Fuck U All the Time",
+        uri: "spotify:track:spotify-original"
+      })
+    ]
+  );
+
+  assert.equal(match?.track.id, "spotify-original");
+});
+
+test("treats local Spotify URI duration values as seconds during catalog resolution", () => {
+  const match = pickBestSpotifyTrackSearchMatch(
+    spotifyTrack({
+      album: spotifyAlbum("ClipConverter.cc"),
+      artists: [spotifyArtist("Jeremih")],
+      duration_ms: 250,
+      is_local: true,
+      name: "Fuck You All The Time (Shlohmo Remix) (video clip)",
+      uri: "spotify:local:Jeremih:ClipConverter.cc:Fuck+You+All+The+Time+%28Shlohmo+Remix%29+%28video+clip%29:250"
+    }),
+    [
+      spotifyTrack({
+        album: spotifyAlbum("Late Nights with Jeremih"),
+        artists: [spotifyArtist("Jeremih")],
+        duration_ms: 250_000,
+        id: "spotify-original",
+        name: "Fuck U All The Time",
+        uri: "spotify:track:spotify-original"
+      })
+    ]
+  );
+
+  assert.equal(match?.track.id, "spotify-original");
+});
+
+test("does not treat ordinary catalog tracks as needing catalog resolution", () => {
+  assert.equal(
+    spotifyTrackNeedsCatalogResolution(
+      spotifyTrack({
+        album: spotifyAlbum("Example Album"),
+        artists: [spotifyArtist("Example Artist")],
+        duration_ms: 180_000,
+        id: "spotify-track-id",
+        name: "Example Song",
+        uri: "spotify:track:spotify-track-id"
+      })
+    ),
+    false
+  );
+});
+
+test("prefers the original Spotify catalog track over a polluted remix local title", () => {
+  const localTrack = spotifyTrack({
+    album: spotifyAlbum("ClipConverter.cc"),
+    artists: [spotifyArtist("Jeremih")],
+    duration_ms: 250_000,
+    is_local: true,
+    name: "Fuck You All The Time (Shlohmo Remix) (video clip)",
+    uri: "spotify:local:Jeremih:ClipConverter.cc:Fuck%20You%20All%20The%20Time:250"
+  });
+  const nonRemixCandidate = spotifyTrack({
+    album: spotifyAlbum("Late Nights with Jeremih"),
+    artists: [spotifyArtist("Jeremih")],
+    duration_ms: 248_000,
+    id: "spotify-original",
+    name: "Fuck U All the Time",
+    uri: "spotify:track:spotify-original"
+  });
+  const remixCandidate = spotifyTrack({
+    album: spotifyAlbum("Fuck You All The Time (Shlohmo Remix)"),
+    artists: [spotifyArtist("Jeremih")],
+    duration_ms: 264_000,
+    id: "spotify-shlohmo-remix",
+    name: "Fuck You All The Time - Shlohmo Remix",
+    uri: "spotify:track:spotify-shlohmo-remix"
+  });
+
+  const match = pickBestSpotifyTrackSearchMatch(localTrack, [
+    nonRemixCandidate,
+    remixCandidate
+  ]);
+
+  assert.equal(match?.track.id, "spotify-original");
+  assert.ok(match.score.overall >= 82);
+});
+
+test("does not resolve polluted local metadata to a remix variation", () => {
+  const match = pickBestSpotifyTrackSearchMatch(
+    spotifyTrack({
+      album: spotifyAlbum("ClipConverter.cc"),
+      artists: [spotifyArtist("Jeremih")],
+      duration_ms: 250_000,
+      is_local: true,
+      name: "Fuck You All The Time (Shlohmo Remix) (video clip)"
+    }),
+    [
+      spotifyTrack({
+        album: spotifyAlbum("Fuck You All The Time (Shlohmo Remix)"),
+        artists: [spotifyArtist("Jeremih")],
+        duration_ms: 264_000,
+        id: "spotify-shlohmo-remix",
+        name: "Fuck You All The Time - Shlohmo Remix",
+        uri: "spotify:track:spotify-shlohmo-remix"
+      })
+    ]
+  );
+
+  assert.equal(match, null);
+});
+
+test("does not resolve a local playlist track to a weak catalog match", () => {
+  const match = pickBestSpotifyTrackSearchMatch(
+    spotifyTrack({
+      artists: [spotifyArtist("Jeremih")],
+      duration_ms: 250_000,
+      is_local: true,
+      name: "Fuck You All The Time (Shlohmo Remix)"
+    }),
+    [
+      spotifyTrack({
+        album: spotifyAlbum("Different Album"),
+        artists: [spotifyArtist("Another Artist")],
+        duration_ms: 250_000,
+        id: "different-song",
+        name: "Different Song"
+      })
+    ]
+  );
+
+  assert.equal(match, null);
+});
+
+test("marks unresolved local playlist tracks as not safe to download", async () => {
+  const originalFetch = globalThis.fetch;
+  const requestedUrls: string[] = [];
+
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    requestedUrls.push(url);
+
+    if (url.includes("/playlists/playlist-id/items")) {
+      return jsonResponse({
+        items: [
+          {
+            added_at: "2018-09-01T00:00:00Z",
+            track: spotifyTrack({
+              album: spotifyAlbum("ClipConverter.cc"),
+              artists: [spotifyArtist("Jeremih")],
+              duration_ms: 250,
+              is_local: true,
+              name: "Fuck You All The Time (Shlohmo Remix) (video clip)",
+              uri: "spotify:local:Jeremih:ClipConverter.cc:Fuck+You+All+The+Time+%28Shlohmo+Remix%29+%28video+clip%29:250"
+            })
+          }
+        ],
+        next: null
+      });
+    }
+
+    if (url.includes("/search?")) {
+      return jsonResponse({
+        tracks: {
+          items: [],
+          next: null
+        }
+      });
+    }
+
+    throw new Error(`Unexpected Spotify test request: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const tracks = await getPlaylistTracks(
+      {
+        access_token: "token",
+        expires_at: Date.now() + 60_000,
+        token_type: "Bearer"
+      },
+      "playlist-id"
+    );
+
+    assert.equal(tracks.length, 1);
+    assert.equal(tracks[0].metadataStatus, "spotify-local-unresolved");
+    assert.equal(tracks[0].metadataWarning, unresolvedSpotifyLocalTrackMessage);
+    assert.equal(tracks[0].album, "Unknown Album");
+    assert.equal(tracks[0].name, "Fuck You All The Time");
+    assert.ok(requestedUrls.some((url) => url.includes("/search?")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+function spotifyTrack(track: Partial<SpotifyTrackObject>): SpotifyTrackObject {
+  return {
+    type: "track",
+    ...track
+  };
+}
+
+function spotifyAlbum(name: string) {
+  return {
+    name
+  };
+}
+
+function spotifyArtist(name: string) {
+  return {
+    name
+  };
+}
+
+function jsonResponse(body: unknown) {
+  return new Response(JSON.stringify(body), {
+    headers: {
+      "Content-Type": "application/json"
+    },
+    status: 200
+  });
+}
