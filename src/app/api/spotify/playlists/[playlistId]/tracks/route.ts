@@ -15,13 +15,14 @@ type RouteContext = {
 
 export const runtime = "nodejs";
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   const session = await getSpotifySession();
 
   if (!session.ok) {
     return withSessionCookie(
       NextResponse.json({ error: session.message }, { status: session.status }),
-      session
+      session,
+      request
     );
   }
 
@@ -59,7 +60,8 @@ export async function GET(_request: Request, context: RouteContext) {
         playlist: playlistWithTrackTotal,
         tracks
       }),
-      session
+      session,
+      request
     );
   } catch (error) {
     const params = await context.params;
@@ -80,7 +82,8 @@ export async function GET(_request: Request, context: RouteContext) {
         },
         { status: 502 }
       ),
-      session
+      session,
+      request
     );
   }
 }

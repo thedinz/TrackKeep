@@ -8,12 +8,16 @@ export const SESSION_COOKIE = "spotifybu_session";
 export const OAUTH_STATE_COOKIE = "spotifybu_oauth_state";
 export const PKCE_VERIFIER_COOKIE = "spotifybu_pkce_verifier";
 
-const baseCookieOptions = {
-  httpOnly: true,
-  sameSite: "lax" as const,
-  secure: shouldUseSecureCookies(),
-  path: "/"
-};
+type CookieRequest = Parameters<typeof shouldUseSecureCookies>[0];
+
+function baseCookieOptions(request?: CookieRequest) {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: shouldUseSecureCookies(request),
+    path: "/"
+  };
+}
 
 export function randomUrlSafeString(size = 32) {
   return randomBytes(size).toString("base64url");
@@ -26,25 +30,29 @@ export function pkceChallenge(verifier: string) {
 export function setOAuthCookies(
   response: NextResponse,
   state: string,
-  verifier: string
+  verifier: string,
+  request?: CookieRequest
 ) {
   response.cookies.set(OAUTH_STATE_COOKIE, state, {
-    ...baseCookieOptions,
+    ...baseCookieOptions(request),
     maxAge: 10 * 60
   });
   response.cookies.set(PKCE_VERIFIER_COOKIE, verifier, {
-    ...baseCookieOptions,
+    ...baseCookieOptions(request),
     maxAge: 10 * 60
   });
 }
 
-export function clearOAuthCookies(response: NextResponse) {
+export function clearOAuthCookies(
+  response: NextResponse,
+  request?: CookieRequest
+) {
   response.cookies.set(OAUTH_STATE_COOKIE, "", {
-    ...baseCookieOptions,
+    ...baseCookieOptions(request),
     maxAge: 0
   });
   response.cookies.set(PKCE_VERIFIER_COOKIE, "", {
-    ...baseCookieOptions,
+    ...baseCookieOptions(request),
     maxAge: 0
   });
 }
@@ -89,17 +97,21 @@ export async function readTokenCookie() {
 
 export function setSessionCookie(
   response: NextResponse,
-  tokenSet: SpotifyTokenSet
+  tokenSet: SpotifyTokenSet,
+  request?: CookieRequest
 ) {
   response.cookies.set(SESSION_COOKIE, encodeTokenSet(tokenSet), {
-    ...baseCookieOptions,
+    ...baseCookieOptions(request),
     maxAge: 60 * 60 * 24 * 30
   });
 }
 
-export function clearSessionCookie(response: NextResponse) {
+export function clearSessionCookie(
+  response: NextResponse,
+  request?: CookieRequest
+) {
   response.cookies.set(SESSION_COOKIE, "", {
-    ...baseCookieOptions,
+    ...baseCookieOptions(request),
     maxAge: 0
   });
 }

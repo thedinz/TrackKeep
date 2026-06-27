@@ -18,7 +18,8 @@ export async function POST(request: Request, context: RouteContext) {
   if (!session.ok) {
     return withSessionCookie(
       NextResponse.json({ error: session.message }, { status: session.status }),
-      session
+      session,
+      request
     );
   }
 
@@ -50,7 +51,8 @@ export async function POST(request: Request, context: RouteContext) {
           }
         }
       ),
-      session
+      session,
+      request
     );
   } catch (error) {
     const params = await context.params;
@@ -73,7 +75,8 @@ export async function POST(request: Request, context: RouteContext) {
           status: 400
         }
       ),
-      session
+      session,
+      request
     );
   }
 }

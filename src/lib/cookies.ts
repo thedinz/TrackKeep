@@ -1,4 +1,6 @@
-export function shouldUseSecureCookies() {
+type CookieRequest = Pick<Request, "headers" | "url">;
+
+export function shouldUseSecureCookies(request?: CookieRequest) {
   const configuredValue = process.env.SPOTIFYBU_SECURE_COOKIES?.trim().toLowerCase();
 
   if (configuredValue) {
@@ -15,5 +17,29 @@ export function shouldUseSecureCookies() {
     }
   }
 
+  const requestProtocol = request ? getRequestProtocol(request) : null;
+
+  if (requestProtocol) {
+    return requestProtocol === "https";
+  }
+
   return process.env.NODE_ENV === "production";
+}
+
+function getRequestProtocol(request: CookieRequest) {
+  const forwardedProto = firstHeaderValue(request.headers.get("x-forwarded-proto"));
+
+  if (forwardedProto) {
+    return forwardedProto.replace(/:$/, "").toLowerCase();
+  }
+
+  try {
+    return new URL(request.url).protocol.replace(/:$/, "").toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function firstHeaderValue(value: string | null) {
+  return value?.split(",")[0]?.trim() || null;
 }

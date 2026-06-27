@@ -3,7 +3,7 @@ import { clearSessionCookie } from "@/lib/session";
 import { getSpotifySession, withSessionCookie } from "@/lib/server-session";
 import { getCurrentUser } from "@/lib/spotify";
 
-export async function GET() {
+export async function GET(request: Request) {
   const spotifyClientConfigured = Boolean(process.env.SPOTIFY_CLIENT_ID);
   const session = await getSpotifySession();
 
@@ -13,7 +13,7 @@ export async function GET() {
       spotifyClientConfigured
     });
 
-    return withSessionCookie(response, session);
+    return withSessionCookie(response, session, request);
   }
 
   try {
@@ -24,13 +24,13 @@ export async function GET() {
       user
     });
 
-    return withSessionCookie(response, session);
+    return withSessionCookie(response, session, request);
   } catch {
     const response = NextResponse.json({
       authenticated: false,
       spotifyClientConfigured
     });
-    clearSessionCookie(response);
+    clearSessionCookie(response, request);
 
     return response;
   }

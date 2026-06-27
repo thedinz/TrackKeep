@@ -39,7 +39,7 @@ export async function GET(request: Request) {
   const response = NextResponse.redirect(
     `${SPOTIFY_AUTHORIZE_URL}?${params.toString()}`
   );
-  setOAuthCookies(response, state, verifier);
+  setOAuthCookies(response, state, verifier, request);
 
   return response;
 }

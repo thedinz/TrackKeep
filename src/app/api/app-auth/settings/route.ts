@@ -51,7 +51,7 @@ export async function POST(request: Request) {
     });
 
     if (nextAuthMode === "internal" && username) {
-      setAppSessionCookie(response, username);
+      setAppSessionCookie(response, username, request);
     }
 
     return response;

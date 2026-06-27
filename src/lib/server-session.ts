@@ -1,5 +1,6 @@
 import type { NextResponse } from "next/server";
 import { clearSessionCookie, readTokenCookie, setSessionCookie } from "./session";
+import type { shouldUseSecureCookies } from "./cookies";
 import { refreshAccessToken, type SpotifyTokenSet } from "./spotify";
 
 type SessionFound = {
@@ -54,16 +55,19 @@ export async function getSpotifySession(): Promise<SpotifySession> {
   }
 }
 
+type CookieRequest = Parameters<typeof shouldUseSecureCookies>[0];
+
 export function withSessionCookie<T extends NextResponse>(
   response: T,
-  session: SpotifySession
+  session: SpotifySession,
+  request?: CookieRequest
 ) {
   if (session.ok && session.refreshed) {
-    setSessionCookie(response, session.token);
+    setSessionCookie(response, session.token, request);
   }
 
   if (!session.ok && session.clearSession) {
-    clearSessionCookie(response);
+    clearSessionCookie(response, request);
   }
 
   return response;

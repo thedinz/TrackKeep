@@ -21,13 +21,14 @@ type PlaylistBackupStatus = {
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(request: Request) {
   const session = await getSpotifySession();
 
   if (!session.ok) {
     return withSessionCookie(
       NextResponse.json({ error: session.message }, { status: session.status }),
-      session
+      session,
+      request
     );
   }
 
@@ -39,7 +40,8 @@ export async function GET() {
 
     return withSessionCookie(
       NextResponse.json({ backupStatuses, metadataBackups, playlists }),
-      session
+      session,
+      request
     );
   } catch (error) {
     await appendDiagnosticLog("spotify.playlists.route_failed", {
@@ -57,7 +59,8 @@ export async function GET() {
         },
         { status: 502 }
       ),
-      session
+      session,
+      request
     );
   }
 }

@@ -1428,7 +1428,7 @@ export default function Home() {
     const error = params.get("error");
 
     if (error) {
-      setAuthError(error.replace(/_/g, " "));
+      setAuthError(spotifyAuthErrorMessage(error));
       window.history.replaceState({}, "", "/");
     }
 
@@ -1673,6 +1673,12 @@ export default function Home() {
   const isConnected = Boolean(session?.authenticated);
   const externalAuthEnabled = appAuthMode === "external";
   const userInitial = session?.user?.displayName?.charAt(0).toUpperCase() ?? "S";
+  const spotifyLoginHref = useMemo(
+    () => spotifyAuthUrl(spotifyAuthConfig?.appBaseUrl, "/api/auth/login"),
+    [spotifyAuthConfig?.appBaseUrl]
+  );
+  const spotifyConnectDisabled =
+    session?.spotifyClientConfigured === false || !spotifyAuthConfig;
   const navidromeReady = navidromeStatus?.state === "ready";
   const navidromeApiReady =
     navidromeStatus?.server.state === "ready" ||
@@ -2252,12 +2258,16 @@ export default function Home() {
           ) : (
             <a
               className={`command green ${
-                session?.spotifyClientConfigured === false ? "disabled" : ""
+                spotifyConnectDisabled ? "disabled" : ""
               }`}
-              aria-disabled={session?.spotifyClientConfigured === false}
-              href="/api/auth/login"
-              tabIndex={session?.spotifyClientConfigured === false ? -1 : undefined}
-              title="Connect Spotify"
+              aria-disabled={spotifyConnectDisabled}
+              href={spotifyConnectDisabled ? undefined : spotifyLoginHref}
+              tabIndex={spotifyConnectDisabled ? -1 : undefined}
+              title={
+                spotifyAuthConfig
+                  ? "Connect Spotify"
+                  : "Loading Spotify auth configuration"
+              }
             >
               <LogIn size={18} />
               Connect Spotify
@@ -3637,12 +3647,16 @@ export default function Home() {
             <div className="connect-actions">
               <a
                 className={`command green ${
-                  session?.spotifyClientConfigured === false ? "disabled" : ""
+                  spotifyConnectDisabled ? "disabled" : ""
                 }`}
-                aria-disabled={session?.spotifyClientConfigured === false}
-                href="/api/auth/login"
-                tabIndex={session?.spotifyClientConfigured === false ? -1 : undefined}
-                title="Connect Spotify"
+                aria-disabled={spotifyConnectDisabled}
+                href={spotifyConnectDisabled ? undefined : spotifyLoginHref}
+                tabIndex={spotifyConnectDisabled ? -1 : undefined}
+                title={
+                  spotifyAuthConfig
+                    ? "Connect Spotify"
+                    : "Loading Spotify auth configuration"
+                }
               >
                 <LogIn size={18} />
                 Connect Spotify
@@ -3693,6 +3707,38 @@ export default function Home() {
       </footer>
     </main>
   );
+}
+
+function spotifyAuthUrl(appBaseUrl: string | undefined, path: string) {
+  if (!appBaseUrl) {
+    return path;
+  }
+
+  try {
+    return new URL(path, appBaseUrl).toString();
+  } catch {
+    return path;
+  }
+}
+
+function spotifyAuthErrorMessage(error: string) {
+  if (error === "missing_spotify_client_id") {
+    return "Spotify Client ID is not configured.";
+  }
+
+  if (error === "missing_oauth_state") {
+    return "Spotify returned without the saved login state. Open SpotifyBU from the redirect URI host shown below, then connect again.";
+  }
+
+  if (error === "oauth_state_mismatch") {
+    return "Spotify returned a different login state than the one SpotifyBU started. Try Connect Spotify again from this tab.";
+  }
+
+  if (error === "token_exchange_failed") {
+    return "Spotify approved the login, but SpotifyBU could not exchange the callback code for a session.";
+  }
+
+  return error.replace(/_/g, " ");
 }
 
 function redirectToLogin() {
