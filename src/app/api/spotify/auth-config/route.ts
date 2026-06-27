@@ -1,18 +1,31 @@
 import { NextResponse } from "next/server";
+import { spotifyAuthRequestDiagnostics } from "@/lib/auth-diagnostics";
 import { getAppBaseUrl } from "@/lib/app-url";
+import { appendDiagnosticLog } from "@/lib/diagnostics";
 import { getSpotifyRedirectUri } from "@/lib/spotify";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
+  const appBaseUrl = getAppBaseUrl(request);
   const redirectUri = getSpotifyRedirectUri(request);
+  const redirectUriWarning = spotifyRedirectUriWarning(redirectUri);
+  const spotifyClientConfigured = Boolean(process.env.SPOTIFY_CLIENT_ID);
+
+  await appendDiagnosticLog("spotify.auth.config", {
+    appBaseUrl,
+    redirectUri,
+    redirectUriWarning,
+    request: spotifyAuthRequestDiagnostics(request),
+    spotifyClientConfigured
+  });
 
   return NextResponse.json(
     {
-      appBaseUrl: getAppBaseUrl(request),
+      appBaseUrl,
       redirectUri,
-      redirectUriWarning: spotifyRedirectUriWarning(redirectUri),
-      spotifyClientConfigured: Boolean(process.env.SPOTIFY_CLIENT_ID)
+      redirectUriWarning,
+      spotifyClientConfigured
     },
     {
       headers: {
