@@ -20,7 +20,8 @@ export async function GET(request: NextRequest) {
   if (!session.ok) {
     return withSessionCookie(
       NextResponse.json({ error: session.message }, { status: session.status }),
-      session
+      session,
+      request
     );
   }
 
@@ -39,7 +40,8 @@ export async function GET(request: NextRequest) {
         },
         { status: 400 }
       ),
-      session
+      session,
+      request
     );
   }
 
@@ -65,7 +67,8 @@ export async function GET(request: NextRequest) {
           tracks,
           type
         }),
-        session
+        session,
+        request
       );
     }
 
@@ -96,7 +99,8 @@ export async function GET(request: NextRequest) {
           tracks: [track],
           type: spotifyItemType
         }),
-        session
+        session,
+        request
       );
     }
 
@@ -125,7 +129,8 @@ export async function GET(request: NextRequest) {
         tracks,
         type: spotifyItemType
       }),
-      session
+      session,
+      request
     );
   } catch (error) {
     return withSessionCookie(
@@ -138,7 +143,8 @@ export async function GET(request: NextRequest) {
         },
         { status: 400 }
       ),
-      session
+      session,
+      request
     );
   }
 }

@@ -51,12 +51,16 @@ export type AppAuthStatus = {
   username?: string;
 };
 
-const cookieOptions = {
-  httpOnly: true,
-  sameSite: "lax" as const,
-  secure: shouldUseSecureCookies(),
-  path: "/"
-};
+type CookieRequest = Parameters<typeof shouldUseSecureCookies>[0];
+
+function cookieOptions(request?: CookieRequest) {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: shouldUseSecureCookies(request),
+    path: "/"
+  };
+}
 
 export async function getAppAuthStatus() {
   const [session, credentialState] = await Promise.all([
@@ -240,16 +244,23 @@ export function verifyAppSessionCookie(value?: string | null) {
   }
 }
 
-export function setAppSessionCookie(response: NextResponse, username: string) {
+export function setAppSessionCookie(
+  response: NextResponse,
+  username: string,
+  request?: CookieRequest
+) {
   response.cookies.set(APP_AUTH_COOKIE, createAppSessionCookie(username), {
-    ...cookieOptions,
+    ...cookieOptions(request),
     maxAge: sessionDurationSeconds
   });
 }
 
-export function clearAppSessionCookie(response: NextResponse) {
+export function clearAppSessionCookie(
+  response: NextResponse,
+  request?: CookieRequest
+) {
   response.cookies.set(APP_AUTH_COOKIE, "", {
-    ...cookieOptions,
+    ...cookieOptions(request),
     maxAge: 0
   });
 }
