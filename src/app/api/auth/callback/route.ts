@@ -1,7 +1,16 @@
 import { NextResponse } from "next/server";
+import {
+  spotifyAuthRequestDiagnostics,
+  spotifyAuthValueFingerprint
+} from "@/lib/auth-diagnostics";
 import { getAppUrl } from "@/lib/app-url";
 import { appendDiagnosticLog, diagnosticError } from "@/lib/diagnostics";
-import { clearOAuthCookies, readOAuthCookies, setSessionCookie } from "@/lib/session";
+import {
+  clearOAuthCookies,
+  encodeTokenSet,
+  readOAuthCookies,
+  setSessionCookie
+} from "@/lib/session";
 import { exchangeCodeForToken, getSpotifyRedirectUri } from "@/lib/spotify";
 
 export async function GET(request: Request) {
@@ -10,6 +19,18 @@ export async function GET(request: Request) {
   const code = requestUrl.searchParams.get("code");
   const state = requestUrl.searchParams.get("state");
   const oauthCookies = await readOAuthCookies();
+  const callbackDiagnostics = {
+    error,
+    hasCode: Boolean(code),
+    hasStateCookie: Boolean(oauthCookies.state),
+    hasStateParam: Boolean(state),
+    hasVerifierCookie: Boolean(oauthCookies.verifier),
+    request: spotifyAuthRequestDiagnostics(request),
+    stateCookieFingerprint: spotifyAuthValueFingerprint(oauthCookies.state),
+    stateParamFingerprint: spotifyAuthValueFingerprint(state)
+  };
+
+  await appendDiagnosticLog("spotify.auth.callback_received", callbackDiagnostics);
 
   if (error) {
     return redirectWithError(request, error);
@@ -17,11 +38,7 @@ export async function GET(request: Request) {
 
   if (!code || !state || !oauthCookies.state || !oauthCookies.verifier) {
     await appendDiagnosticLog("spotify.auth.missing_oauth_state", {
-      callbackOrigin: requestUrl.origin,
-      hasCode: Boolean(code),
-      hasStateCookie: Boolean(oauthCookies.state),
-      hasStateParam: Boolean(state),
-      hasVerifierCookie: Boolean(oauthCookies.verifier),
+      ...callbackDiagnostics,
       redirectUri: getSpotifyRedirectUri(request)
     });
 
@@ -30,7 +47,7 @@ export async function GET(request: Request) {
 
   if (state !== oauthCookies.state) {
     await appendDiagnosticLog("spotify.auth.oauth_state_mismatch", {
-      callbackOrigin: requestUrl.origin,
+      ...callbackDiagnostics,
       redirectUri: getSpotifyRedirectUri(request)
     });
 
@@ -46,11 +63,19 @@ export async function GET(request: Request) {
     const response = NextResponse.redirect(getAppUrl(request, "/"));
     setSessionCookie(response, tokenSet, request);
     clearOAuthCookies(response, request);
+    await appendDiagnosticLog("spotify.auth.callback_success", {
+      hasRefreshToken: Boolean(tokenSet.refresh_token),
+      redirectUri: getSpotifyRedirectUri(request),
+      request: spotifyAuthRequestDiagnostics(request),
+      sessionCookieEncodedLength: encodeTokenSet(tokenSet).length,
+      stateFingerprint: spotifyAuthValueFingerprint(state),
+      tokenExpiresAt: new Date(tokenSet.expires_at).toISOString()
+    });
 
     return response;
   } catch (error) {
     await appendDiagnosticLog("spotify.auth.token_exchange_failed", {
-      callbackOrigin: requestUrl.origin,
+      ...callbackDiagnostics,
       error: diagnosticError(error),
       redirectUri: getSpotifyRedirectUri(request)
     });
