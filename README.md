@@ -4,7 +4,7 @@ SpotifyBU is a Docker-first web app for turning a Spotify library into a local, 
 
 The point is not to replace local music library search. Your music library already tells you what files exist locally. SpotifyBU uses Spotify as the source-of-truth list, uses local library matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
 
-Current stable release: `1.6.0`. It includes the web UI, local or external-proxy app auth, Spotify OAuth diagnostics, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, music library checks, SpotifyBU organize naming, library indexing, durable Spotify identity tags for downloaded files, matched-file organization, music library playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
+Current stable release: `1.6.1`. It includes the web UI, local or external-proxy app auth, Spotify OAuth diagnostics, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, music library checks, SpotifyBU organize naming, library indexing, durable Spotify identity tags for downloaded files, matched-file organization, music library playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
 Download the latest stable release from GitHub: https://github.com/thedinz/SpotifyBU/releases/latest
 
@@ -57,13 +57,13 @@ The test image built from the `dev` branch is:
 ghcr.io/thedinz/spotifybu:dev
 ```
 
-Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.6.0-dev.1`; stable releases use normal version tags such as `1.6.0`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
+Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.6.1-dev.1`; stable releases use normal version tags such as `1.6.1`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
 
-For the exact v1.6.0 release, pin one of these tags:
+For the exact v1.6.1 release, pin one of these tags:
 
 ```text
-ghcr.io/thedinz/spotifybu:v1.6.0
-ghcr.io/thedinz/spotifybu:1.6.0
+ghcr.io/thedinz/spotifybu:v1.6.1
+ghcr.io/thedinz/spotifybu:1.6.1
 ghcr.io/thedinz/spotifybu:1.6
 ```
 
@@ -149,6 +149,13 @@ Set these values before starting the app:
 | `MUSIC_LIBRARY_URL` | No | Music server URL as seen by the container. Defaults to `http://host.docker.internal:4533`. |
 | `MUSIC_LIBRARY_USERNAME` | No | Music server username. Optional, but required if SpotifyBU should ping the server and request a server-side scan after staging files. |
 | `MUSIC_LIBRARY_PASSWORD` | No | Music server password for `MUSIC_LIBRARY_USERNAME`. Optional, but required with `MUSIC_LIBRARY_USERNAME` for music server API scan requests. |
+
+Older SpotifyBU templates used Navidrome-specific names. Existing installs can
+keep using `NAVIDROME_MUSIC_PATH`, `NAVIDROME_URL`, `NAVIDROME_USERNAME`, and
+`NAVIDROME_PASSWORD`; SpotifyBU treats them as legacy aliases. New installs
+should prefer the `MUSIC_LIBRARY_*` names because the integration is now
+described generically as a local music library plus optional Subsonic-compatible
+server scan.
 
 Inside the container:
 

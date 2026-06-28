@@ -290,7 +290,10 @@ export const emptyMusicLibraryIndexSummary = {
 } satisfies MusicLibraryIndexSummary;
 
 export function getMusicLibraryPath() {
-  const configuredPath = process.env.MUSIC_LIBRARY_PATH?.trim();
+  const configuredPath = firstConfiguredEnvironmentValue(
+    "MUSIC_LIBRARY_PATH",
+    "NAVIDROME_LIBRARY_PATH"
+  );
 
   return configuredPath
     ? path.resolve(/* turbopackIgnore: true */ configuredPath)
@@ -298,15 +301,23 @@ export function getMusicLibraryPath() {
 }
 
 export function getMusicLibraryUrl() {
-  return process.env.MUSIC_LIBRARY_URL?.trim() || "http://localhost:4533";
+  return (
+    firstConfiguredEnvironmentValue("MUSIC_LIBRARY_URL", "NAVIDROME_URL") ||
+    "http://localhost:4533"
+  );
 }
 
 function getMusicServerApiCredentials() {
-  const username =
-    process.env.MUSIC_LIBRARY_USERNAME?.trim() ||
-    process.env.MUSIC_LIBRARY_USER?.trim() ||
-    "";
-  const password = process.env.MUSIC_LIBRARY_PASSWORD ?? "";
+  const username = firstConfiguredEnvironmentValue(
+    "MUSIC_LIBRARY_USERNAME",
+    "MUSIC_LIBRARY_USER",
+    "NAVIDROME_USERNAME",
+    "NAVIDROME_USER"
+  );
+  const password = firstConfiguredRawEnvironmentValue(
+    "MUSIC_LIBRARY_PASSWORD",
+    "NAVIDROME_PASSWORD"
+  );
 
   if (!username || !password) {
     return null;
@@ -431,7 +442,7 @@ export async function getMusicServerStatus(): Promise<MusicServerStatus> {
     return {
       configured: false,
       message:
-        "Set MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD to let SpotifyBU ask the music server to rescan.",
+        "Set MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD to let SpotifyBU ask the music server to rescan. Legacy NAVIDROME_USERNAME and NAVIDROME_PASSWORD are also accepted.",
       musicLibraryUrl,
       state: "not_configured"
     };
@@ -471,7 +482,7 @@ async function requestMusicServerScan(): Promise<MusicServerScanResult> {
     return {
       configured: false,
       message:
-        "SpotifyBU indexed the mounted library. Set MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD to also request a music server scan.",
+        "SpotifyBU indexed the mounted library. Set MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD to also request a music server scan. Legacy NAVIDROME_USERNAME and NAVIDROME_PASSWORD are also accepted.",
       musicLibraryUrl,
       requested: false,
       state: "not_configured"
@@ -2336,7 +2347,9 @@ async function musicServerApiRequest(
   const credentials = getMusicServerApiCredentials();
 
   if (!credentials) {
-    throw new Error("Set MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD.");
+    throw new Error(
+      "Set MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD, or legacy NAVIDROME_USERNAME and NAVIDROME_PASSWORD."
+    );
   }
 
   const salt = randomBytes(8).toString("hex");
@@ -2454,7 +2467,31 @@ function musicServerApiErrorMessage(error?: { message?: string }) {
 }
 
 function musicLibraryAuthFailureMessage() {
-  return "The music server rejected the configured API credentials. Check MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD.";
+  return "The music server rejected the configured API credentials. Check MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD, or legacy NAVIDROME_USERNAME and NAVIDROME_PASSWORD.";
+}
+
+function firstConfiguredEnvironmentValue(...names: string[]) {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
+function firstConfiguredRawEnvironmentValue(...names: string[]) {
+  for (const name of names) {
+    const value = process.env[name];
+
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+
+  return "";
 }
 
 async function findAudioFiles(libraryPath: string) {

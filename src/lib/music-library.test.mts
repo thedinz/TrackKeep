@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import http from "node:http";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
 import {
   deleteMusicLibraryTrack,
+  getMusicLibraryStatus,
+  getMusicServerStatus,
   matchMusicLibraryTracksWithIndex,
   parseMusicLibraryIndexedTrackIdentityTags,
   planMusicLibraryAlbumFolders,
@@ -825,6 +828,114 @@ test("library index parses standard folders when parent artist stripped trailing
   });
 });
 
+test("music library status accepts legacy Navidrome library path env var", async (t) => {
+  const libraryPath = await mkdtemp(path.join(tmpdir(), "spotifybu-library-"));
+
+  t.after(async () => {
+    await rm(libraryPath, {
+      force: true,
+      recursive: true
+    });
+  });
+
+  await withEnvironment(
+    t,
+    {
+      MUSIC_LIBRARY_PASSWORD: null,
+      MUSIC_LIBRARY_PATH: null,
+      MUSIC_LIBRARY_URL: null,
+      MUSIC_LIBRARY_USER: null,
+      MUSIC_LIBRARY_USERNAME: null,
+      NAVIDROME_LIBRARY_PATH: libraryPath,
+      NAVIDROME_PASSWORD: null,
+      NAVIDROME_URL: null,
+      NAVIDROME_USER: null,
+      NAVIDROME_USERNAME: null
+    },
+    async () => {
+      const status = await getMusicLibraryStatus();
+
+      assert.equal(status.state, "ready");
+      assert.equal(status.configured, true);
+      assert.equal(status.libraryPath, libraryPath);
+    }
+  );
+});
+
+test("music server status accepts legacy Navidrome URL and credentials", async (t) => {
+  const requestedPaths: string[] = [];
+  const server = http.createServer((request, response) => {
+    requestedPaths.push(request.url ?? "");
+    response.writeHead(200, {
+      "Content-Type": "application/json"
+    });
+    response.end(
+      JSON.stringify({
+        "subsonic-response": {
+          scanStatus: {
+            count: 12,
+            scanning: false
+          },
+          status: "ok"
+        }
+      })
+    );
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  t.after(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+  });
+
+  const address = server.address();
+
+  assert.equal(typeof address, "object");
+  assert.ok(address);
+
+  await withEnvironment(
+    t,
+    {
+      MUSIC_LIBRARY_PASSWORD: null,
+      MUSIC_LIBRARY_URL: null,
+      MUSIC_LIBRARY_USER: null,
+      MUSIC_LIBRARY_USERNAME: null,
+      NAVIDROME_PASSWORD: "legacy-password",
+      NAVIDROME_URL: `http://127.0.0.1:${address.port}`,
+      NAVIDROME_USER: null,
+      NAVIDROME_USERNAME: "legacy-user"
+    },
+    async () => {
+      const status = await getMusicServerStatus();
+
+      assert.equal(status.state, "ready");
+      assert.equal(status.configured, true);
+      assert.equal(status.musicLibraryUrl, `http://127.0.0.1:${address.port}`);
+      assert.equal(status.scanCount, 12);
+      assert.ok(
+        requestedPaths.some((requestPath) =>
+          requestPath.startsWith("/rest/ping.view?")
+        )
+      );
+      assert.ok(
+        requestedPaths.some((requestPath) =>
+          requestPath.startsWith("/rest/getScanStatus.view?")
+        )
+      );
+    }
+  );
+});
+
 const exampleTrack = {
   album: "Example Record",
   albumArtist: "Example Artist",
@@ -849,6 +960,36 @@ async function withDefaultOrganizeSettings(
   run: () => Promise<void>
 ) {
   await withOrganizeSettings(t, null, run);
+}
+
+async function withEnvironment(
+  t: TestContext,
+  updates: Record<string, string | null>,
+  run: () => Promise<void>
+) {
+  const previousValues = new Map(
+    Object.keys(updates).map((key) => [key, process.env[key]] as const)
+  );
+
+  for (const [key, value] of Object.entries(updates)) {
+    if (typeof value === "string") {
+      process.env[key] = value;
+    } else {
+      delete process.env[key];
+    }
+  }
+
+  t.after(() => {
+    for (const [key, value] of previousValues) {
+      if (typeof value === "string") {
+        process.env[key] = value;
+      } else {
+        delete process.env[key];
+      }
+    }
+  });
+
+  await run();
 }
 
 async function withOrganizeSettings(

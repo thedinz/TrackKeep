@@ -1,6 +1,6 @@
 {
   "name": "spotifybu",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "private": true,
   "description": "SpotifyBU is a web app for backing up Spotify playlist metadata and preparing authorized media backups.",
   "scripts": {
