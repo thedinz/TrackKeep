@@ -6,10 +6,84 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { tagDownloadedFile } from "./tagging.ts";
+import { spotifyAudioMetadataArgs, tagDownloadedFile } from "./tagging.ts";
+import {
+  spotifyBuIdentityTags,
+  spotifyBuIdentityVersion
+} from "../spotify-identity-tags.ts";
 import type { BackupTrack } from "../spotify.ts";
 
 const execFileAsync = promisify(execFile);
+
+test("tagDownloadedFile metadata arguments include SpotifyBU identity tags", () => {
+  const spotifyTrackId = "4uLU6hMCjMI75M1A2tKUQC";
+  const spotifyAlbumId = "0ETFjACtuP2ADo6LFhL6HN";
+  const metadataValues = metadataArgumentValues(
+    spotifyAudioMetadataArgs({
+      ...exampleTrack,
+      albumId: spotifyAlbumId,
+      id: spotifyTrackId,
+      isrc: "USRC17607839",
+      spotifyUri: `spotify:track:${spotifyTrackId}`
+    })
+  );
+
+  assert.ok(
+    metadataValues.includes(`${spotifyBuIdentityTags.trackId}=${spotifyTrackId}`)
+  );
+  assert.ok(
+    metadataValues.includes(
+      `${spotifyBuIdentityTags.trackUri}=spotify:track:${spotifyTrackId}`
+    )
+  );
+  assert.ok(
+    metadataValues.includes(`${spotifyBuIdentityTags.albumId}=${spotifyAlbumId}`)
+  );
+  assert.ok(
+    metadataValues.includes(`${spotifyBuIdentityTags.isrc}=USRC17607839`)
+  );
+  assert.ok(
+    metadataValues.includes(
+      `${spotifyBuIdentityTags.identityVersion}=${spotifyBuIdentityVersion}`
+    )
+  );
+});
+
+test("tagDownloadedFile metadata arguments skip unresolved Spotify local identities", () => {
+  const metadataValues = metadataArgumentValues(
+    spotifyAudioMetadataArgs({
+      ...exampleTrack,
+      albumId: "0ETFjACtuP2ADo6LFhL6HN",
+      id: "4uLU6hMCjMI75M1A2tKUQC",
+      metadataStatus: "spotify-local-unresolved",
+      spotifyUri: "spotify:local:Example:Artist:Track:180"
+    })
+  );
+
+  assert.equal(
+    metadataValues.some((value) =>
+      value.startsWith(`${spotifyBuIdentityTags.trackId}=`)
+    ),
+    false
+  );
+  assert.equal(
+    metadataValues.some((value) =>
+      value.startsWith(`${spotifyBuIdentityTags.trackUri}=`)
+    ),
+    false
+  );
+  assert.equal(
+    metadataValues.some((value) =>
+      value.startsWith(`${spotifyBuIdentityTags.albumId}=`)
+    ),
+    false
+  );
+  assert.ok(
+    metadataValues.includes(
+      `${spotifyBuIdentityTags.identityVersion}=${spotifyBuIdentityVersion}`
+    )
+  );
+});
 
 test("rewrites provider audio tags with Spotify metadata", async (t) => {
   if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
@@ -166,5 +240,11 @@ async function readAudioTags(filePath: string) {
       key.toLowerCase(),
       value
     ])
+  );
+}
+
+function metadataArgumentValues(args: string[]) {
+  return args.flatMap((arg, index) =>
+    arg === "-metadata" && args[index + 1] ? [args[index + 1]] : []
   );
 }

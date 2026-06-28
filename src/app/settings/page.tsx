@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   Clock,
+  Fingerprint,
   LockKeyhole,
   RefreshCw,
   Save,
@@ -54,13 +55,34 @@ type MusicLibraryAutoScanResponse = {
   autoScan: MusicLibraryAutoScanStatus;
 };
 
+type MusicLibraryIdentityTagBackfillResult = {
+  alreadyTaggedCount: number;
+  attemptedCount: number;
+  failedCount: number;
+  matchedCount: number;
+  skippedCount: number;
+  snapshotCount: number;
+  taggedCount: number;
+  trackCount: number;
+};
+
+type MusicLibraryIdentityTagBackfillResponse = {
+  backfill: MusicLibraryIdentityTagBackfillResult;
+};
+
+const numberFormatter = new Intl.NumberFormat("en-US");
+
 export default function SettingsPage() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingAuthMode, setIsSavingAuthMode] = useState(false);
   const [isSavingAutoScan, setIsSavingAutoScan] = useState(false);
+  const [isBackfillingIdentityTags, setIsBackfillingIdentityTags] =
+    useState(false);
   const [autoScan, setAutoScan] = useState<MusicLibraryAutoScanStatus | null>(null);
+  const [identityBackfill, setIdentityBackfill] =
+    useState<MusicLibraryIdentityTagBackfillResult | null>(null);
   const [namingSettings, setNamingSettings] =
     useState<OrganizeNamingSettings | null>(null);
   const [newPassword, setNewPassword] = useState("");
@@ -255,6 +277,32 @@ export default function SettingsPage() {
     [autoScan]
   );
 
+  const backfillIdentityTags = useCallback(async () => {
+    setError(null);
+    setSuccess(null);
+    setIdentityBackfill(null);
+    setIsBackfillingIdentityTags(true);
+
+    try {
+      const response = await fetch("/api/music-library/identity-tags", {
+        method: "POST"
+      });
+      const body =
+        await readJson<MusicLibraryIdentityTagBackfillResponse>(response);
+
+      setIdentityBackfill(body.backfill);
+      setSuccess(identityBackfillSummary(body.backfill));
+    } catch (settingsError) {
+      setError(
+        settingsError instanceof Error
+          ? settingsError.message
+          : "Could not backfill Spotify identity tags."
+      );
+    } finally {
+      setIsBackfillingIdentityTags(false);
+    }
+  }, []);
+
   const internalAuthEnabled = authMode === "internal";
 
   return (
@@ -397,6 +445,49 @@ export default function SettingsPage() {
                 Save internal login
               </button>
             </form>
+          </div>
+        </div>
+
+        <div className="panel settings-panel">
+          <div className="panel-header">
+            <div className="panel-title">
+              <Fingerprint size={20} />
+              <div>
+                <h2>Spotify Identity Tags</h2>
+                <p className="muted">Maintenance for matched local backups</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="settings-body">
+            <div className="auth-note">
+              <Fingerprint size={18} />
+              <span>
+                Add SpotifyBU identity tags to matched files from saved
+                playlist snapshots.
+              </span>
+            </div>
+
+            <button
+              className="command secondary"
+              disabled={isBackfillingIdentityTags}
+              onClick={() => void backfillIdentityTags()}
+              type="button"
+            >
+              {isBackfillingIdentityTags ? (
+                <RefreshCw className="spin" size={18} />
+              ) : (
+                <Fingerprint size={18} />
+              )}
+              Retag matched backups
+            </button>
+
+            {identityBackfill ? (
+              <div className="auth-note">
+                <CheckCircle2 size={18} />
+                <span>{identityBackfillSummary(identityBackfill)}</span>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -594,6 +685,26 @@ function autoScanScheduleLabel(autoScan: MusicLibraryAutoScanStatus) {
   }
 
   return "Next scan will be scheduled after saving.";
+}
+
+function identityBackfillSummary(
+  backfill: MusicLibraryIdentityTagBackfillResult
+) {
+  const parts = [
+    `${numberFormatter.format(backfill.taggedCount)} tagged`,
+    `${numberFormatter.format(backfill.alreadyTaggedCount)} already tagged`,
+    `${numberFormatter.format(backfill.skippedCount)} skipped`
+  ];
+
+  if (backfill.failedCount) {
+    parts.push(`${numberFormatter.format(backfill.failedCount)} failed`);
+  }
+
+  return `Identity backfill checked ${numberFormatter.format(
+    backfill.trackCount
+  )} tracks from ${numberFormatter.format(
+    backfill.snapshotCount
+  )} snapshots: ${parts.join(", ")}.`;
 }
 
 function formatSettingsDateTime(value: string) {

@@ -6,6 +6,7 @@ import test, { type TestContext } from "node:test";
 import {
   deleteMusicLibraryTrack,
   matchMusicLibraryTracksWithIndex,
+  parseMusicLibraryIndexedTrackIdentityTags,
   planMusicLibraryAlbumFolders,
   prepareMusicLibraryTrackFileDestination,
   recordMusicLibraryAlbumFolders,
@@ -13,6 +14,10 @@ import {
   scanMusicLibraryIndex,
   type MusicLibraryIndex
 } from "./music-library.ts";
+import {
+  spotifyBuIdentityTags,
+  spotifyBuIdentityVersion
+} from "./spotify-identity-tags.ts";
 import type { BackupTrack } from "./spotify.ts";
 
 test("standard album folder uses artist album year layout", async (t) => {
@@ -204,6 +209,155 @@ test("standard matching finds indexed title variants but keeps Spotify naming ca
       matches[0].recommendedRelativePath,
       "Example Artist/Example Artist - Example Record (2026)/Example Artist - Example Record (2026) - 01 - Spotify Title Variant.mp3"
     );
+  });
+});
+
+test("library index parser reads SpotifyBU identity tags", () => {
+  const spotifyTrackId = "6rqhFgbbKwnb9MLmUQDhG6";
+  const spotifyAlbumId = "0sNOF9WDwhWunNAHPD3Baj";
+  const identity = parseMusicLibraryIndexedTrackIdentityTags(
+    new Map([
+      [spotifyBuIdentityTags.trackId, spotifyTrackId],
+      [spotifyBuIdentityTags.trackUri, `spotify:track:${spotifyTrackId}`],
+      [spotifyBuIdentityTags.albumId, spotifyAlbumId],
+      [spotifyBuIdentityTags.isrc, "usrc17607839"],
+      [spotifyBuIdentityTags.identityVersion, spotifyBuIdentityVersion]
+    ])
+  );
+
+  assert.equal(identity.spotifyTrackId, spotifyTrackId);
+  assert.equal(identity.spotifyTrackUri, `spotify:track:${spotifyTrackId}`);
+  assert.equal(identity.spotifyAlbumId, spotifyAlbumId);
+  assert.equal(identity.spotifyIsrc, "USRC17607839");
+  assert.equal(identity.spotifybuIdentityVersion, spotifyBuIdentityVersion);
+});
+
+test("matching prefers Spotify identity tags before fuzzy metadata", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const spotifyTrackId = "6rqhFgbbKwnb9MLmUQDhG6";
+    const spotifyTrack = {
+      ...exampleTrack,
+      id: spotifyTrackId,
+      spotifyUri: `spotify:track:${spotifyTrackId}`
+    } satisfies BackupTrack;
+    const matches = await matchMusicLibraryTracksWithIndex([spotifyTrack], {
+      generatedAt: new Date(0).toISOString(),
+      libraryPath: "/music",
+      tracks: [
+        {
+          album: spotifyTrack.album,
+          albumArtist: spotifyTrack.albumArtist,
+          artist: spotifyTrack.artists[0],
+          artists: spotifyTrack.artists,
+          durationMs: spotifyTrack.durationMs,
+          fileName: "01 - Opening.mp3",
+          mtimeMs: 0,
+          relativeDirectory: "Fuzzy",
+          relativePath: "Fuzzy/01 - Opening.mp3",
+          sizeBytes: 1,
+          source: "tags",
+          title: spotifyTrack.name,
+          trackNumber: spotifyTrack.trackNumber
+        },
+        {
+          album: "Wrong Album",
+          albumArtist: "Wrong Artist",
+          artist: "Wrong Artist",
+          artists: ["Wrong Artist"],
+          fileName: "Moved And Renamed.mp3",
+          mtimeMs: 0,
+          relativeDirectory: "Moved",
+          relativePath: "Moved/Moved And Renamed.mp3",
+          sizeBytes: 1,
+          source: "tags",
+          spotifyTrackId,
+          spotifybuIdentityVersion: spotifyBuIdentityVersion,
+          title: "Wrong Title"
+        }
+      ],
+      version: 1
+    } satisfies MusicLibraryIndex);
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].matchedBy, "spotify_identity");
+    assert.equal(matches[0].matchedTrack?.relativePath, "Moved/Moved And Renamed.mp3");
+  });
+});
+
+test("matching uses Spotify URI identity when a moved file has no track ID tag", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const spotifyTrackId = "3n3Ppam7vgaVa1iaRUc9Lp";
+    const spotifyTrack = {
+      ...exampleTrack,
+      id: undefined,
+      isrc: undefined,
+      spotifyUri: `spotify:track:${spotifyTrackId}`
+    } satisfies BackupTrack;
+    const matches = await matchMusicLibraryTracksWithIndex([spotifyTrack], {
+      generatedAt: new Date(0).toISOString(),
+      libraryPath: "/music",
+      tracks: [
+        {
+          album: "Wrong Album",
+          albumArtist: "Wrong Artist",
+          artist: "Wrong Artist",
+          artists: ["Wrong Artist"],
+          fileName: "Organizer Changed Everything.mp3",
+          mtimeMs: 0,
+          relativeDirectory: "Loose",
+          relativePath: "Loose/Organizer Changed Everything.mp3",
+          sizeBytes: 1,
+          source: "tags",
+          spotifyTrackUri: `spotify:track:${spotifyTrackId}`,
+          spotifybuIdentityVersion: spotifyBuIdentityVersion,
+          title: "Wrong Title"
+        }
+      ],
+      version: 1
+    } satisfies MusicLibraryIndex);
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].matchedBy, "spotify_identity");
+    assert.equal(
+      matches[0].matchedTrack?.relativePath,
+      "Loose/Organizer Changed Everything.mp3"
+    );
+  });
+});
+
+test("matching still falls back for old indexed files without identity tags", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const spotifyTrack = {
+      ...exampleTrack,
+      id: "6rqhFgbbKwnb9MLmUQDhG6",
+      isrc: "USRC17607839",
+      spotifyUri: "spotify:track:6rqhFgbbKwnb9MLmUQDhG6"
+    } satisfies BackupTrack;
+    const matches = await matchMusicLibraryTracksWithIndex([spotifyTrack], {
+      generatedAt: new Date(0).toISOString(),
+      libraryPath: "/music",
+      tracks: [
+        {
+          album: spotifyTrack.album,
+          albumArtist: spotifyTrack.albumArtist,
+          artist: spotifyTrack.artists[0],
+          artists: spotifyTrack.artists,
+          fileName: "Old File.mp3",
+          isrc: "USRC17607839",
+          mtimeMs: 0,
+          relativeDirectory: "Old",
+          relativePath: "Old/Old File.mp3",
+          sizeBytes: 1,
+          source: "tags",
+          title: "Old Local Title"
+        }
+      ],
+      version: 1
+    } satisfies MusicLibraryIndex);
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].matchedBy, "isrc");
+    assert.equal(matches[0].matchedTrack?.relativePath, "Old/Old File.mp3");
   });
 });
 
