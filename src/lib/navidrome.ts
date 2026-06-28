@@ -94,6 +94,15 @@ export type NavidromeFolderPlan = {
   trackIds: string[];
 };
 
+export type NavidromeTrackFileDestination = {
+  absolutePath: string;
+  directoryPath: string;
+  fileBase: string;
+  fileName: string;
+  relativeDirectory: string;
+  relativePath: string;
+};
+
 export type NavidromeIndexedTrack = {
   album?: string;
   albumArtist?: string;
@@ -535,8 +544,8 @@ export async function recordNavidromeAlbumFolders(tracks: BackupTrack[]) {
     const representativeTrack = albumTracks[0];
     const existingFolder = log.albums[key];
     const folderPlan = buildNamingAlbumFolderPlan(representativeTrack, naming);
-    const folderPath = await ensureNavidromeTargetDirectory(
-      relativePathSegments(folderPlan.relativePath)
+    const folderPath = await ensureNavidromeOrganizedDirectory(
+      folderPlan.relativePath
     );
     const trackIds = Array.from(
       new Set([
@@ -1276,12 +1285,73 @@ export async function buildNavidromeTrackFileBase(
   return buildNavidromeTrackFileBaseWithSettings(track, naming, matchedTrack);
 }
 
+export async function buildNavidromeTrackRelativePath(
+  track: BackupTrack,
+  extension: string,
+  matchedTrack?: NavidromeIndexedTrack
+) {
+  const naming = await loadOrganizeNamingSettings();
+
+  return buildNavidromeTrackRelativePathWithSettings(
+    track,
+    naming,
+    extension,
+    matchedTrack
+  );
+}
+
+export async function prepareNavidromeTrackFileDestination(
+  track: BackupTrack,
+  extension: string,
+  matchedTrack?: NavidromeIndexedTrack
+) {
+  const libraryPath = getNavidromeLibraryPath();
+
+  if (!libraryPath) {
+    throw new Error("NAVIDROME_LIBRARY_PATH is not configured.");
+  }
+
+  const relativePath = await buildNavidromeTrackRelativePath(
+    track,
+    extension,
+    matchedTrack
+  );
+  const relativeDirectory = relativeDirectoryName(relativePath);
+  const directoryPath = await ensureNavidromeOrganizedDirectory(
+    relativeDirectory
+  );
+  const fileName = path.posix.basename(relativePath);
+
+  return {
+    absolutePath: absoluteLibraryPath(libraryPath, relativePath),
+    directoryPath,
+    fileBase: path.posix.parse(fileName).name,
+    fileName,
+    relativeDirectory,
+    relativePath
+  } satisfies NavidromeTrackFileDestination;
+}
+
 function buildNavidromeTrackFileBaseWithSettings(
   track: BackupTrack,
   naming: OrganizeNamingSettings,
   matchedTrack?: NavidromeIndexedTrack
 ): string {
   return buildNamingTrackDestination(track, naming, "", matchedTrack).fileBase;
+}
+
+function buildNavidromeTrackRelativePathWithSettings(
+  track: BackupTrack,
+  naming: OrganizeNamingSettings,
+  extension: string,
+  matchedTrack?: NavidromeIndexedTrack
+): string {
+  return buildNamingTrackDestination(
+    track,
+    naming,
+    normalizeFileExtension(extension),
+    matchedTrack
+  ).relativePath;
 }
 
 function buildOrganizedTrackRelativePath(
@@ -1291,12 +1361,12 @@ function buildOrganizedTrackRelativePath(
   relativeDirectory = buildNamingAlbumFolderPlan(track, naming).relativePath
 ) {
   const extension = path.posix.extname(matchedTrack.fileName);
-  const renderedPath = buildNamingTrackDestination(
+  const renderedPath = buildNavidromeTrackRelativePathWithSettings(
     track,
     naming,
     extension,
     matchedTrack
-  ).relativePath;
+  );
 
   return path.posix.join(relativeDirectory, path.posix.basename(renderedPath));
 }
@@ -1474,6 +1544,18 @@ function formatNamingTokenValue(value: string, format: string) {
 
 function tokenValueForPath(value: string) {
   return value.replace(/[\\/]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function normalizeFileExtension(extension: string) {
+  const trimmedExtension = extension.trim();
+
+  if (!trimmedExtension) {
+    return "";
+  }
+
+  return trimmedExtension.startsWith(".")
+    ? trimmedExtension
+    : `.${trimmedExtension}`;
 }
 
 function pathSegmentsFromNamingTemplate(
@@ -3231,6 +3313,25 @@ function relativeDirectoryName(relativePath: string) {
 
 function relativePathSegments(relativePath: string) {
   return normalizeRelativePath(relativePath).split("/").filter(Boolean);
+}
+
+async function ensureNavidromeOrganizedDirectory(relativeDirectory: string) {
+  const libraryPath = getNavidromeLibraryPath();
+
+  if (!libraryPath) {
+    throw new Error("NAVIDROME_LIBRARY_PATH is not configured.");
+  }
+
+  const directoryPath = absoluteLibraryPath(
+    libraryPath,
+    normalizeRelativePath(relativeDirectory)
+  );
+
+  await mkdir(directoryPath, {
+    recursive: true
+  });
+
+  return directoryPath;
 }
 
 function absoluteLibraryPath(libraryPath: string, relativePath: string) {

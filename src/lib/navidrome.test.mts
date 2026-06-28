@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
@@ -7,6 +7,8 @@ import {
   deleteNavidromeLibraryTrack,
   matchNavidromeTracksWithIndex,
   planNavidromeAlbumFolders,
+  prepareNavidromeTrackFileDestination,
+  recordNavidromeAlbumFolders,
   readCurrentNavidromeLibraryIndex,
   scanNavidromeLibraryIndex,
   type NavidromeLibraryIndex
@@ -41,6 +43,85 @@ test("standard album folder uses Unknown Year when metadata is missing", async (
       plan.relativePath,
       "Example Artist/Example Artist - Example Record (Unknown Year)"
     );
+  });
+});
+
+test("download destinations use the same long folder path as organization", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const libraryPath = await mkdtemp(
+      path.join(tmpdir(), "spotifybu-library-")
+    );
+    const previousLibraryPath = process.env.NAVIDROME_LIBRARY_PATH;
+    const longAlbumTitle = `Long Album ${"Name ".repeat(28)}`.trim();
+    const spotifyTrack = {
+      ...exampleTrack,
+      album: longAlbumTitle,
+      albumId: "album-long-download-path",
+      name: "Short Song"
+    } satisfies BackupTrack;
+
+    process.env.NAVIDROME_LIBRARY_PATH = libraryPath;
+    t.after(async () => {
+      if (typeof previousLibraryPath === "string") {
+        process.env.NAVIDROME_LIBRARY_PATH = previousLibraryPath;
+      } else {
+        delete process.env.NAVIDROME_LIBRARY_PATH;
+      }
+
+      await rm(libraryPath, {
+        force: true,
+        recursive: true
+      });
+    });
+
+    const [plan] = await recordNavidromeAlbumFolders([spotifyTrack]);
+    const exactDirectory = path.join(
+      libraryPath,
+      ...plan.relativePath.split("/")
+    );
+    const truncatedDirectory = path.join(
+      libraryPath,
+      ...plan.relativePath.split("/").map((segment) => segment.slice(0, 120))
+    );
+    const destination = await prepareNavidromeTrackFileDestination(
+      spotifyTrack,
+      "mp3"
+    );
+
+    assert.ok(plan.relativePath.split("/").some((segment) => segment.length > 120));
+    assert.equal(destination.relativeDirectory, plan.relativePath);
+    assert.ok((await stat(exactDirectory)).isDirectory());
+
+    if (truncatedDirectory !== exactDirectory) {
+      await assert.rejects(stat(truncatedDirectory));
+    }
+
+    const [match] = await matchNavidromeTracksWithIndex([spotifyTrack], {
+      generatedAt: new Date(0).toISOString(),
+      libraryPath,
+      tracks: [
+        {
+          album: spotifyTrack.album,
+          albumArtist: spotifyTrack.albumArtist,
+          artist: spotifyTrack.artists[0],
+          artists: spotifyTrack.artists,
+          durationMs: spotifyTrack.durationMs,
+          fileName: destination.fileName,
+          isrc: spotifyTrack.isrc,
+          mtimeMs: 0,
+          relativeDirectory: destination.relativeDirectory,
+          relativePath: destination.relativePath,
+          sizeBytes: 1,
+          source: "tags",
+          title: spotifyTrack.name,
+          trackNumber: spotifyTrack.trackNumber
+        }
+      ],
+      version: 1
+    } satisfies NavidromeLibraryIndex);
+
+    assert.equal(match.exists, true);
+    assert.equal(match.needsMove, false);
   });
 });
 

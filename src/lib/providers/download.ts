@@ -13,10 +13,9 @@ import {
 import path from "path";
 import { promisify } from "util";
 import {
-  buildNavidromeTrackFileBase,
   ensureNavidromeTargetDirectory,
   getNavidromeLibraryPath,
-  planNavidromeAlbumFolders,
+  prepareNavidromeTrackFileDestination,
   recordNavidromeAlbumFolders,
   upsertNavidromeLibraryIndexTrack,
   type NavidromeLibraryIndexSummary
@@ -1041,27 +1040,20 @@ async function downloadAuthorizedProviderTrackInner(
       trackPosition: request.track.position
     });
 
-    stage = "planning destination";
-    const [folderPlan] = await planNavidromeAlbumFolders([request.track]);
-
-    if (!folderPlan) {
-      throw new Error("Could not plan a Navidrome destination for this track.");
-    }
-
     stage = "preparing destination";
     await recordNavidromeAlbumFolders([request.track]);
-    const targetDirectory = await ensureNavidromeTargetDirectory(
-      relativePathSegments(folderPlan.relativePath)
+    const destination = await prepareNavidromeTrackFileDestination(
+      request.track,
+      format
     );
-    const fileBase = await buildNavidromeTrackFileBase(request.track);
     stagingDirectory = await createDownloadStagingDirectory(libraryPath);
     const outputTemplate = path.join(
       /* turbopackIgnore: true */ stagingDirectory,
-      `${fileBase}.%(ext)s`
+      `${destination.fileBase}.%(ext)s`
     );
     const beforePaths = await matchingOutputPaths(
       stagingDirectory,
-      fileBase
+      destination.fileBase
     );
 
     stage = "running yt-dlp";
@@ -1086,10 +1078,8 @@ async function downloadAuthorizedProviderTrackInner(
 
     stage = "moving file to library";
     const finalPath = await moveStagedDownloadToTarget({
-      fileBase,
-      format,
-      stagedPath,
-      targetDirectory
+      desiredTargetPath: destination.absolutePath,
+      stagedPath
     });
 
     let libraryIndex: NavidromeLibraryIndexSummary | undefined;
@@ -1920,20 +1910,12 @@ async function createDownloadStagingDirectory(libraryPath: string) {
 }
 
 async function moveStagedDownloadToTarget({
-  fileBase,
-  format,
-  stagedPath,
-  targetDirectory
+  desiredTargetPath,
+  stagedPath
 }: {
-  fileBase: string;
-  format: DownloadFormat;
+  desiredTargetPath: string;
   stagedPath: string;
-  targetDirectory: string;
 }) {
-  const desiredTargetPath = path.join(
-    /* turbopackIgnore: true */ targetDirectory,
-    `${fileBase}.${format}`
-  );
   const targetPath = await nextAvailableFilePath(desiredTargetPath);
 
   await rename(stagedPath, targetPath);
@@ -2673,10 +2655,6 @@ function providerBulkDownloadJobId() {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown error.";
-}
-
-function relativePathSegments(value: string) {
-  return value.replace(/\\/g, "/").split("/").filter(Boolean);
 }
 
 function toLibraryRelativePath(libraryPath: string, filePath: string) {
