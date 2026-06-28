@@ -82,9 +82,9 @@ export const SOURCE_PROVIDER_CATALOG = [
     bulkWarning: "No network service involved; matching is limited to mounted files.",
     capabilities: ["match", "tag", "provenance"],
     description:
-      "Matches Spotify metadata against audio files already present in the mounted music library.",
+      "Matches Spotify metadata against audio files already present in the mounted Navidrome music folder.",
     id: "music-library",
-    name: "Music library",
+    name: "Navidrome library",
     risk: "low",
     status: "active"
   },

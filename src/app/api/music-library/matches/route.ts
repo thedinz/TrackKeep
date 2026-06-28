@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
   if (!tracks) {
     return NextResponse.json(
       {
-        error: "Send Spotify tracks before matching the music library."
+        error: "Send Spotify tracks before matching Navidrome."
       },
       {
         status: 400

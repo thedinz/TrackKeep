@@ -828,7 +828,7 @@ test("library index parses standard folders when parent artist stripped trailing
   });
 });
 
-test("music library status accepts legacy Navidrome library path env var", async (t) => {
+test("music library status accepts Navidrome library path env var", async (t) => {
   const libraryPath = await mkdtemp(path.join(tmpdir(), "spotifybu-library-"));
 
   t.after(async () => {
@@ -847,6 +847,7 @@ test("music library status accepts legacy Navidrome library path env var", async
       MUSIC_LIBRARY_USER: null,
       MUSIC_LIBRARY_USERNAME: null,
       NAVIDROME_LIBRARY_PATH: libraryPath,
+      NAVIDROME_MUSIC_PATH: null,
       NAVIDROME_PASSWORD: null,
       NAVIDROME_URL: null,
       NAVIDROME_USER: null,
@@ -862,7 +863,42 @@ test("music library status accepts legacy Navidrome library path env var", async
   );
 });
 
-test("music server status accepts legacy Navidrome URL and credentials", async (t) => {
+test("music library status accepts Navidrome music path env var", async (t) => {
+  const libraryPath = await mkdtemp(path.join(tmpdir(), "spotifybu-library-"));
+
+  t.after(async () => {
+    await rm(libraryPath, {
+      force: true,
+      recursive: true
+    });
+  });
+
+  await withEnvironment(
+    t,
+    {
+      MUSIC_LIBRARY_PASSWORD: null,
+      MUSIC_LIBRARY_PATH: null,
+      MUSIC_LIBRARY_URL: null,
+      MUSIC_LIBRARY_USER: null,
+      MUSIC_LIBRARY_USERNAME: null,
+      NAVIDROME_LIBRARY_PATH: null,
+      NAVIDROME_MUSIC_PATH: libraryPath,
+      NAVIDROME_PASSWORD: null,
+      NAVIDROME_URL: null,
+      NAVIDROME_USER: null,
+      NAVIDROME_USERNAME: null
+    },
+    async () => {
+      const status = await getMusicLibraryStatus();
+
+      assert.equal(status.state, "ready");
+      assert.equal(status.configured, true);
+      assert.equal(status.libraryPath, libraryPath);
+    }
+  );
+});
+
+test("Navidrome API status accepts Navidrome URL and credentials", async (t) => {
   const requestedPaths: string[] = [];
   const server = http.createServer((request, response) => {
     requestedPaths.push(request.url ?? "");
@@ -910,10 +946,10 @@ test("music server status accepts legacy Navidrome URL and credentials", async (
       MUSIC_LIBRARY_URL: null,
       MUSIC_LIBRARY_USER: null,
       MUSIC_LIBRARY_USERNAME: null,
-      NAVIDROME_PASSWORD: "legacy-password",
+      NAVIDROME_PASSWORD: "navidrome-password",
       NAVIDROME_URL: `http://127.0.0.1:${address.port}`,
       NAVIDROME_USER: null,
-      NAVIDROME_USERNAME: "legacy-user"
+      NAVIDROME_USERNAME: "navidrome-user"
     },
     async () => {
       const status = await getMusicServerStatus();

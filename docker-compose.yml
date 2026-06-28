@@ -24,7 +24,7 @@ services:
       SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
     volumes:
       - spotifybu_config:/config
-      - ${MUSIC_LIBRARY_HOST_PATH:-${NAVIDROME_MUSIC_PATH:?Set MUSIC_LIBRARY_HOST_PATH or legacy NAVIDROME_MUSIC_PATH to your host music library folder}}:/music
+      - ${MUSIC_LIBRARY_HOST_PATH:-${NAVIDROME_MUSIC_PATH:?Set NAVIDROME_MUSIC_PATH or MUSIC_LIBRARY_HOST_PATH to your host music folder}}:/music
 
 volumes:
   spotifybu_config:

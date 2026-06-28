@@ -69,7 +69,7 @@ export async function POST(request: Request, context: RouteContext) {
           error:
             error instanceof Error
               ? error.message
-              : "SpotifyBU could not create the music library playlist."
+              : "SpotifyBU could not create the Navidrome playlist."
         },
         {
           status: 400

@@ -56,7 +56,7 @@ export async function POST(request: Request) {
         error:
           error instanceof Error
             ? error.message
-            : "Could not update music library auto scan settings."
+            : "Could not update Navidrome auto scan settings."
       },
       {
         status: 400

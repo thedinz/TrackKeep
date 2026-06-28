@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
   if (!tracks) {
     return NextResponse.json(
       {
-        error: "Send Spotify tracks before organizing matched music library files."
+        error: "Send Spotify tracks before organizing matched Navidrome files."
       },
       {
         status: 400
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
         error:
           error instanceof Error
             ? error.message
-            : "SpotifyBU could not organize matched music library files."
+            : "SpotifyBU could not organize matched Navidrome files."
       },
       {
         status: 400

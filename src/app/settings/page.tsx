@@ -118,7 +118,7 @@ export default function SettingsPage() {
         setAutoScan(withBrowserTimeZoneDefault(response.autoScan));
       })
       .catch(() => {
-        setError("Could not load music library auto scan settings.");
+        setError("Could not load Navidrome auto scan settings.");
       });
   }, []);
 
@@ -263,12 +263,12 @@ export default function SettingsPage() {
         const body = await readJson<MusicLibraryAutoScanResponse>(response);
 
         setAutoScan(withBrowserTimeZoneDefault(body.autoScan));
-        setSuccess("Music library auto scan schedule saved.");
+        setSuccess("Navidrome auto scan schedule saved.");
       } catch (settingsError) {
         setError(
           settingsError instanceof Error
             ? settingsError.message
-            : "Could not save music library auto scan settings."
+            : "Could not save Navidrome auto scan settings."
         );
       } finally {
         setIsSavingAutoScan(false);
@@ -496,8 +496,8 @@ export default function SettingsPage() {
             <div className="panel-title">
               <Clock size={20} />
               <div>
-                <h2>Music Library Auto Scan</h2>
-                <p className="muted">Daily library index and server rescan</p>
+                <h2>Navidrome Auto Scan</h2>
+                <p className="muted">Daily SpotifyBU index and Navidrome rescan</p>
               </div>
             </div>
           </div>
@@ -568,7 +568,7 @@ export default function SettingsPage() {
               <SlidersHorizontal size={20} />
               <div>
                 <h2>Organize Scheme</h2>
-                <p className="muted">Choose how SpotifyBU stages organized music library files</p>
+                <p className="muted">Choose how SpotifyBU stages organized Navidrome files</p>
               </div>
             </div>
           </div>
@@ -580,7 +580,7 @@ export default function SettingsPage() {
                   <CheckCircle2 size={18} />
                   <span>
                     SpotifyBU uses one Spotify metadata layout for organized
-                    music library files.
+                    Navidrome files.
                   </span>
                 </div>
 
