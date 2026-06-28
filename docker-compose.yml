@@ -10,9 +10,12 @@ services:
       - "${SPOTIFYBU_PORT:-3000}:3000"
     environment:
       MUSIC_LIBRARY_PATH: /music
-      MUSIC_LIBRARY_URL: ${MUSIC_LIBRARY_URL:-http://host.docker.internal:4533}
-      MUSIC_LIBRARY_USERNAME: ${MUSIC_LIBRARY_USERNAME:-}
-      MUSIC_LIBRARY_PASSWORD: ${MUSIC_LIBRARY_PASSWORD:-}
+      MUSIC_LIBRARY_URL: ${MUSIC_LIBRARY_URL:-${NAVIDROME_URL:-http://host.docker.internal:4533}}
+      MUSIC_LIBRARY_USERNAME: ${MUSIC_LIBRARY_USERNAME:-${NAVIDROME_USERNAME:-}}
+      MUSIC_LIBRARY_PASSWORD: ${MUSIC_LIBRARY_PASSWORD:-${NAVIDROME_PASSWORD:-}}
+      NAVIDROME_URL: ${NAVIDROME_URL:-}
+      NAVIDROME_USERNAME: ${NAVIDROME_USERNAME:-}
+      NAVIDROME_PASSWORD: ${NAVIDROME_PASSWORD:-}
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-}
       SPOTIFYBU_APP_SECRET: ${SPOTIFYBU_APP_SECRET:?Set SPOTIFYBU_APP_SECRET in .env before starting SpotifyBU}
       SPOTIFYBU_AUTH_MODE: ${SPOTIFYBU_AUTH_MODE:-internal}
@@ -21,7 +24,7 @@ services:
       SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
     volumes:
       - spotifybu_config:/config
-      - ${MUSIC_LIBRARY_HOST_PATH:?Set MUSIC_LIBRARY_HOST_PATH to your host music library folder}:/music
+      - ${MUSIC_LIBRARY_HOST_PATH:-${NAVIDROME_MUSIC_PATH:?Set MUSIC_LIBRARY_HOST_PATH or legacy NAVIDROME_MUSIC_PATH to your host music library folder}}:/music
 
 volumes:
   spotifybu_config:
