@@ -292,7 +292,8 @@ export const emptyMusicLibraryIndexSummary = {
 export function getMusicLibraryPath() {
   const configuredPath = firstConfiguredEnvironmentValue(
     "MUSIC_LIBRARY_PATH",
-    "NAVIDROME_LIBRARY_PATH"
+    "NAVIDROME_LIBRARY_PATH",
+    "NAVIDROME_MUSIC_PATH"
   );
 
   return configuredPath
@@ -338,7 +339,8 @@ export async function getMusicLibraryStatus() {
     return {
       configured: false,
       exists: false,
-      message: "Set MUSIC_LIBRARY_PATH to your local music library folder.",
+      message:
+        "Set MUSIC_LIBRARY_PATH, NAVIDROME_LIBRARY_PATH, or NAVIDROME_MUSIC_PATH to your Navidrome music folder.",
       musicLibraryUrl,
       readable: false,
       server,
@@ -355,7 +357,7 @@ export async function getMusicLibraryStatus() {
         configured: true,
         exists: true,
         libraryPath,
-        message: "MUSIC_LIBRARY_PATH exists but is not a directory.",
+        message: "The configured Navidrome music path exists but is not a directory.",
         musicLibraryUrl,
         readable: false,
         server,
@@ -372,7 +374,7 @@ export async function getMusicLibraryStatus() {
         configured: true,
         exists: true,
         libraryPath,
-        message: "SpotifyBU cannot read the configured music library path.",
+        message: "SpotifyBU cannot read the configured Navidrome music path.",
         musicLibraryUrl,
         readable,
         server,
@@ -386,7 +388,7 @@ export async function getMusicLibraryStatus() {
         configured: true,
         exists: true,
         libraryPath,
-        message: "SpotifyBU cannot write into the music library path.",
+        message: "SpotifyBU cannot write into the configured Navidrome music path.",
         musicLibraryUrl,
         readable,
         server,
@@ -399,7 +401,7 @@ export async function getMusicLibraryStatus() {
       configured: true,
       exists: true,
       libraryPath,
-      message: "Ready to stage authorized audio files for music library scanning.",
+      message: "Ready to stage authorized audio files for Navidrome scanning.",
       musicLibraryUrl,
       readable,
       server,
@@ -412,7 +414,7 @@ export async function getMusicLibraryStatus() {
         configured: true,
         exists: false,
         libraryPath,
-        message: "MUSIC_LIBRARY_PATH does not exist on this server.",
+        message: "The configured Navidrome music path does not exist on this server.",
         musicLibraryUrl,
         readable: false,
         server,
@@ -425,7 +427,7 @@ export async function getMusicLibraryStatus() {
       configured: true,
       exists: false,
       libraryPath,
-      message: "SpotifyBU could not inspect the music library path.",
+      message: "SpotifyBU could not inspect the configured Navidrome music path.",
       musicLibraryUrl,
       readable: false,
       server,
@@ -442,7 +444,7 @@ export async function getMusicServerStatus(): Promise<MusicServerStatus> {
     return {
       configured: false,
       message:
-        "Set MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD to let SpotifyBU ask the music server to rescan. Legacy NAVIDROME_USERNAME and NAVIDROME_PASSWORD are also accepted.",
+        "Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD to let SpotifyBU ask Navidrome to rescan. MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD are also accepted.",
       musicLibraryUrl,
       state: "not_configured"
     };
@@ -458,8 +460,8 @@ export async function getMusicServerStatus(): Promise<MusicServerStatus> {
     return {
       configured: true,
       message: scanStatus?.scanning
-        ? "Connected to music server API; server scan is running."
-        : "Connected to music server API.",
+        ? "Connected to Navidrome API; Navidrome scan is running."
+        : "Connected to Navidrome API.",
       musicLibraryUrl,
       scanCount: scanStatus?.count,
       scanning: scanStatus?.scanning,
@@ -482,7 +484,7 @@ async function requestMusicServerScan(): Promise<MusicServerScanResult> {
     return {
       configured: false,
       message:
-        "SpotifyBU indexed the mounted library. Set MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD to also request a music server scan. Legacy NAVIDROME_USERNAME and NAVIDROME_PASSWORD are also accepted.",
+        "SpotifyBU indexed the mounted Navidrome folder. Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD to also request a Navidrome scan. MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD are also accepted.",
       musicLibraryUrl,
       requested: false,
       state: "not_configured"
@@ -498,7 +500,7 @@ async function requestMusicServerScan(): Promise<MusicServerScanResult> {
 
     return {
       configured: true,
-      message: "SpotifyBU indexed the mounted library and requested a music server scan.",
+      message: "SpotifyBU indexed the mounted Navidrome folder and requested a Navidrome scan.",
       musicLibraryUrl,
       requested: true,
       scanCount: scanStatus?.count,
@@ -508,7 +510,7 @@ async function requestMusicServerScan(): Promise<MusicServerScanResult> {
   } catch (error) {
     return {
       configured: true,
-      message: `SpotifyBU indexed the mounted library, but could not request a music server scan: ${errorMessage(
+      message: `SpotifyBU indexed the mounted Navidrome folder, but could not request a Navidrome scan: ${errorMessage(
         error
       )}`,
       musicLibraryUrl,
@@ -522,7 +524,7 @@ export async function ensureMusicLibraryTargetDirectory(segments: string[]) {
   const libraryPath = getMusicLibraryPath();
 
   if (!libraryPath) {
-    throw new Error("MUSIC_LIBRARY_PATH is not configured.");
+    throw new Error("Navidrome music path is not configured.");
   }
 
   const targetPath = path.resolve(
@@ -532,7 +534,7 @@ export async function ensureMusicLibraryTargetDirectory(segments: string[]) {
   const relativePath = path.relative(libraryPath, targetPath);
 
   if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
-    throw new Error("Resolved music library target escaped the library path.");
+    throw new Error("Resolved Navidrome target escaped the configured music path.");
   }
 
   await mkdir(targetPath, {
@@ -581,7 +583,7 @@ export async function recordMusicLibraryAlbumFolders(tracks: BackupTrack[]) {
   const libraryPath = getMusicLibraryPath();
 
   if (!libraryPath) {
-    throw new Error("MUSIC_LIBRARY_PATH is not configured.");
+    throw new Error("Navidrome music path is not configured.");
   }
 
   const log = await readAlbumFolderLog();
@@ -856,14 +858,14 @@ export async function upsertMusicLibraryIndexTrack(filePath: string) {
   const libraryPath = getMusicLibraryPath();
 
   if (!libraryPath) {
-    throw new Error("MUSIC_LIBRARY_PATH is not configured.");
+    throw new Error("Navidrome music path is not configured.");
   }
 
   const targetPath = path.resolve(/* turbopackIgnore: true */ filePath);
   const relativePath = path.relative(libraryPath, targetPath);
 
   if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
-    throw new Error("Resolved music library target escaped the library path.");
+    throw new Error("Resolved Navidrome target escaped the configured music path.");
   }
 
   const indexedTrack = await indexAudioFile(libraryPath, targetPath);
@@ -916,7 +918,7 @@ export async function deleteMusicLibraryTrack(relativePath: string) {
   const libraryPath = getMusicLibraryPath();
 
   if (!libraryPath) {
-    throw new Error("MUSIC_LIBRARY_PATH is not configured.");
+    throw new Error("Navidrome music path is not configured.");
   }
 
   const normalizedRelativePath = normalizeRelativePath(relativePath);
@@ -988,7 +990,7 @@ export async function backfillMusicLibrarySpotifyIdentityTags() {
   const libraryPath = getMusicLibraryPath();
 
   if (!libraryPath) {
-    throw new Error("MUSIC_LIBRARY_PATH is not configured.");
+    throw new Error("Navidrome music path is not configured.");
   }
 
   const index = await readCurrentMusicLibraryIndex();
@@ -997,7 +999,7 @@ export async function backfillMusicLibrarySpotifyIdentityTags() {
 
   if (!index || index.libraryPath !== libraryPath) {
     throw new Error(
-      "Scan the current music library before backfilling Spotify identity tags."
+      "Scan the current Navidrome folder before backfilling Spotify identity tags."
     );
   }
 
@@ -1134,7 +1136,7 @@ export async function organizeMusicLibraryMatchedTracks(
   const libraryPath = getMusicLibraryPath();
 
   if (!libraryPath) {
-    throw new Error("MUSIC_LIBRARY_PATH is not configured.");
+    throw new Error("Navidrome music path is not configured.");
   }
 
   const index = await readMusicLibraryIndex();
@@ -1144,11 +1146,11 @@ export async function organizeMusicLibraryMatchedTracks(
   const naming = await loadOrganizeNamingSettings();
 
   if (!currentIndex) {
-    throw new Error("Scan the music library before organizing matched files.");
+    throw new Error("Scan the Navidrome folder before organizing matched files.");
   }
 
   if (currentIndex.libraryPath !== libraryPath) {
-    throw new Error("Scan the current music library before organizing files.");
+    throw new Error("Scan the current Navidrome folder before organizing files.");
   }
 
   const matches = matchMusicLibraryTracksWithIndexUsingSettings(
@@ -1261,7 +1263,7 @@ export async function createOrUpdateMusicLibraryPlaylistFromSpotify(
   } = {}
 ) {
   if (!tracks.length) {
-    throw new Error("Load Spotify playlist tracks before creating a music library playlist.");
+    throw new Error("Load Spotify playlist tracks before creating a Navidrome playlist.");
   }
 
   await musicServerApiRequest("ping");
@@ -1287,7 +1289,7 @@ export async function createOrUpdateMusicLibraryPlaylistFromSpotify(
 
     if (!match?.matchedTrack) {
       skipped.push({
-        reason: "Track is not backed up in the music library.",
+        reason: "Track is not backed up in the Navidrome folder.",
         trackName: track.name,
         trackPosition: track.position
       });
@@ -1298,7 +1300,7 @@ export async function createOrUpdateMusicLibraryPlaylistFromSpotify(
 
     if (!songId) {
       skipped.push({
-        reason: "Matched file was not found through the music server API. Scan the music library and try again.",
+        reason: "Matched file was not found through the Navidrome API. Scan Navidrome and try again.",
         trackName: track.name,
         trackPosition: track.position
       });
@@ -1310,7 +1312,7 @@ export async function createOrUpdateMusicLibraryPlaylistFromSpotify(
 
   if (!songIds.length) {
     throw new Error(
-      "No backed-up tracks could be resolved to music library songs. Scan SpotifyBU and the music library first."
+      "No backed-up tracks could be resolved to Navidrome songs. Scan SpotifyBU and Navidrome first."
     );
   }
 
@@ -1485,7 +1487,7 @@ export async function prepareMusicLibraryTrackFileDestination(
   const libraryPath = getMusicLibraryPath();
 
   if (!libraryPath) {
-    throw new Error("MUSIC_LIBRARY_PATH is not configured.");
+    throw new Error("Navidrome music path is not configured.");
   }
 
   const relativePath = await buildMusicLibraryTrackRelativePath(
@@ -2348,7 +2350,7 @@ async function musicServerApiRequest(
 
   if (!credentials) {
     throw new Error(
-      "Set MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD, or legacy NAVIDROME_USERNAME and NAVIDROME_PASSWORD."
+      "Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD, or MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD."
     );
   }
 
@@ -2408,14 +2410,14 @@ async function musicServerApiRequest(
       throw new MusicServerApiError(musicLibraryAuthFailureMessage(), 40);
     }
 
-    throw new Error(`music server API returned HTTP ${response.status}.`);
+    throw new Error(`Navidrome API returned HTTP ${response.status}.`);
   }
 
   const body = (await response.json()) as MusicLibrarySubsonicResponse;
   const subsonicResponse = body["subsonic-response"];
 
   if (!subsonicResponse) {
-    throw new Error("music server API response was not a Subsonic response.");
+    throw new Error("Navidrome API response was not a Subsonic response.");
   }
 
   if (subsonicResponse.status !== "ok") {
@@ -2467,7 +2469,7 @@ function musicServerApiErrorMessage(error?: { message?: string }) {
 }
 
 function musicLibraryAuthFailureMessage() {
-  return "The music server rejected the configured API credentials. Check MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD, or legacy NAVIDROME_USERNAME and NAVIDROME_PASSWORD.";
+  return "The Navidrome API rejected the configured credentials. Check NAVIDROME_USERNAME and NAVIDROME_PASSWORD, or MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD.";
 }
 
 function firstConfiguredEnvironmentValue(...names: string[]) {
@@ -3663,7 +3665,7 @@ async function ensureMusicLibraryOrganizedDirectory(relativeDirectory: string) {
   const libraryPath = getMusicLibraryPath();
 
   if (!libraryPath) {
-    throw new Error("MUSIC_LIBRARY_PATH is not configured.");
+    throw new Error("Navidrome music path is not configured.");
   }
 
   const directoryPath = absoluteLibraryPath(
@@ -3689,7 +3691,7 @@ function absoluteLibraryPath(libraryPath: string, relativePath: string) {
     resolvedRelativePath.startsWith("..") ||
     path.isAbsolute(resolvedRelativePath)
   ) {
-    throw new Error("Resolved music library target escaped the library path.");
+    throw new Error("Resolved Navidrome target escaped the configured music path.");
   }
 
   return targetPath;
@@ -3740,7 +3742,7 @@ async function writeAlbumFolderLog(log: AlbumFolderLog) {
   const libraryPath = getMusicLibraryPath();
 
   if (!libraryPath) {
-    throw new Error("MUSIC_LIBRARY_PATH is not configured.");
+    throw new Error("Navidrome music path is not configured.");
   }
 
   const logDirectory = await ensureMusicLibraryTargetDirectory([".spotifybu"]);

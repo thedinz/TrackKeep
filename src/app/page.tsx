@@ -719,11 +719,11 @@ export default function Home() {
       setMusicLibraryStatus({
         configured: false,
         exists: false,
-        message: "SpotifyBU could not check the music library target.",
+        message: "SpotifyBU could not check the Navidrome music folder.",
         readable: false,
         server: {
           configured: false,
-          message: "SpotifyBU could not check the music server API.",
+          message: "SpotifyBU could not check the Navidrome API.",
           musicLibraryUrl: "",
           state: "error"
         },
@@ -799,7 +799,7 @@ export default function Home() {
 
       if (
         !window.confirm(
-          `Delete this backed-up file from the music library?\n\n${normalizedRelativePath}`
+          `Delete this backed-up file from the Navidrome music folder?\n\n${normalizedRelativePath}`
         )
       ) {
         return;
@@ -1107,7 +1107,7 @@ export default function Home() {
         : "";
 
       setMusicLibraryPlaylistMessage(
-        `${action} music library playlist "${result.name}" with ${numberFormatter.format(
+        `${action} Navidrome playlist "${result.name}" with ${numberFormatter.format(
           result.songCount
         )} tracks.${fullSyncDetails ? ` ${fullSyncDetails}.` : ""}${skipped}`
       );
@@ -1506,7 +1506,7 @@ export default function Home() {
 
         if (response.scan?.state === "failed") {
           setRequestError(
-            response.scan.error ?? "SpotifyBU could not scan the music library."
+            response.scan.error ?? "SpotifyBU could not scan the Navidrome folder."
           );
         }
       } catch (error) {
@@ -2583,10 +2583,10 @@ export default function Home() {
                 ) : (
                   <span className="muted">
                     {sourceKind === "track-list"
-                      ? "Paste Spotify song URLs, URIs, or IDs to preview music library targets."
+                      ? "Paste Spotify song URLs, URIs, or IDs to preview Navidrome targets."
                       : `Paste a Spotify ${sourceKindLabel(
                           sourceKind
-                        ).toLowerCase()} URL or ID to preview its music library target.`}
+                        ).toLowerCase()} URL or ID to preview its Navidrome target.`}
                   </span>
                 )}
               </div>
@@ -2606,7 +2606,7 @@ export default function Home() {
                 {sourceKind === "playlist" ? (
                   <>
                     <label className="sync-mode-control">
-                      <span className="stat-label">Music library</span>
+                      <span className="stat-label">Navidrome</span>
                       <select
                         disabled={isCreatingMusicLibraryPlaylist}
                         onChange={(event) =>
@@ -2629,8 +2629,8 @@ export default function Home() {
                       onClick={() => void createMusicLibraryPlaylist()}
                       title={
                         musicServerApiReady
-                          ? "Sync this playlist in the music library"
-                          : "Connect music server API credentials to create playlists"
+                          ? "Sync this playlist in Navidrome"
+                          : "Connect Navidrome API credentials to create playlists"
                       }
                       type="button"
                     >
@@ -2719,7 +2719,7 @@ export default function Home() {
                     <span className="stat-label">Album organization targets</span>
                     <p>
                       Existing backups, files to organize, and download
-                      destinations by music library album folder.
+                      destinations by Navidrome album folder.
                     </p>
                   </div>
                   <div className="folder-plan-list">
@@ -2811,7 +2811,7 @@ export default function Home() {
                   <div className="backup-workflow-header">
                     <div>
                       <span className="stat-label">Missing backup actions</span>
-                      <h3>Back up tracks that are not in the music library</h3>
+                      <h3>Back up tracks that are not in Navidrome</h3>
                       <p>
                         The track table below shows coverage. These controls only
                         target tracks that are still missing from the library index.
@@ -2874,7 +2874,7 @@ export default function Home() {
                         <p>
                           Choose a missing Spotify track, search provider
                           candidates, review the match, then stage it into
-                          the music library.
+                          the Navidrome music folder.
                         </p>
                       </div>
                       <label className="provider-field">
@@ -3377,7 +3377,7 @@ export default function Home() {
                     <span className="stat-label">Track backup status</span>
                     <p>
                       Every Spotify track in the selected source, with its current
-                      music library match status.
+                      Navidrome match status.
                     </p>
                   </div>
                   <div className="track-table">
@@ -3496,7 +3496,7 @@ export default function Home() {
                   )}
                 </span>
                 <span>
-                  <h3>Music library</h3>
+                  <h3>Navidrome folder</h3>
                   <p>{musicLibraryStatusLabel}</p>
                 </span>
               </div>
@@ -3520,7 +3520,7 @@ export default function Home() {
                     )}
                   </span>
                   <span>
-                    <h3>Music server</h3>
+                    <h3>Navidrome API</h3>
                     <p>{musicServerStatusLabel}</p>
                   </span>
                 </div>
@@ -3679,7 +3679,7 @@ export default function Home() {
                 <ShieldCheck size={20} />
                 <div>
                 <h2>Backup Pipeline</h2>
-                <p className="muted">Spotify source to music-library-ready files</p>
+                <p className="muted">Spotify source to Navidrome-ready files</p>
                 </div>
               </div>
             </div>
@@ -4359,11 +4359,11 @@ function formatShortDate(value: string) {
 
 function musicLibraryStatusMessage(status: MusicLibraryStatus) {
   if (status.state === "ready") {
-    return "Ready for music library staging";
+    return "Ready for Navidrome staging";
   }
 
   if (status.state === "not_configured") {
-    return "Set MUSIC_LIBRARY_PATH";
+    return "Set Navidrome music path";
   }
 
   if (status.state === "not_writable") {

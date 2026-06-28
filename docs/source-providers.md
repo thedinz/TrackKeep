@@ -1,21 +1,21 @@
 # Source Provider Notes
 
 SpotifyBU's source-provider layer exists to build a local backup of a Spotify
-library. Local music library matching is a dedupe and coverage check, not the main value:
+library for Navidrome. Local Navidrome-folder matching is a dedupe and coverage check, not the main value:
 it answers "is this Spotify track already backed up locally?" so the app can
 focus sourcing work on missing tracks.
 
 SpotifyBU's source layer should follow the same broad shape as spotDL while keeping provider behavior explicit and auditable:
 
 1. Read Spotify playlist metadata.
-2. Match against the mounted music library to skip tracks already backed up.
+2. Match against the mounted Navidrome music folder to skip tracks already backed up.
 3. Build a source query for missing tracks from artist, title, album, duration, and ISRC when available.
 4. Ask one or more source providers for candidates.
 5. Score candidates by title, artist, duration, album, explicit flag, ISRC, and provider confidence.
 6. Download only from sources the user is authorized to use.
-7. Write the final audio file into `MUSIC_LIBRARY_PATH`.
+7. Write the final audio file into `MUSIC_LIBRARY_PATH` inside the container.
 8. Record the album folder mapping in `.spotifybu/album-folders.json`.
-9. Tag the file and let the music library scan it.
+9. Tag the file and let Navidrome scan it.
 
 ## Spotify Playlist Access
 
@@ -28,7 +28,7 @@ from Spotify's playlist endpoint.
 The supported fallback is the `Track list` source type. Users can paste Spotify
 song URLs, URIs, or IDs from a playlist export or copied track list. SpotifyBU
 then resolves those songs through Spotify's track metadata endpoint and feeds the
-result into the same music library matching, provider search, and backup workflow.
+result into the same Navidrome matching, provider search, and backup workflow.
 This avoids scraping Spotify pages or pretending the playlist permission limit
 does not exist.
 
@@ -54,7 +54,7 @@ Useful references:
 
 - Providers must declare whether they can search, download, tag, and report provenance.
 - Providers must declare their authorization model before any download action is enabled.
-- Providers must stage files only through the music library target helper, never by accepting arbitrary output paths.
+- Providers must stage files only through the Navidrome target helper, never by accepting arbitrary output paths.
 - Download workers must record successful writes with `recordMusicLibraryAlbumFolders` so later tracks from the same album use the same active artist/album folder.
 - Providers should preserve provenance in a sidecar or database record: source name, source URL, candidate score, selected reason, and user confirmation.
 - Provider downloads should run as background jobs with retry, cancellation, and a dry-run preview.
@@ -63,7 +63,7 @@ Useful references:
 - The current implemented external download path searches YouTube first, then JioSaavn, for one selected Spotify track or for every missing track in a playlist-scale queue. The user still reviews the candidate and confirms download rights before a single-track download starts. If a provider source fails with a source-side error such as a YouTube 403, SpotifyBU can retry alternate reviewed or previewed candidates before marking the track as failed.
 - Downloads support MP3 or FLAC output and 128 kbps or 320 kbps quality targets.
 - Bulk queues run sequentially with configurable wait between tracks, chunk size, and chunk pause to reduce provider blocking risk. Defaults are intentionally conservative and can still be overridden by request settings.
-- Provider work stages temporary files under `.spotifybu/tmp/provider-downloads` inside the mounted music library, then moves completed files into final album folders.
+- Provider work stages temporary files under `.spotifybu/tmp/provider-downloads` inside the mounted Navidrome music folder, then moves completed files into final album folders.
 - If a download, conversion, or move fails, stale staging files are cleaned after 10 minutes of provider-download idleness so unfinished media does not accumulate in the container filesystem.
 - YouTube Music is not active in the automatic flow because it is closed for reliable unauthenticated search.
 - Piped is not active in the automatic flow because it requires a public instance endpoint and mostly mirrors YouTube results.
@@ -75,7 +75,7 @@ The provider catalog lives in `src/lib/providers/types.ts` and is exposed by `/a
 
 | Provider | Status | Authorization model | Notes |
 | --- | --- | --- | --- |
-| Music library | Active | Local files | Matches Spotify metadata against existing mounted audio files. |
+| Navidrome library | Active | Local files | Matches Spotify metadata against existing mounted audio files. |
 | YouTube | User-confirmed | External tool | First active automatic search provider. Downloads reviewed single-video candidates through `yt-dlp`. |
 | JioSaavn | User-confirmed | External tool | Second active automatic search provider and fallback candidate source. Downloads reviewed song candidates through `yt-dlp`. |
 | YouTube Music | Planned | External tool | Future candidate only if a reliable user-controlled provider path is added. |
@@ -95,19 +95,19 @@ SpotifyBU Docker images install `yt-dlp[default]` with prerelease updates enable
 
 ## First Provider Candidates
 
-1. Local/music library matcher
+1. Local/Navidrome matcher
    - Match existing files by ISRC, MusicBrainz IDs, title, artist, album, and duration.
    - No download risk and immediately useful for deduplication.
 
 2. Purchased or user-owned folder importer
    - Ingest from another folder the user owns.
-   - Copy or hardlink into the music library structure.
+   - Copy or hardlink into the Navidrome folder structure.
 
 3. External tool adapter
    - Wrap a tool such as spotDL or `yt-dlp` only when the user has confirmed they have rights to download the selected media.
    - Start with YouTube and JioSaavn as explicit provider targets.
    - Search YouTube first, then JioSaavn, and keep provider ranking/provenance visible to the user.
-   - Keep command arguments generated by SpotifyBU and constrain output to the music library staging path.
+   - Keep command arguments generated by SpotifyBU and constrain output to the Navidrome staging path.
 
 4. Licensed/royalty-free catalog provider
    - Search and download from catalogs whose terms explicitly permit downloading.

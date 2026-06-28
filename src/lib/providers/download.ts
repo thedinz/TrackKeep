@@ -1007,7 +1007,7 @@ async function downloadAuthorizedProviderTrackInner(
     const libraryPath = getMusicLibraryPath();
 
     if (!libraryPath) {
-      throw new Error("MUSIC_LIBRARY_PATH is not configured.");
+      throw new Error("Navidrome music path is not configured.");
     }
 
     const source = resolveProviderSource(providerId, request.sourceUrl);
