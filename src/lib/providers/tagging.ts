@@ -3,6 +3,10 @@ import { constants } from "fs";
 import { access, rename, rm, writeFile } from "fs/promises";
 import path from "path";
 import { promisify } from "util";
+import {
+  spotifyBuIdentityMetadataEntries,
+  spotifyBuIdentityMetadataForTrack
+} from "@/lib/spotify-identity-tags";
 import type { BackupTrack } from "@/lib/spotify";
 
 const execFileAsync = promisify(execFile);
@@ -36,6 +40,29 @@ export async function tagDownloadedFile(filePath: string, track: BackupTrack) {
   }
 }
 
+export async function tagAudioFileWithSpotifyIdentity(
+  filePath: string,
+  track: BackupTrack
+) {
+  const parsedPath = path.parse(filePath);
+  const tempPath = path.join(
+    /* turbopackIgnore: true */ parsedPath.dir,
+    `${parsedPath.name}.spotifybu-identity${parsedPath.ext}`
+  );
+
+  try {
+    await writeIdentityTaggedAudioFile(
+      filePath,
+      tempPath,
+      spotifyIdentityMetadataArgs(track)
+    );
+    await rename(tempPath, filePath);
+  } catch (error) {
+    await removeTaggingTempPath(tempPath);
+    throw new Error(formatSpotifyIdentityTaggingError(error));
+  }
+}
+
 export function spotifyAudioMetadataArgs(track: BackupTrack) {
   const metadataArgs = [
     "-metadata",
@@ -56,7 +83,15 @@ export function spotifyAudioMetadataArgs(track: BackupTrack) {
     metadataArgs.push("-metadata", `isrc=${track.isrc}`);
   }
 
+  metadataArgs.push(...spotifyIdentityMetadataArgs(track));
+
   return metadataArgs;
+}
+
+export function spotifyIdentityMetadataArgs(track: BackupTrack) {
+  return spotifyBuIdentityMetadataEntries(
+    spotifyBuIdentityMetadataForTrack(track)
+  ).flatMap(([key, value]) => ["-metadata", `${key}=${value}`]);
 }
 
 async function writeTaggedAudioFile(
@@ -91,8 +126,8 @@ async function writeTaggedAudioFile(
             "comment=Cover (front)"
           ]
         : []),
-      "-id3v2_version",
-      "3",
+      ...containerMetadataArgs(tempPath),
+      ...id3MetadataArgs(tempPath),
       ...metadataArgs,
       tempPath
     ],
@@ -101,6 +136,51 @@ async function writeTaggedAudioFile(
       timeout: 60000
     }
   );
+}
+
+async function writeIdentityTaggedAudioFile(
+  filePath: string,
+  tempPath: string,
+  metadataArgs: string[]
+) {
+  await execFileAsync(
+    "ffmpeg",
+    [
+      "-y",
+      "-i",
+      filePath,
+      "-map",
+      "0",
+      "-map_metadata",
+      "0",
+      "-c",
+      "copy",
+      ...containerMetadataArgs(tempPath),
+      ...id3MetadataArgs(tempPath),
+      ...metadataArgs,
+      tempPath
+    ],
+    {
+      maxBuffer: 1024 * 1024 * 2,
+      timeout: 60000
+    }
+  );
+}
+
+function containerMetadataArgs(filePath: string) {
+  const extension = path.extname(filePath).toLowerCase();
+
+  if (extension === ".m4a" || extension === ".m4b" || extension === ".mp4") {
+    return ["-movflags", "use_metadata_tags"];
+  }
+
+  return [];
+}
+
+function id3MetadataArgs(filePath: string) {
+  return path.extname(filePath).toLowerCase() === ".mp3"
+    ? ["-id3v2_version", "3"]
+    : [];
 }
 
 async function downloadSpotifyAlbumCover(
@@ -202,6 +282,13 @@ function formatSpotifyTaggingError(error: unknown, expectedArtwork: boolean) {
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+function formatSpotifyIdentityTaggingError(error: unknown) {
+  return [
+    "Could not write Spotify identity tags to the audio file.",
+    `Tagging failed: ${formatExecFileError(error)}`
+  ].join(" ");
 }
 
 function formatExecFileError(error: unknown) {

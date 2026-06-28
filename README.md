@@ -32,7 +32,7 @@ SpotifyBU can source audio from files already present in the mounted music libra
 - Replace, append, or full-sync matching music library playlists from backed-up Spotify playlist tracks
 - Skipped-track review after music library playlist sync
 - Stable album-folder logging for staged download jobs
-- Spotify title, artist, album, and album-cover tagging for staged provider downloads
+- Spotify title, artist, album, album-cover, and durable Spotify identity tagging for staged provider downloads
 - Source-provider catalog with active YouTube and JioSaavn sourcing plus planned future providers
 - Automatic provider search for missing tracks, with YouTube checked before JioSaavn
 - Reviewed single-track source downloads for YouTube and JioSaavn using `yt-dlp`, alternate candidate fallback, and background job polling
@@ -300,6 +300,16 @@ Provider downloads stage temporary files under:
 ```
 
 Finished files are moved into the active organize scheme before the response completes. The default standard scheme is `Artist/Artist - Album (Year)/Artist - Album (Year) - 01 - Track Title`. Multi-disc albums use `Disc-Track` numbering, for example `02-03`. If a download, move, or conversion fails, leftover staging files stay on the mounted music volume rather than the container filesystem. After 10 minutes of provider-download idleness, SpotifyBU removes stale staging files older than 10 minutes old.
+
+Newly tagged SpotifyBU provider downloads also include custom Spotify identity
+metadata such as `spotifybu:track_id`, `spotifybu:track_uri`,
+`spotifybu:album_id`, `spotifybu:isrc`, and
+`spotifybu:identity_version`. Library indexing reads these tags first so a file
+can still reconnect to its Spotify track after another organizer moves or
+renames it. Playlist membership is not written into audio files; it continues to
+come from SpotifyBU playlist backup snapshots and the local database. Settings
+includes a maintenance action to add these identity tags to already matched
+backups from saved playlist snapshots.
 
 The music library still needs read access to the same host folder and a scan/watch configuration that sees new files.
 

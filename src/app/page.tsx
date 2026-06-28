@@ -160,7 +160,7 @@ type IndexedTrack = {
 type LibraryMatch = {
   exists: boolean;
   expectedFolder: string;
-  matchedBy?: "duration" | "isrc" | "metadata";
+  matchedBy?: "duration" | "isrc" | "metadata" | "spotify_identity";
   matchedTrack?: IndexedTrack;
   needsMove: boolean;
   recommendedRelativePath?: string;

@@ -4,6 +4,7 @@ import { constants, type Dirent } from "fs";
 import { access, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "fs/promises";
 import path from "path";
 import { promisify } from "util";
+import { getLatestPlaylistBackupSnapshots } from "./backup-store";
 import {
   defaultOrganizeNamingSettings,
   loadOrganizeNamingSettings,
@@ -16,6 +17,15 @@ import {
   type BackupTrack,
   type PlaylistSummary
 } from "./spotify";
+import { tagAudioFileWithSpotifyIdentity } from "./providers/tagging";
+import {
+  spotifyBuIdentityKeyForTrack,
+  spotifyBuIdentityMetadataForTrack,
+  spotifyBuIdentityMetadataFromTagLookup,
+  spotifyBuIdentityMetadataHasTrackIdentity,
+  spotifyBuIdentityVersion,
+  type SpotifyBuIdentityMetadata
+} from "./spotify-identity-tags";
 
 export type MusicLibraryState =
   | "not_configured"
@@ -117,6 +127,11 @@ export type MusicLibraryIndexedTrack = {
   relativePath: string;
   sizeBytes: number;
   source: "mixed" | "path" | "tags";
+  spotifyAlbumId?: string;
+  spotifyIsrc?: string;
+  spotifyTrackId?: string;
+  spotifyTrackUri?: string;
+  spotifybuIdentityVersion?: string;
   title: string;
   trackNumber?: number;
 };
@@ -176,13 +191,19 @@ export type MusicLibraryIndexScanStatus = {
 export type MusicLibraryTrackMatch = {
   exists: boolean;
   expectedFolder: string;
-  matchedBy?: "duration" | "isrc" | "metadata";
+  matchedBy?: MusicLibraryTrackMatchMethod;
   matchedTrack?: MusicLibraryIndexedTrack;
   needsMove: boolean;
   recommendedRelativePath?: string;
   trackId?: string;
   trackPosition: number;
 };
+
+export type MusicLibraryTrackMatchMethod =
+  | "duration"
+  | "isrc"
+  | "metadata"
+  | "spotify_identity";
 
 export type MusicLibraryTrackOrganizationResult = {
   attemptedCount: number;
@@ -212,6 +233,23 @@ export type MusicLibraryPlaylistSyncResult = {
 };
 
 export type MusicLibraryPlaylistSyncMode = "append" | "fullsync" | "replace";
+
+export type MusicLibraryIdentityTagBackfillResult = {
+  alreadyTaggedCount: number;
+  attemptedCount: number;
+  failedCount: number;
+  failures: Array<{
+    reason: string;
+    relativePath: string;
+    trackName: string;
+  }>;
+  index: MusicLibraryIndexSummary;
+  matchedCount: number;
+  skippedCount: number;
+  snapshotCount: number;
+  taggedCount: number;
+  trackCount: number;
+};
 
 const albumFolderLogSegments = [".spotifybu", "album-folders.json"];
 const libraryIndexSegments = [".spotifybu", "library-index.json"];
@@ -933,6 +971,134 @@ export async function deleteMusicLibraryTrack(relativePath: string) {
     relativePath: normalizedRelativePath,
     removedFromIndex
   };
+}
+
+export async function backfillMusicLibrarySpotifyIdentityTags() {
+  const libraryPath = getMusicLibraryPath();
+
+  if (!libraryPath) {
+    throw new Error("MUSIC_LIBRARY_PATH is not configured.");
+  }
+
+  const index = await readCurrentMusicLibraryIndex();
+  const naming = await loadOrganizeNamingSettings();
+  const namingSchemeKey = organizeNamingSettingsKey(naming);
+
+  if (!index || index.libraryPath !== libraryPath) {
+    throw new Error(
+      "Scan the current music library before backfilling Spotify identity tags."
+    );
+  }
+
+  const snapshots = Object.values(getLatestPlaylistBackupSnapshots());
+  const tracks = uniqueBackupTracksWithSpotifyIdentity(
+    snapshots.flatMap((snapshot) => snapshot.tracks)
+  );
+  const matches = matchMusicLibraryTracksWithIndexUsingSettings(
+    tracks,
+    index,
+    naming
+  );
+  const updatedTracksByRelativePath = new Map(
+    index.tracks.map((track) => [normalizeRelativePathKey(track.relativePath), track])
+  );
+  const processedRelativePathKeys = new Set<string>();
+  const failures: MusicLibraryIdentityTagBackfillResult["failures"] = [];
+  let alreadyTaggedCount = 0;
+  let attemptedCount = 0;
+  let matchedCount = 0;
+  let skippedCount = 0;
+  let taggedCount = 0;
+
+  for (const [trackIndex, track] of tracks.entries()) {
+    const match = matches[trackIndex];
+    const matchedTrack = match?.matchedTrack;
+
+    if (!match?.exists || !matchedTrack) {
+      skippedCount += 1;
+      continue;
+    }
+
+    const relativePathKey = normalizeRelativePathKey(matchedTrack.relativePath);
+
+    if (processedRelativePathKeys.has(relativePathKey)) {
+      skippedCount += 1;
+      continue;
+    }
+
+    processedRelativePathKeys.add(relativePathKey);
+    matchedCount += 1;
+
+    const indexedTrack =
+      updatedTracksByRelativePath.get(relativePathKey) ?? matchedTrack;
+    const identityMetadata = spotifyBuIdentityMetadataForTrack(track);
+
+    if (!spotifyBuIdentityMetadataHasTrackIdentity(identityMetadata)) {
+      skippedCount += 1;
+      continue;
+    }
+
+    if (indexedTrackHasSpotifyIdentity(indexedTrack, identityMetadata)) {
+      alreadyTaggedCount += 1;
+      continue;
+    }
+
+    attemptedCount += 1;
+
+    try {
+      const filePath = absoluteLibraryPath(libraryPath, indexedTrack.relativePath);
+
+      await tagAudioFileWithSpotifyIdentity(filePath, track);
+      updatedTracksByRelativePath.set(
+        relativePathKey,
+        await indexAudioFile(libraryPath, filePath)
+      );
+      taggedCount += 1;
+    } catch (error) {
+      failures.push({
+        reason: errorMessage(error),
+        relativePath: indexedTrack.relativePath,
+        trackName: track.name
+      });
+    }
+  }
+
+  const updatedIndex =
+    taggedCount > 0
+      ? ({
+          ...index,
+          generatedAt: new Date().toISOString(),
+          libraryPath,
+          namingSchemeKey,
+          tracks: Array.from(updatedTracksByRelativePath.values()).sort(
+            (left, right) => left.relativePath.localeCompare(right.relativePath)
+          )
+        } satisfies MusicLibraryIndex)
+      : index;
+
+  if (taggedCount > 0) {
+    await writeMusicLibraryIndex(updatedIndex);
+  }
+
+  const summary = summarizeMusicLibraryIndex(
+    updatedIndex,
+    libraryPath,
+    namingSchemeKey
+  );
+  lastLibraryIndexSummary = summary;
+
+  return {
+    alreadyTaggedCount,
+    attemptedCount,
+    failedCount: failures.length,
+    failures,
+    index: summary,
+    matchedCount,
+    skippedCount,
+    snapshotCount: snapshots.length,
+    taggedCount,
+    trackCount: tracks.length
+  } satisfies MusicLibraryIdentityTagBackfillResult;
 }
 
 export async function matchMusicLibraryTracks(tracks: BackupTrack[]) {
@@ -2415,6 +2581,7 @@ async function indexAudioFile(libraryPath: string, filePath: string) {
   const tagTrackNumber = parsePositiveInteger(
     tagValue(probe?.tags, ["track", "tracknumber"])
   );
+  const identityMetadata = parseMusicLibraryIndexedTrackIdentityTags(probe?.tags);
   const artists = tagArtists.length ? tagArtists : artist ? [artist] : [];
   const usedTags = Boolean(tagTitle || tagArtist || tagAlbumArtist || tagAlbum);
   const usedPathFallback = Boolean(
@@ -2438,9 +2605,33 @@ async function indexAudioFile(libraryPath: string, filePath: string) {
     relativePath,
     sizeBytes: fileStats.size,
     source: usedTags ? (usedPathFallback ? "mixed" : "tags") : "path",
+    ...identityMetadata,
     title,
     trackNumber: tagTrackNumber ?? inferred.trackNumber
   } satisfies MusicLibraryIndexedTrack;
+}
+
+export function parseMusicLibraryIndexedTrackIdentityTags(
+  tags: Map<string, string> | undefined | null
+) {
+  const identityMetadata = spotifyBuIdentityMetadataFromTagLookup((keys) =>
+    tagValue(tags, keys)
+  );
+
+  return {
+    spotifyAlbumId: identityMetadata.spotifyAlbumId,
+    spotifyIsrc: normalizeIsrc(identityMetadata.spotifyIsrc),
+    spotifyTrackId: identityMetadata.spotifyTrackId,
+    spotifyTrackUri: identityMetadata.spotifyTrackUri,
+    spotifybuIdentityVersion: identityMetadata.spotifybuIdentityVersion
+  } satisfies Pick<
+    MusicLibraryIndexedTrack,
+    | "spotifyAlbumId"
+    | "spotifyIsrc"
+    | "spotifyTrackId"
+    | "spotifyTrackUri"
+    | "spotifybuIdentityVersion"
+  >;
 }
 
 async function probeAudioFile(filePath: string) {
@@ -2579,7 +2770,10 @@ function normalizeTagMap(tags?: Record<string, string | number>) {
   return tagMap;
 }
 
-function tagValue(tags: Map<string, string> | undefined | null, keys: string[]) {
+function tagValue(
+  tags: Map<string, string> | undefined | null,
+  keys: readonly string[]
+) {
   for (const key of keys) {
     const value = tags?.get(key);
 
@@ -2697,10 +2891,37 @@ function findIndexedTrackMatch(
   lookup: MusicLibraryTrackLookup,
   naming: OrganizeNamingSettings
 ) {
+  const identityMetadata = spotifyBuIdentityMetadataForTrack(track);
   const trackIsrc = normalizeIsrc(track.isrc);
   const title = normalizeText(track.name);
   const album = normalizeText(track.album);
   const artists = normalizedSpotifyArtists(track);
+
+  if (identityMetadata.spotifyTrackId) {
+    const match = bestIndexedTrackMatch(
+      track,
+      lookup.spotifyTrackIdMatches.get(identityMetadata.spotifyTrackId),
+      "spotify_identity",
+      naming
+    );
+
+    if (match) {
+      return match;
+    }
+  }
+
+  if (identityMetadata.spotifyTrackUri) {
+    const match = bestIndexedTrackMatch(
+      track,
+      lookup.spotifyTrackUriMatches.get(identityMetadata.spotifyTrackUri),
+      "spotify_identity",
+      naming
+    );
+
+    if (match) {
+      return match;
+    }
+  }
 
   if (trackIsrc) {
     const match = bestIndexedTrackMatch(
@@ -2841,7 +3062,7 @@ function indexedTitleCandidates(
 function bestIndexedTrackMatch(
   track: BackupTrack,
   candidates: MusicLibraryTrackLookupEntry[] | undefined,
-  matchedBy: "duration" | "isrc" | "metadata",
+  matchedBy: MusicLibraryTrackMatchMethod,
   naming: OrganizeNamingSettings
 ) {
   const bestCandidate = candidates
@@ -2868,7 +3089,7 @@ function bestIndexedTrackMatch(
 function unambiguousIndexedTrackMatch(
   track: BackupTrack,
   candidates: MusicLibraryTrackLookupEntry[] | undefined,
-  matchedBy: "duration" | "isrc" | "metadata",
+  matchedBy: MusicLibraryTrackMatchMethod,
   naming: OrganizeNamingSettings
 ) {
   const scoredCandidates = candidates
@@ -3036,13 +3257,17 @@ type MusicLibraryTrackLookup = {
   artistMatches: Map<string, MusicLibraryTrackLookupEntry[]>;
   isrcMatches: Map<string, MusicLibraryTrackLookupEntry[]>;
   metadataMatches: Map<string, MusicLibraryTrackLookupEntry[]>;
+  spotifyTrackIdMatches: Map<string, MusicLibraryTrackLookupEntry[]>;
+  spotifyTrackUriMatches: Map<string, MusicLibraryTrackLookupEntry[]>;
   titleMatches: Map<string, MusicLibraryTrackLookupEntry[]>;
 };
 
 type MusicLibraryTrackLookupEntry = {
   albumKey: string;
   artistKeys: Set<string>;
-  isrcKey?: string;
+  isrcKeys: Set<string>;
+  spotifyTrackIdKey?: string;
+  spotifyTrackUriKey?: string;
   titleKey: string;
   track: MusicLibraryIndexedTrack;
 };
@@ -3055,6 +3280,8 @@ function buildMusicLibraryTrackLookup(
     artistMatches: new Map<string, MusicLibraryTrackLookupEntry[]>(),
     isrcMatches: new Map<string, MusicLibraryTrackLookupEntry[]>(),
     metadataMatches: new Map<string, MusicLibraryTrackLookupEntry[]>(),
+    spotifyTrackIdMatches: new Map<string, MusicLibraryTrackLookupEntry[]>(),
+    spotifyTrackUriMatches: new Map<string, MusicLibraryTrackLookupEntry[]>(),
     titleMatches: new Map<string, MusicLibraryTrackLookupEntry[]>()
   } satisfies MusicLibraryTrackLookup;
 
@@ -3062,13 +3289,35 @@ function buildMusicLibraryTrackLookup(
     const entry = {
       albumKey: normalizeText(track.album),
       artistKeys: indexedArtists(track),
-      isrcKey: normalizeIsrc(track.isrc),
+      isrcKeys: new Set(
+        [normalizeIsrc(track.isrc), normalizeIsrc(track.spotifyIsrc)].filter(
+          (value): value is string => Boolean(value)
+        )
+      ),
+      spotifyTrackIdKey: track.spotifyTrackId,
+      spotifyTrackUriKey: track.spotifyTrackUri,
       titleKey: normalizeText(track.title),
       track
     } satisfies MusicLibraryTrackLookupEntry;
 
-    if (entry.isrcKey) {
-      appendMusicLibraryLookupEntry(lookup.isrcMatches, entry.isrcKey, entry);
+    for (const isrcKey of entry.isrcKeys) {
+      appendMusicLibraryLookupEntry(lookup.isrcMatches, isrcKey, entry);
+    }
+
+    if (entry.spotifyTrackIdKey) {
+      appendMusicLibraryLookupEntry(
+        lookup.spotifyTrackIdMatches,
+        entry.spotifyTrackIdKey,
+        entry
+      );
+    }
+
+    if (entry.spotifyTrackUriKey) {
+      appendMusicLibraryLookupEntry(
+        lookup.spotifyTrackUriMatches,
+        entry.spotifyTrackUriKey,
+        entry
+      );
     }
 
     if (entry.albumKey) {
@@ -3131,6 +3380,64 @@ function normalizeTrackPositionFilter(trackPositions?: number[]) {
         Number.isInteger(trackPosition) && trackPosition > 0
     )
   );
+}
+
+function uniqueBackupTracksWithSpotifyIdentity(tracks: BackupTrack[]) {
+  const tracksByIdentity = new Map<string, BackupTrack>();
+
+  for (const track of tracks) {
+    const key = spotifyBuIdentityKeyForTrack(track);
+
+    if (key && !tracksByIdentity.has(key)) {
+      tracksByIdentity.set(key, track);
+    }
+  }
+
+  return Array.from(tracksByIdentity.values());
+}
+
+function indexedTrackHasSpotifyIdentity(
+  indexedTrack: MusicLibraryIndexedTrack,
+  identityMetadata: SpotifyBuIdentityMetadata
+) {
+  if (!spotifyBuIdentityMetadataHasTrackIdentity(identityMetadata)) {
+    return false;
+  }
+
+  if (indexedTrack.spotifybuIdentityVersion !== spotifyBuIdentityVersion) {
+    return false;
+  }
+
+  if (
+    identityMetadata.spotifyTrackId &&
+    indexedTrack.spotifyTrackId !== identityMetadata.spotifyTrackId
+  ) {
+    return false;
+  }
+
+  if (
+    identityMetadata.spotifyTrackUri &&
+    indexedTrack.spotifyTrackUri !== identityMetadata.spotifyTrackUri
+  ) {
+    return false;
+  }
+
+  if (
+    identityMetadata.spotifyAlbumId &&
+    indexedTrack.spotifyAlbumId !== identityMetadata.spotifyAlbumId
+  ) {
+    return false;
+  }
+
+  if (
+    identityMetadata.spotifyIsrc &&
+    normalizeIsrc(indexedTrack.spotifyIsrc) !==
+      normalizeIsrc(identityMetadata.spotifyIsrc)
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 function normalizedSpotifyArtists(track: BackupTrack) {
