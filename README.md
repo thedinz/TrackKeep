@@ -1,14 +1,14 @@
 # SpotifyBU
 
-SpotifyBU is a Docker-first web app for turning a Spotify library into a local, Navidrome-ready backup. It connects to a user's Spotify account, reads playlists, resolves Spotify song/album metadata, checks which songs are already backed up locally, stages missing tracks into clean Navidrome album folders, and exports backup metadata.
+SpotifyBU is a Docker-first web app for turning a Spotify library into a local, music-library-ready backup. It connects to a user's Spotify account, reads playlists, resolves Spotify song/album metadata, checks which songs are already backed up locally, stages missing tracks into clean local music library album folders, and exports backup metadata.
 
-The point is not to replace Navidrome search. Navidrome already tells you what is in Navidrome. SpotifyBU uses Spotify as the source-of-truth list, uses Navidrome matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
+The point is not to replace local music library search. Your music library already tells you what files exist locally. SpotifyBU uses Spotify as the source-of-truth list, uses local library matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
 
-Current stable release: `1.5.0`. It includes the web UI, local or external-proxy app auth, Spotify OAuth diagnostics, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, Navidrome library checks, SpotifyBU organize naming, library indexing, matched-file organization, Navidrome playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
+Current stable release: `1.6.0`. It includes the web UI, local or external-proxy app auth, Spotify OAuth diagnostics, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, music library checks, SpotifyBU organize naming, library indexing, durable Spotify identity tags for downloaded files, matched-file organization, music library playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
 Download the latest stable release from GitHub: https://github.com/thedinz/SpotifyBU/releases/latest
 
-SpotifyBU can source audio from files already present in the mounted Navidrome music library and can search YouTube first, then JioSaavn, for missing Spotify tracks. Single-track backup lets the user review provider candidates before downloading. Bulk playlist backup now starts with a dry-run candidate preview, then runs as a resumable background job with cancel and retry controls. Provider downloads show authorization and bulk-risk warnings, preserve provenance, and stage files only into the configured Navidrome library.
+SpotifyBU can source audio from files already present in the mounted music library and can search YouTube first, then JioSaavn, for missing Spotify tracks. Single-track backup lets the user review provider candidates before downloading. Bulk playlist backup now starts with a dry-run candidate preview, then runs as a resumable background job with cancel and retry controls. Provider downloads show authorization and bulk-risk warnings, preserve provenance, and stage files only into the configured music library.
 
 ## Features
 
@@ -22,24 +22,24 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - SQLite-backed playlist metadata backup snapshots saved under the SpotifyBU config directory
 - Song, album, and pasted track-list metadata lookup from Spotify URLs, URIs, or IDs
 - Playlist track preview
-- Optional Navidrome playlist creation from matched Spotify playlist tracks
-- Navidrome library folder status checks
-- Navidrome library indexing for local backup coverage checks
-- Navidrome folder planning using clean artist, album, and track paths
+- Optional music library playlist creation from matched Spotify playlist tracks
+- Music library folder status checks
+- Music library indexing for local backup coverage checks
+- Music library folder planning using clean artist, album, and track paths
 - Backup coverage counts for backed-up and missing Spotify tracks
 - Track backup table with one-click provider search for missing tracks
-- Matched-file organization into clean Navidrome album folders
-- Replace, append, or full-sync matching Navidrome playlists from backed-up Spotify playlist tracks
-- Skipped-track review after Navidrome playlist sync
+- Matched-file organization into clean music library album folders
+- Replace, append, or full-sync matching music library playlists from backed-up Spotify playlist tracks
+- Skipped-track review after music library playlist sync
 - Stable album-folder logging for staged download jobs
-- Spotify title, artist, album, and album-cover tagging for staged provider downloads
+- Spotify title, artist, album, album-cover, and durable Spotify identity tagging for staged provider downloads
 - Source-provider catalog with active YouTube and JioSaavn sourcing plus planned future providers
 - Automatic provider search for missing tracks, with YouTube checked before JioSaavn
 - Reviewed single-track source downloads for YouTube and JioSaavn using `yt-dlp`, alternate candidate fallback, and background job polling
 - Dry-run bulk candidate previews with live progress before provider downloads
 - Resumable background bulk playlist jobs with cancellation, retry, per-track waits, chunk pauses, progress reporting, and partial-failure reporting
 - MP3 output with 128 kbps or 320 kbps quality targets
-- Navidrome-volume staging with idle cleanup for abandoned failed download/convert temp files
+- Music library volume staging with idle cleanup for abandoned failed download/convert temp files
 - Docker image with Node.js, `ffmpeg`, prerelease/nightly-channel `yt-dlp[default]`, Python 3, and `pip`
 - GitHub Container Registry image publishing for `dev`, `latest`, and version tags
 
@@ -57,14 +57,14 @@ The test image built from the `dev` branch is:
 ghcr.io/thedinz/spotifybu:dev
 ```
 
-Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.5.0-dev.1`; stable releases use normal version tags such as `1.5.0`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
+Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.6.0-dev.1`; stable releases use normal version tags such as `1.6.0`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
 
-For the exact v1.5.0 release, pin one of these tags:
+For the exact v1.6.0 release, pin one of these tags:
 
 ```text
-ghcr.io/thedinz/spotifybu:v1.5.0
-ghcr.io/thedinz/spotifybu:1.5.0
-ghcr.io/thedinz/spotifybu:1.5
+ghcr.io/thedinz/spotifybu:v1.6.0
+ghcr.io/thedinz/spotifybu:1.6.0
+ghcr.io/thedinz/spotifybu:1.6
 ```
 
 Create a folder for SpotifyBU and save this Compose template as `docker-compose.yml`:
@@ -83,10 +83,10 @@ services:
     ports:
       - "3000:3000"
     environment:
-      NAVIDROME_LIBRARY_PATH: /music
-      NAVIDROME_URL: http://host.docker.internal:4533
-      NAVIDROME_USERNAME: your-navidrome-username
-      NAVIDROME_PASSWORD: your-navidrome-password
+      MUSIC_LIBRARY_PATH: /music
+      MUSIC_LIBRARY_URL: http://host.docker.internal:4533
+      MUSIC_LIBRARY_USERNAME: your-music-library-username
+      MUSIC_LIBRARY_PASSWORD: your-music-library-password
       NEXT_PUBLIC_APP_URL: http://127.0.0.1:3000
       SPOTIFYBU_APP_SECRET: change-this-to-a-long-random-value
       SPOTIFYBU_AUTH_MODE: internal
@@ -94,7 +94,7 @@ services:
       SPOTIFY_CLIENT_ID: your-spotify-client-id
     volumes:
       - spotifybu_config:/config
-      - /path/to/navidrome/music:/music
+      - /path/to/music-library/music:/music
 
 volumes:
   spotifybu_config:
@@ -144,11 +144,11 @@ Set these values before starting the app:
 | `SPOTIFYBU_DATABASE_PATH` | No | Optional SQLite path. Defaults to `<SPOTIFYBU_CONFIG_DIR>/spotifybu.sqlite`. |
 | `SPOTIFYBU_SECURE_COOKIES` | No | Set `true` for HTTPS reverse-proxy installs. Defaults to `false` in the Docker example for Unraid-style HTTP installs. |
 | `SPOTIFYBU_AUTH_MODE` | No | Set `external` when Authentik or another trusted reverse proxy protects SpotifyBU. Defaults to `internal`, which keeps the built-in login page enabled. |
-| `NAVIDROME_MUSIC_PATH` | Yes | Host path to the music folder Navidrome scans. |
+| `MUSIC_LIBRARY_HOST_PATH` | Yes | Host path to the local music library folder. |
 | `SPOTIFY_CLIENT_ID` | Yes | Spotify app Client ID. SpotifyBU uses Authorization Code with PKCE, so it does not use or ask for the Spotify Client Secret. |
-| `NAVIDROME_URL` | No | Navidrome URL as seen by the container. Defaults to `http://host.docker.internal:4533`. |
-| `NAVIDROME_USERNAME` | No | Navidrome username. Optional, but required if SpotifyBU should ping Navidrome and request a server-side scan after staging files. |
-| `NAVIDROME_PASSWORD` | No | Navidrome password for `NAVIDROME_USERNAME`. Optional, but required with `NAVIDROME_USERNAME` for Navidrome API scan requests. |
+| `MUSIC_LIBRARY_URL` | No | Music server URL as seen by the container. Defaults to `http://host.docker.internal:4533`. |
+| `MUSIC_LIBRARY_USERNAME` | No | Music server username. Optional, but required if SpotifyBU should ping the server and request a server-side scan after staging files. |
+| `MUSIC_LIBRARY_PASSWORD` | No | Music server password for `MUSIC_LIBRARY_USERNAME`. Optional, but required with `MUSIC_LIBRARY_USERNAME` for music server API scan requests. |
 
 Inside the container:
 
@@ -156,12 +156,12 @@ Inside the container:
   `spotifybu.sqlite` for persisted metadata backups and bulk job snapshots.
 - `/config/logs/spotifybu.log` stores focused JSON-line diagnostics for Spotify
   route failures and unusual Spotify playlist payloads.
-- `/music` is the mounted Navidrome music library.
-- `NAVIDROME_LIBRARY_PATH` is set to `/music`.
+- `/music` is the mounted music library.
+- `MUSIC_LIBRARY_PATH` is set to `/music`.
 - `SPOTIFYBU_CONFIG_DIR` is set to `/config`.
 
 At startup, the container makes `/config` writable by UID/GID `1000`, then runs
-the app as that user. On Linux hosts, make sure the mapped Navidrome music
+the app as that user. On Linux hosts, make sure the mapped music library music
 folder is writable by UID/GID `1000`.
 
 ## Reverse Proxy
@@ -255,7 +255,7 @@ the ordered track list itself.
 When a followed playlist is blocked, use the `Track list` source type. Paste
 Spotify song URLs, URIs, or IDs from a playlist export or copied track list, and
 SpotifyBU resolves each song through Spotify's track metadata API. The rest of
-the workflow is the same: Navidrome matching, missing-track provider search,
+the workflow is the same: music library matching, missing-track provider search,
 bulk backup, and local metadata export all work from that resolved track list.
 
 Direct playlist reads are still best when Spotify allows them. Track lists are
@@ -276,15 +276,15 @@ that exact value must be added to the Spotify app. A value such as
 `https://tower.local:3000/api/auth/callback`, or
 `https://192.168.1.50:3000/api/auth/callback` is different to Spotify.
 
-## Navidrome Setup
+## Music Library Setup
 
-SpotifyBU is meant to work beside Navidrome. Mount the same host music folder into SpotifyBU that Navidrome scans.
+SpotifyBU is meant to work beside a local music library or Subsonic-compatible music server. Mount the host music folder into SpotifyBU so it can index existing backups and stage new files.
 
 Example:
 
 ```yaml
 volumes:
-  - /srv/navidrome/music:/music
+  - /srv/music-library/music:/music
 ```
 
 SpotifyBU checks whether the configured folder exists and whether the app can read and write it. Verified provider downloads stage authorized audio files into this folder and record album-folder mappings in:
@@ -301,7 +301,17 @@ Provider downloads stage temporary files under:
 
 Finished files are moved into the active organize scheme before the response completes. The default standard scheme is `Artist/Artist - Album (Year)/Artist - Album (Year) - 01 - Track Title`. Multi-disc albums use `Disc-Track` numbering, for example `02-03`. If a download, move, or conversion fails, leftover staging files stay on the mounted music volume rather than the container filesystem. After 10 minutes of provider-download idleness, SpotifyBU removes stale staging files older than 10 minutes old.
 
-Navidrome still needs read access to the same host folder and a scan/watch configuration that sees new files.
+Newly tagged SpotifyBU provider downloads also include custom Spotify identity
+metadata such as `spotifybu:track_id`, `spotifybu:track_uri`,
+`spotifybu:album_id`, `spotifybu:isrc`, and
+`spotifybu:identity_version`. Library indexing reads these tags first so a file
+can still reconnect to its Spotify track after another organizer moves or
+renames it. Playlist membership is not written into audio files; it continues to
+come from SpotifyBU playlist backup snapshots and the local database. Settings
+includes a maintenance action to add these identity tags to already matched
+backups from saved playlist snapshots.
+
+The music library still needs read access to the same host folder and a scan/watch configuration that sees new files.
 
 ### Organize Matched Files
 
@@ -310,42 +320,40 @@ After a library scan, the Organize action compares matched local files against t
 Running Organize before backing up missing files is recommended, but not required. It gives SpotifyBU a clean library view first, can repair older organize runs, and reduces the chance of downloading a track that already exists under a messy path. If you skip it, new provider downloads still stage into the active organize layout.
 
 SpotifyBU's Library Index scan reads the mounted music folder directly. It does
-not need a Navidrome username or password for that local index. If
-`NAVIDROME_USERNAME` and `NAVIDROME_PASSWORD` are set, SpotifyBU also uses
-Navidrome's Subsonic API to ping the server and request a Navidrome-side library
+not need a music server username or password for that local index. If
+`MUSIC_LIBRARY_USERNAME` and `MUSIC_LIBRARY_PASSWORD` are set, SpotifyBU also uses
+the configured Subsonic-compatible API to ping the server and request a server-side library
 scan after SpotifyBU indexes or stages files. Without those credentials,
-SpotifyBU can still write files into `/music`, but Navidrome will pick them up
+SpotifyBU can still write files into `/music`, but the music library will pick them up
 only through its own startup/watch/scheduled scan behavior.
 
-The Navidrome API credentials are regular Navidrome user credentials. SpotifyBU
+The music server API credentials are regular music server user credentials. SpotifyBU
 generates the Subsonic token/salt request parameters at request time; it does not
-need a separate Navidrome API key.
+need a separate music server API key.
 
-When Navidrome API credentials are configured, Spotify playlist views include a
-Sync Navidrome action. The action creates or updates a same-named Navidrome
-playlist using Spotify tracks that are already matched to songs in the Navidrome
+When music server API credentials are configured, Spotify playlist views include a
+Sync music library action. The action creates or updates a same-named music library
+playlist using Spotify tracks that are already matched to songs in the music library
 API. Replace rebuilds the playlist from matched Spotify tracks, append only adds
-new matches, and full sync removes stale Navidrome entries before adding the
+new matches, and full sync removes stale music library entries before adding the
 current matched Spotify order. Tracks that are not backed up or not visible to
-Navidrome are skipped and reported in the UI, so scan/index the library before
+the music library are skipped and reported in the UI, so scan/index the library before
 syncing a playlist.
 
 If Library Index fails, check the mounted folder first:
 
-- `NAVIDROME_MUSIC_PATH` must be the host music folder Navidrome scans, not the
-  Navidrome appdata/config folder.
-- Inside the SpotifyBU container, `NAVIDROME_LIBRARY_PATH` should normally be
+- `MUSIC_LIBRARY_HOST_PATH` must be the host music folder, not the music server
+  appdata/config folder.
+- Inside the SpotifyBU container, `MUSIC_LIBRARY_PATH` should normally be
   `/music`.
 - The container user must be able to read the music folder and write
   `/music/.spotifybu/library-index.json`.
 - A bad or unreadable nested file should be skipped and reported in the UI; a
   top-level mount or permission problem still stops the scan.
 
-Navidrome docs:
+Music server API reference:
 
-- https://www.navidrome.org/docs/getting-started/
-- https://www.navidrome.org/docs/usage/features/multi-library/
-- https://www.navidrome.org/docs/developers/subsonic-api/
+- http://www.subsonic.org/pages/api.jsp
 
 ## Local Development
 
@@ -362,10 +370,10 @@ Set at least:
 ```text
 SPOTIFY_CLIENT_ID=
 NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000
-NAVIDROME_LIBRARY_PATH=/path/to/navidrome/music
+MUSIC_LIBRARY_PATH=/path/to/music-library/music
 SPOTIFYBU_APP_SECRET=change-this-to-a-long-random-value
-NAVIDROME_USERNAME=
-NAVIDROME_PASSWORD=
+MUSIC_LIBRARY_USERNAME=
+MUSIC_LIBRARY_PASSWORD=
 ```
 
 Then open:
@@ -395,11 +403,11 @@ docker run --rm -p 3000:3000 \
   -e NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000 \
   -e SPOTIFYBU_APP_SECRET=change-this-to-a-long-random-value \
   -e SPOTIFY_CLIENT_ID=your-spotify-client-id \
-  -e NAVIDROME_LIBRARY_PATH=/music \
-  -e NAVIDROME_USERNAME=your-navidrome-username \
-  -e NAVIDROME_PASSWORD=your-navidrome-password \
+  -e MUSIC_LIBRARY_PATH=/music \
+  -e MUSIC_LIBRARY_USERNAME=your-music-library-username \
+  -e MUSIC_LIBRARY_PASSWORD=your-music-library-password \
   -v spotifybu_config:/config \
-  -v /path/to/navidrome/music:/music \
+  -v /path/to/music-library/music:/music \
   spotifybu:local
 ```
 
@@ -409,9 +417,9 @@ docker run --rm -p 3000:3000 \
 - `src/lib/database.ts` opens the local SQLite database under `SPOTIFYBU_CONFIG_DIR`.
 - `src/lib/backup-store.ts` persists deduplicated playlist metadata backup snapshots.
 - `src/lib/spotify.ts` owns Spotify API calls and export shaping.
-- `src/lib/navidrome.ts` owns Navidrome library path checks, safe target directory creation, folder planning, library indexing, local matching, matched-file organization, album-folder logging, and Navidrome playlist replace, append, and full-sync modes.
+- `src/lib/music-library.ts` owns music library path checks, safe target directory creation, folder planning, library indexing, local matching, matched-file organization, album-folder logging, and music library playlist replace, append, and full-sync modes.
 - `src/lib/providers/types.ts` defines the source-provider contract and provider catalog for matching, downloading, tagging, and provenance.
-- `src/lib/providers/download.ts` searches provider candidates, validates selected provider URLs, calls `yt-dlp`, retries alternate provider candidates for source-side failures, stages files on the Navidrome volume, tags downloads with Spotify metadata, records provenance, and cleans abandoned staging files after idle.
+- `src/lib/providers/download.ts` searches provider candidates, validates selected provider URLs, calls `yt-dlp`, retries alternate provider candidates for source-side failures, stages files on the music library volume, tags downloads with Spotify metadata, records provenance, and cleans abandoned staging files after idle.
 - `src/app/api/providers/route.ts` exposes the provider catalog and provider risk/status metadata.
 - `src/app/api/providers/search/route.ts` searches YouTube first, then JioSaavn, for candidate sources.
 - `src/app/api/providers/download/route.ts` starts confirmed single-track provider download jobs.
@@ -420,8 +428,8 @@ docker run --rm -p 3000:3000 \
 - `src/app/api/providers/download/bulk/preview/route.ts` dry-runs provider candidate selection for missing tracks.
 - `src/app/api/providers/download/bulk/route.ts` starts persisted background bulk provider jobs.
 - `src/app/api/providers/download/bulk/[jobId]/route.ts` reports, cancels, and retries bulk provider jobs.
-- `src/app/api/navidrome/library/organize/route.ts` moves or renames matched local files into their planned Navidrome album paths in small batches.
-- `src/app/api/spotify/playlists/[playlistId]/navidrome/route.ts` replaces, appends, or full-syncs a matching Navidrome playlist from backed-up Spotify tracks.
+- `src/app/api/music-library/organize/route.ts` moves or renames matched local files into their planned music library album paths in small batches.
+- `src/app/api/spotify/playlists/[playlistId]/music-library/route.ts` replaces, appends, or full-syncs a matching music library playlist from backed-up Spotify tracks.
 - `src/lib/session.ts` and `src/lib/server-session.ts` own PKCE cookie and Spotify token-session handling.
 - `.github/workflows/docker-image.yml` publishes GHCR images for `dev`, `main`, and `v*` tags. The `dev` branch publishes `dev`; `main` and version tags publish stable tags such as `latest`. The workflow runs `npm run check:yt-dlp` so image builds record the current yt-dlp release channel before publishing.
 
@@ -440,6 +448,6 @@ See [docs/source-providers.md](docs/source-providers.md).
 ## Roadmap
 
 - Add long-term backup history browsing and restore flows
-- Add owned-file import workflows for music the user already has outside Navidrome
+- Add owned-file import workflows for music the user already has outside the music library
 - Add more provider adapters where the user's authorization model is clear
 - Add richer bulk job history filtering and cleanup controls

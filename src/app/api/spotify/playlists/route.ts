@@ -5,11 +5,11 @@ import {
 } from "@/lib/backup-store";
 import { appendDiagnosticLog, diagnosticError } from "@/lib/diagnostics";
 import {
-  getNavidromeLibraryPath,
-  matchNavidromeTracksWithIndex,
-  readCurrentNavidromeLibraryIndex,
-  type NavidromeTrackMatch
-} from "@/lib/navidrome";
+  getMusicLibraryPath,
+  matchMusicLibraryTracksWithIndex,
+  readCurrentMusicLibraryIndex,
+  type MusicLibraryTrackMatch
+} from "@/lib/music-library";
 import { getSpotifySession, withSessionCookie } from "@/lib/server-session";
 import { getUserPlaylists, type BackupTrack } from "@/lib/spotify";
 
@@ -66,8 +66,8 @@ export async function GET(request: Request) {
 }
 
 async function getPersistedPlaylistBackupStatuses(playlistIds: string[]) {
-  const libraryPath = getNavidromeLibraryPath();
-  const index = await readCurrentNavidromeLibraryIndex().catch(async (error) => {
+  const libraryPath = getMusicLibraryPath();
+  const index = await readCurrentMusicLibraryIndex().catch(async (error) => {
     await appendDiagnosticLog("spotify.playlists.backup_status_failed", {
       error: diagnosticError(error),
       route: "/api/spotify/playlists"
@@ -87,7 +87,7 @@ async function getPersistedPlaylistBackupStatuses(playlistIds: string[]) {
       snapshot.playlistId,
       getPlaylistBackupStatus(
         snapshot.tracks,
-        await matchNavidromeTracksWithIndex(snapshot.tracks, index)
+        await matchMusicLibraryTracksWithIndex(snapshot.tracks, index)
       )
     ] as const)
   );
@@ -97,7 +97,7 @@ async function getPersistedPlaylistBackupStatuses(playlistIds: string[]) {
 
 function getPlaylistBackupStatus(
   tracks: BackupTrack[],
-  libraryMatches: NavidromeTrackMatch[]
+  libraryMatches: MusicLibraryTrackMatch[]
 ): PlaylistBackupStatus {
   const matchesByPosition = new Map(
     libraryMatches.map((match) => [match.trackPosition, match] as const)

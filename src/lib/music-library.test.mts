@@ -1,21 +1,28 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
 import {
-  deleteNavidromeLibraryTrack,
-  matchNavidromeTracksWithIndex,
-  planNavidromeAlbumFolders,
-  readCurrentNavidromeLibraryIndex,
-  scanNavidromeLibraryIndex,
-  type NavidromeLibraryIndex
-} from "./navidrome.ts";
+  deleteMusicLibraryTrack,
+  matchMusicLibraryTracksWithIndex,
+  parseMusicLibraryIndexedTrackIdentityTags,
+  planMusicLibraryAlbumFolders,
+  prepareMusicLibraryTrackFileDestination,
+  recordMusicLibraryAlbumFolders,
+  readCurrentMusicLibraryIndex,
+  scanMusicLibraryIndex,
+  type MusicLibraryIndex
+} from "./music-library.ts";
+import {
+  spotifyBuIdentityTags,
+  spotifyBuIdentityVersion
+} from "./spotify-identity-tags.ts";
 import type { BackupTrack } from "./spotify.ts";
 
 test("standard album folder uses artist album year layout", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
-    const [plan] = await planNavidromeAlbumFolders([exampleTrack]);
+    const [plan] = await planMusicLibraryAlbumFolders([exampleTrack]);
 
     assert.equal(
       plan.relativePath,
@@ -30,7 +37,7 @@ test("standard album folder uses artist album year layout", async (t) => {
 
 test("standard album folder uses Unknown Year when metadata is missing", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
-    const [plan] = await planNavidromeAlbumFolders([
+    const [plan] = await planMusicLibraryAlbumFolders([
       {
         ...exampleTrack,
         albumReleaseDate: undefined
@@ -44,9 +51,88 @@ test("standard album folder uses Unknown Year when metadata is missing", async (
   });
 });
 
+test("download destinations use the same long folder path as organization", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const libraryPath = await mkdtemp(
+      path.join(tmpdir(), "spotifybu-library-")
+    );
+    const previousLibraryPath = process.env.MUSIC_LIBRARY_PATH;
+    const longAlbumTitle = `Long Album ${"Name ".repeat(28)}`.trim();
+    const spotifyTrack = {
+      ...exampleTrack,
+      album: longAlbumTitle,
+      albumId: "album-long-download-path",
+      name: "Short Song"
+    } satisfies BackupTrack;
+
+    process.env.MUSIC_LIBRARY_PATH = libraryPath;
+    t.after(async () => {
+      if (typeof previousLibraryPath === "string") {
+        process.env.MUSIC_LIBRARY_PATH = previousLibraryPath;
+      } else {
+        delete process.env.MUSIC_LIBRARY_PATH;
+      }
+
+      await rm(libraryPath, {
+        force: true,
+        recursive: true
+      });
+    });
+
+    const [plan] = await recordMusicLibraryAlbumFolders([spotifyTrack]);
+    const exactDirectory = path.join(
+      libraryPath,
+      ...plan.relativePath.split("/")
+    );
+    const truncatedDirectory = path.join(
+      libraryPath,
+      ...plan.relativePath.split("/").map((segment) => segment.slice(0, 120))
+    );
+    const destination = await prepareMusicLibraryTrackFileDestination(
+      spotifyTrack,
+      "mp3"
+    );
+
+    assert.ok(plan.relativePath.split("/").some((segment) => segment.length > 120));
+    assert.equal(destination.relativeDirectory, plan.relativePath);
+    assert.ok((await stat(exactDirectory)).isDirectory());
+
+    if (truncatedDirectory !== exactDirectory) {
+      await assert.rejects(stat(truncatedDirectory));
+    }
+
+    const [match] = await matchMusicLibraryTracksWithIndex([spotifyTrack], {
+      generatedAt: new Date(0).toISOString(),
+      libraryPath,
+      tracks: [
+        {
+          album: spotifyTrack.album,
+          albumArtist: spotifyTrack.albumArtist,
+          artist: spotifyTrack.artists[0],
+          artists: spotifyTrack.artists,
+          durationMs: spotifyTrack.durationMs,
+          fileName: destination.fileName,
+          isrc: spotifyTrack.isrc,
+          mtimeMs: 0,
+          relativeDirectory: destination.relativeDirectory,
+          relativePath: destination.relativePath,
+          sizeBytes: 1,
+          source: "tags",
+          title: spotifyTrack.name,
+          trackNumber: spotifyTrack.trackNumber
+        }
+      ],
+      version: 1
+    } satisfies MusicLibraryIndex);
+
+    assert.equal(match.exists, true);
+    assert.equal(match.needsMove, false);
+  });
+});
+
 test("standard matching keeps Spotify year canonical when local year differs", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
-    const matches = await matchNavidromeTracksWithIndex([exampleTrack], {
+    const matches = await matchMusicLibraryTracksWithIndex([exampleTrack], {
       generatedAt: new Date(0).toISOString(),
       libraryPath: "/music",
       tracks: [
@@ -67,7 +153,7 @@ test("standard matching keeps Spotify year canonical when local year differs", a
         }
       ],
       version: 1
-    } satisfies NavidromeLibraryIndex);
+    } satisfies MusicLibraryIndex);
 
     assert.equal(matches[0].exists, true);
     assert.equal(matches[0].needsMove, true);
@@ -90,7 +176,7 @@ test("standard matching finds indexed title variants but keeps Spotify naming ca
       isrc: "USABC1234567",
       name: "Spotify Title Variant"
     } satisfies BackupTrack;
-    const matches = await matchNavidromeTracksWithIndex([spotifyTrack], {
+    const matches = await matchMusicLibraryTracksWithIndex([spotifyTrack], {
       generatedAt: new Date(0).toISOString(),
       libraryPath: "/music",
       tracks: [
@@ -115,7 +201,7 @@ test("standard matching finds indexed title variants but keeps Spotify naming ca
         }
       ],
       version: 1
-    } satisfies NavidromeLibraryIndex);
+    } satisfies MusicLibraryIndex);
 
     assert.equal(matches[0].exists, true);
     assert.equal(matches[0].needsMove, true);
@@ -123,6 +209,155 @@ test("standard matching finds indexed title variants but keeps Spotify naming ca
       matches[0].recommendedRelativePath,
       "Example Artist/Example Artist - Example Record (2026)/Example Artist - Example Record (2026) - 01 - Spotify Title Variant.mp3"
     );
+  });
+});
+
+test("library index parser reads SpotifyBU identity tags", () => {
+  const spotifyTrackId = "6rqhFgbbKwnb9MLmUQDhG6";
+  const spotifyAlbumId = "0sNOF9WDwhWunNAHPD3Baj";
+  const identity = parseMusicLibraryIndexedTrackIdentityTags(
+    new Map([
+      [spotifyBuIdentityTags.trackId, spotifyTrackId],
+      [spotifyBuIdentityTags.trackUri, `spotify:track:${spotifyTrackId}`],
+      [spotifyBuIdentityTags.albumId, spotifyAlbumId],
+      [spotifyBuIdentityTags.isrc, "usrc17607839"],
+      [spotifyBuIdentityTags.identityVersion, spotifyBuIdentityVersion]
+    ])
+  );
+
+  assert.equal(identity.spotifyTrackId, spotifyTrackId);
+  assert.equal(identity.spotifyTrackUri, `spotify:track:${spotifyTrackId}`);
+  assert.equal(identity.spotifyAlbumId, spotifyAlbumId);
+  assert.equal(identity.spotifyIsrc, "USRC17607839");
+  assert.equal(identity.spotifybuIdentityVersion, spotifyBuIdentityVersion);
+});
+
+test("matching prefers Spotify identity tags before fuzzy metadata", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const spotifyTrackId = "6rqhFgbbKwnb9MLmUQDhG6";
+    const spotifyTrack = {
+      ...exampleTrack,
+      id: spotifyTrackId,
+      spotifyUri: `spotify:track:${spotifyTrackId}`
+    } satisfies BackupTrack;
+    const matches = await matchMusicLibraryTracksWithIndex([spotifyTrack], {
+      generatedAt: new Date(0).toISOString(),
+      libraryPath: "/music",
+      tracks: [
+        {
+          album: spotifyTrack.album,
+          albumArtist: spotifyTrack.albumArtist,
+          artist: spotifyTrack.artists[0],
+          artists: spotifyTrack.artists,
+          durationMs: spotifyTrack.durationMs,
+          fileName: "01 - Opening.mp3",
+          mtimeMs: 0,
+          relativeDirectory: "Fuzzy",
+          relativePath: "Fuzzy/01 - Opening.mp3",
+          sizeBytes: 1,
+          source: "tags",
+          title: spotifyTrack.name,
+          trackNumber: spotifyTrack.trackNumber
+        },
+        {
+          album: "Wrong Album",
+          albumArtist: "Wrong Artist",
+          artist: "Wrong Artist",
+          artists: ["Wrong Artist"],
+          fileName: "Moved And Renamed.mp3",
+          mtimeMs: 0,
+          relativeDirectory: "Moved",
+          relativePath: "Moved/Moved And Renamed.mp3",
+          sizeBytes: 1,
+          source: "tags",
+          spotifyTrackId,
+          spotifybuIdentityVersion: spotifyBuIdentityVersion,
+          title: "Wrong Title"
+        }
+      ],
+      version: 1
+    } satisfies MusicLibraryIndex);
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].matchedBy, "spotify_identity");
+    assert.equal(matches[0].matchedTrack?.relativePath, "Moved/Moved And Renamed.mp3");
+  });
+});
+
+test("matching uses Spotify URI identity when a moved file has no track ID tag", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const spotifyTrackId = "3n3Ppam7vgaVa1iaRUc9Lp";
+    const spotifyTrack = {
+      ...exampleTrack,
+      id: undefined,
+      isrc: undefined,
+      spotifyUri: `spotify:track:${spotifyTrackId}`
+    } satisfies BackupTrack;
+    const matches = await matchMusicLibraryTracksWithIndex([spotifyTrack], {
+      generatedAt: new Date(0).toISOString(),
+      libraryPath: "/music",
+      tracks: [
+        {
+          album: "Wrong Album",
+          albumArtist: "Wrong Artist",
+          artist: "Wrong Artist",
+          artists: ["Wrong Artist"],
+          fileName: "Organizer Changed Everything.mp3",
+          mtimeMs: 0,
+          relativeDirectory: "Loose",
+          relativePath: "Loose/Organizer Changed Everything.mp3",
+          sizeBytes: 1,
+          source: "tags",
+          spotifyTrackUri: `spotify:track:${spotifyTrackId}`,
+          spotifybuIdentityVersion: spotifyBuIdentityVersion,
+          title: "Wrong Title"
+        }
+      ],
+      version: 1
+    } satisfies MusicLibraryIndex);
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].matchedBy, "spotify_identity");
+    assert.equal(
+      matches[0].matchedTrack?.relativePath,
+      "Loose/Organizer Changed Everything.mp3"
+    );
+  });
+});
+
+test("matching still falls back for old indexed files without identity tags", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const spotifyTrack = {
+      ...exampleTrack,
+      id: "6rqhFgbbKwnb9MLmUQDhG6",
+      isrc: "USRC17607839",
+      spotifyUri: "spotify:track:6rqhFgbbKwnb9MLmUQDhG6"
+    } satisfies BackupTrack;
+    const matches = await matchMusicLibraryTracksWithIndex([spotifyTrack], {
+      generatedAt: new Date(0).toISOString(),
+      libraryPath: "/music",
+      tracks: [
+        {
+          album: spotifyTrack.album,
+          albumArtist: spotifyTrack.albumArtist,
+          artist: spotifyTrack.artists[0],
+          artists: spotifyTrack.artists,
+          fileName: "Old File.mp3",
+          isrc: "USRC17607839",
+          mtimeMs: 0,
+          relativeDirectory: "Old",
+          relativePath: "Old/Old File.mp3",
+          sizeBytes: 1,
+          source: "tags",
+          title: "Old Local Title"
+        }
+      ],
+      version: 1
+    } satisfies MusicLibraryIndex);
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].matchedBy, "isrc");
+    assert.equal(matches[0].matchedTrack?.relativePath, "Old/Old File.mp3");
   });
 });
 
@@ -137,7 +372,7 @@ test("standard matching uses shared path token normalization", async (t) => {
       id: "track-ampersand",
       isrc: "USABC7654321"
     } satisfies BackupTrack;
-    const matches = await matchNavidromeTracksWithIndex([spotifyTrack], {
+    const matches = await matchMusicLibraryTracksWithIndex([spotifyTrack], {
       generatedAt: new Date(0).toISOString(),
       libraryPath: "/music",
       tracks: [
@@ -162,7 +397,7 @@ test("standard matching uses shared path token normalization", async (t) => {
         }
       ],
       version: 1
-    } satisfies NavidromeLibraryIndex);
+    } satisfies MusicLibraryIndex);
 
     assert.equal(matches[0].exists, true);
     assert.equal(matches[0].needsMove, true);
@@ -184,7 +419,7 @@ test("standard matching finds indexed album variants but keeps Spotify naming ca
       id: "track-passion",
       isrc: "USABC2345678"
     } satisfies BackupTrack;
-    const matches = await matchNavidromeTracksWithIndex([spotifyTrack], {
+    const matches = await matchMusicLibraryTracksWithIndex([spotifyTrack], {
       generatedAt: new Date(0).toISOString(),
       libraryPath: "/music",
       tracks: [
@@ -209,7 +444,7 @@ test("standard matching finds indexed album variants but keeps Spotify naming ca
         }
       ],
       version: 1
-    } satisfies NavidromeLibraryIndex);
+    } satisfies MusicLibraryIndex);
 
     assert.equal(matches[0].exists, true);
     assert.equal(matches[0].needsMove, true);
@@ -233,7 +468,7 @@ test("matching finds repeated live album suffixes without marking files missing"
       name: "Firm Foundation (He Won't) / Great Are You Lord - Live From Europe",
       trackNumber: 1
     } satisfies BackupTrack;
-    const matches = await matchNavidromeTracksWithIndex([spotifyTrack], {
+    const matches = await matchMusicLibraryTracksWithIndex([spotifyTrack], {
       generatedAt: new Date(0).toISOString(),
       libraryPath: "/music",
       tracks: [
@@ -257,7 +492,7 @@ test("matching finds repeated live album suffixes without marking files missing"
         }
       ],
       version: 1
-    } satisfies NavidromeLibraryIndex);
+    } satisfies MusicLibraryIndex);
 
     assert.equal(matches[0].exists, true);
     assert.equal(matches[0].needsMove, true);
@@ -281,7 +516,7 @@ test("matching finds existing artist title matches across album folders", async 
       name: "Firm Foundation (He Won't) - Live From Europe",
       trackNumber: 4
     } satisfies BackupTrack;
-    const matches = await matchNavidromeTracksWithIndex([spotifyTrack], {
+    const matches = await matchMusicLibraryTracksWithIndex([spotifyTrack], {
       generatedAt: new Date(0).toISOString(),
       libraryPath: "/music",
       tracks: [
@@ -305,7 +540,7 @@ test("matching finds existing artist title matches across album folders", async 
         }
       ],
       version: 1
-    } satisfies NavidromeLibraryIndex);
+    } satisfies MusicLibraryIndex);
 
     assert.equal(matches[0].exists, true);
     assert.equal(matches[0].needsMove, true);
@@ -321,7 +556,7 @@ test("matching finds moved artist-title files without tag duration or track numb
     const libraryPath = await mkdtemp(
       path.join(tmpdir(), "spotifybu-library-")
     );
-    const previousLibraryPath = process.env.NAVIDROME_LIBRARY_PATH;
+    const previousLibraryPath = process.env.MUSIC_LIBRARY_PATH;
     const relativePath = "Loose Downloads/Marilyn Manson - Tainted Love.mp3";
     const filePath = path.join(libraryPath, ...relativePath.split("/"));
     const spotifyTrack = {
@@ -337,12 +572,12 @@ test("matching finds moved artist-title files without tag duration or track numb
       trackNumber: 17
     } satisfies BackupTrack;
 
-    process.env.NAVIDROME_LIBRARY_PATH = libraryPath;
+    process.env.MUSIC_LIBRARY_PATH = libraryPath;
     t.after(async () => {
       if (typeof previousLibraryPath === "string") {
-        process.env.NAVIDROME_LIBRARY_PATH = previousLibraryPath;
+        process.env.MUSIC_LIBRARY_PATH = previousLibraryPath;
       } else {
-        delete process.env.NAVIDROME_LIBRARY_PATH;
+        delete process.env.MUSIC_LIBRARY_PATH;
       }
 
       await rm(libraryPath, {
@@ -356,8 +591,8 @@ test("matching finds moved artist-title files without tag duration or track numb
     });
     await writeFile(filePath, "not real audio", "utf8");
 
-    await scanNavidromeLibraryIndex();
-    const index = await readCurrentNavidromeLibraryIndex();
+    await scanMusicLibraryIndex();
+    const index = await readCurrentMusicLibraryIndex();
     assert.ok(index);
     const indexedTrack = index.tracks[0];
 
@@ -365,7 +600,7 @@ test("matching finds moved artist-title files without tag duration or track numb
     assert.equal(indexedTrack.artist, "Marilyn Manson");
     assert.equal(indexedTrack.title, "Tainted Love");
 
-    const matches = await matchNavidromeTracksWithIndex([spotifyTrack], index);
+    const matches = await matchMusicLibraryTracksWithIndex([spotifyTrack], index);
 
     assert.equal(matches[0].exists, true);
     assert.equal(matches[0].needsMove, true);
@@ -382,17 +617,17 @@ test("deleting a library track removes the file and index entry", async (t) => {
     const libraryPath = await mkdtemp(
       path.join(tmpdir(), "spotifybu-library-")
     );
-    const previousLibraryPath = process.env.NAVIDROME_LIBRARY_PATH;
+    const previousLibraryPath = process.env.MUSIC_LIBRARY_PATH;
     const relativePath = "Example Artist/Example Artist - Example Record (2026)/01 - Opening.mp3";
     const filePath = path.join(libraryPath, ...relativePath.split("/"));
     const indexPath = path.join(libraryPath, ".spotifybu", "library-index.json");
 
-    process.env.NAVIDROME_LIBRARY_PATH = libraryPath;
+    process.env.MUSIC_LIBRARY_PATH = libraryPath;
     t.after(async () => {
       if (typeof previousLibraryPath === "string") {
-        process.env.NAVIDROME_LIBRARY_PATH = previousLibraryPath;
+        process.env.MUSIC_LIBRARY_PATH = previousLibraryPath;
       } else {
-        delete process.env.NAVIDROME_LIBRARY_PATH;
+        delete process.env.MUSIC_LIBRARY_PATH;
       }
 
       await rm(libraryPath, {
@@ -432,15 +667,15 @@ test("deleting a library track removes the file and index entry", async (t) => {
             }
           ],
           version: 1
-        } satisfies NavidromeLibraryIndex,
+        } satisfies MusicLibraryIndex,
         null,
         2
       )}\n`,
       "utf8"
     );
 
-    const result = await deleteNavidromeLibraryTrack(relativePath);
-    const index = await readCurrentNavidromeLibraryIndex();
+    const result = await deleteMusicLibraryTrack(relativePath);
+    const index = await readCurrentMusicLibraryIndex();
 
     assert.equal(result.deleted, true);
     assert.equal(result.removedFromIndex, true);
@@ -454,7 +689,7 @@ test("matching finds moved title-only files with artist context in the path", as
     const libraryPath = await mkdtemp(
       path.join(tmpdir(), "spotifybu-library-")
     );
-    const previousLibraryPath = process.env.NAVIDROME_LIBRARY_PATH;
+    const previousLibraryPath = process.env.MUSIC_LIBRARY_PATH;
     const relativePath = "Marilyn Manson/Lest We Forget/Tainted Love.mp3";
     const filePath = path.join(libraryPath, ...relativePath.split("/"));
     const spotifyTrack = {
@@ -470,12 +705,12 @@ test("matching finds moved title-only files with artist context in the path", as
       trackNumber: 17
     } satisfies BackupTrack;
 
-    process.env.NAVIDROME_LIBRARY_PATH = libraryPath;
+    process.env.MUSIC_LIBRARY_PATH = libraryPath;
     t.after(async () => {
       if (typeof previousLibraryPath === "string") {
-        process.env.NAVIDROME_LIBRARY_PATH = previousLibraryPath;
+        process.env.MUSIC_LIBRARY_PATH = previousLibraryPath;
       } else {
-        delete process.env.NAVIDROME_LIBRARY_PATH;
+        delete process.env.MUSIC_LIBRARY_PATH;
       }
 
       await rm(libraryPath, {
@@ -489,8 +724,8 @@ test("matching finds moved title-only files with artist context in the path", as
     });
     await writeFile(filePath, "not real audio", "utf8");
 
-    await scanNavidromeLibraryIndex();
-    const index = await readCurrentNavidromeLibraryIndex();
+    await scanMusicLibraryIndex();
+    const index = await readCurrentMusicLibraryIndex();
     assert.ok(index);
     const indexedTrack = index.tracks[0];
 
@@ -498,7 +733,7 @@ test("matching finds moved title-only files with artist context in the path", as
     assert.equal(indexedTrack.artist, undefined);
     assert.equal(indexedTrack.title, "Tainted Love");
 
-    const matches = await matchNavidromeTracksWithIndex([spotifyTrack], index);
+    const matches = await matchMusicLibraryTracksWithIndex([spotifyTrack], index);
 
     assert.equal(matches[0].exists, true);
     assert.equal(matches[0].needsMove, true);
@@ -520,7 +755,7 @@ test("matching accepts comma-joined local artist tags", async (t) => {
       name: "Firm Foundation (He Won't)",
       trackNumber: 4
     } satisfies BackupTrack;
-    const matches = await matchNavidromeTracksWithIndex([spotifyTrack], {
+    const matches = await matchMusicLibraryTracksWithIndex([spotifyTrack], {
       generatedAt: new Date(0).toISOString(),
       libraryPath: "/music",
       tracks: [
@@ -544,7 +779,7 @@ test("matching accepts comma-joined local artist tags", async (t) => {
         }
       ],
       version: 1
-    } satisfies NavidromeLibraryIndex);
+    } satisfies MusicLibraryIndex);
 
     assert.equal(matches[0].exists, true);
     assert.equal(matches[0].needsMove, true);
@@ -556,17 +791,17 @@ test("library index parses standard folders when parent artist stripped trailing
     const libraryPath = await mkdtemp(
       path.join(tmpdir(), "spotifybu-library-")
     );
-    const previousLibraryPath = process.env.NAVIDROME_LIBRARY_PATH;
+    const previousLibraryPath = process.env.MUSIC_LIBRARY_PATH;
     const relativePath =
       "Journey Worship Co/Journey Worship Co. - Come to the Lord (2021)/Journey Worship Co. - Come to the Lord (2021) - 01 - Come to the Lord.mp3";
     const filePath = path.join(libraryPath, ...relativePath.split("/"));
 
-    process.env.NAVIDROME_LIBRARY_PATH = libraryPath;
+    process.env.MUSIC_LIBRARY_PATH = libraryPath;
     t.after(async () => {
       if (typeof previousLibraryPath === "string") {
-        process.env.NAVIDROME_LIBRARY_PATH = previousLibraryPath;
+        process.env.MUSIC_LIBRARY_PATH = previousLibraryPath;
       } else {
-        delete process.env.NAVIDROME_LIBRARY_PATH;
+        delete process.env.MUSIC_LIBRARY_PATH;
       }
 
       await rm(libraryPath, {
@@ -580,8 +815,8 @@ test("library index parses standard folders when parent artist stripped trailing
     });
     await writeFile(filePath, "not real audio", "utf8");
 
-    await scanNavidromeLibraryIndex();
-    const index = await readCurrentNavidromeLibraryIndex();
+    await scanMusicLibraryIndex();
+    const index = await readCurrentMusicLibraryIndex();
     const track = index?.tracks[0];
 
     assert.equal(index?.tracks.length, 1);
@@ -622,13 +857,13 @@ async function withOrganizeSettings(
   run: () => Promise<void>
 ) {
   const previousConfigDirectory = process.env.SPOTIFYBU_CONFIG_DIR;
-  const previousLibraryPath = process.env.NAVIDROME_LIBRARY_PATH;
+  const previousLibraryPath = process.env.MUSIC_LIBRARY_PATH;
   const configDirectory = await mkdtemp(
     path.join(tmpdir(), "spotifybu-organize-")
   );
 
   process.env.SPOTIFYBU_CONFIG_DIR = configDirectory;
-  delete process.env.NAVIDROME_LIBRARY_PATH;
+  delete process.env.MUSIC_LIBRARY_PATH;
 
   if (settings) {
     await writeFile(
@@ -646,9 +881,9 @@ async function withOrganizeSettings(
     }
 
     if (typeof previousLibraryPath === "string") {
-      process.env.NAVIDROME_LIBRARY_PATH = previousLibraryPath;
+      process.env.MUSIC_LIBRARY_PATH = previousLibraryPath;
     } else {
-      delete process.env.NAVIDROME_LIBRARY_PATH;
+      delete process.env.MUSIC_LIBRARY_PATH;
     }
 
     await rm(configDirectory, {

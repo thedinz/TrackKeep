@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  nextNavidromeAutoScanRunAt,
-  normalizeNavidromeAutoScanSettings
-} from "./navidrome-auto-scan.ts";
+  nextMusicLibraryAutoScanRunAt,
+  normalizeMusicLibraryAutoScanSettings
+} from "./music-library-auto-scan.ts";
 
 test("normalizes auto scan time and timezone settings", () => {
   assert.deepEqual(
-    normalizeNavidromeAutoScanSettings(
+    normalizeMusicLibraryAutoScanSettings(
       {
         enabled: false,
         time: "03:00",
@@ -29,7 +29,7 @@ test("normalizes auto scan time and timezone settings", () => {
 
 test("falls back when auto scan settings are invalid", () => {
   assert.deepEqual(
-    normalizeNavidromeAutoScanSettings(
+    normalizeMusicLibraryAutoScanSettings(
       {
         enabled: true,
         time: "03:00",
@@ -51,7 +51,7 @@ test("falls back when auto scan settings are invalid", () => {
 
 test("schedules the next daily run in the configured timezone", () => {
   assert.equal(
-    nextNavidromeAutoScanRunAt(
+    nextMusicLibraryAutoScanRunAt(
       "03:00",
       "America/New_York",
       new Date("2026-06-26T05:00:00.000Z")
@@ -60,7 +60,7 @@ test("schedules the next daily run in the configured timezone", () => {
   );
 
   assert.equal(
-    nextNavidromeAutoScanRunAt(
+    nextMusicLibraryAutoScanRunAt(
       "03:00",
       "America/New_York",
       new Date("2026-06-26T08:00:00.000Z")

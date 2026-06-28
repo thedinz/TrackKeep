@@ -13,14 +13,13 @@ import {
 import path from "path";
 import { promisify } from "util";
 import {
-  buildNavidromeTrackFileBase,
-  ensureNavidromeTargetDirectory,
-  getNavidromeLibraryPath,
-  planNavidromeAlbumFolders,
-  recordNavidromeAlbumFolders,
-  upsertNavidromeLibraryIndexTrack,
-  type NavidromeLibraryIndexSummary
-} from "@/lib/navidrome";
+  ensureMusicLibraryTargetDirectory,
+  getMusicLibraryPath,
+  prepareMusicLibraryTrackFileDestination,
+  recordMusicLibraryAlbumFolders,
+  upsertMusicLibraryIndexTrack,
+  type MusicLibraryIndexSummary
+} from "@/lib/music-library";
 import { getSpotifyBuDatabase } from "@/lib/database";
 import {
   isUnresolvedSpotifyLocalBackupTrack,
@@ -190,7 +189,7 @@ export type AuthorizedProviderDownloadResult = {
   diagnosticId: string;
   destinationPath: string;
   format: DownloadFormat;
-  libraryIndex?: NavidromeLibraryIndexSummary;
+  libraryIndex?: MusicLibraryIndexSummary;
   providerId: DownloadProviderId;
   quality: DownloadQuality;
   provenancePath?: string;
@@ -1005,10 +1004,10 @@ async function downloadAuthorizedProviderTrackInner(
 
     validateTrack(request.track);
 
-    const libraryPath = getNavidromeLibraryPath();
+    const libraryPath = getMusicLibraryPath();
 
     if (!libraryPath) {
-      throw new Error("NAVIDROME_LIBRARY_PATH is not configured.");
+      throw new Error("MUSIC_LIBRARY_PATH is not configured.");
     }
 
     const source = resolveProviderSource(providerId, request.sourceUrl);
@@ -1041,27 +1040,20 @@ async function downloadAuthorizedProviderTrackInner(
       trackPosition: request.track.position
     });
 
-    stage = "planning destination";
-    const [folderPlan] = await planNavidromeAlbumFolders([request.track]);
-
-    if (!folderPlan) {
-      throw new Error("Could not plan a Navidrome destination for this track.");
-    }
-
     stage = "preparing destination";
-    await recordNavidromeAlbumFolders([request.track]);
-    const targetDirectory = await ensureNavidromeTargetDirectory(
-      relativePathSegments(folderPlan.relativePath)
+    await recordMusicLibraryAlbumFolders([request.track]);
+    const destination = await prepareMusicLibraryTrackFileDestination(
+      request.track,
+      format
     );
-    const fileBase = await buildNavidromeTrackFileBase(request.track);
     stagingDirectory = await createDownloadStagingDirectory(libraryPath);
     const outputTemplate = path.join(
       /* turbopackIgnore: true */ stagingDirectory,
-      `${fileBase}.%(ext)s`
+      `${destination.fileBase}.%(ext)s`
     );
     const beforePaths = await matchingOutputPaths(
       stagingDirectory,
-      fileBase
+      destination.fileBase
     );
 
     stage = "running yt-dlp";
@@ -1086,16 +1078,14 @@ async function downloadAuthorizedProviderTrackInner(
 
     stage = "moving file to library";
     const finalPath = await moveStagedDownloadToTarget({
-      fileBase,
-      format,
-      stagedPath,
-      targetDirectory
+      desiredTargetPath: destination.absolutePath,
+      stagedPath
     });
 
-    let libraryIndex: NavidromeLibraryIndexSummary | undefined;
+    let libraryIndex: MusicLibraryIndexSummary | undefined;
     stage = "updating library index";
     try {
-      libraryIndex = await upsertNavidromeLibraryIndexTrack(finalPath);
+      libraryIndex = await upsertMusicLibraryIndexTrack(finalPath);
     } catch (error) {
       console.warn("[spotifybu.provider-download] could not update library index", {
         diagnosticId,
@@ -1905,7 +1895,7 @@ function stripHtmlEntities(value: string) {
 }
 
 async function createDownloadStagingDirectory(libraryPath: string) {
-  const stagingRoot = await ensureNavidromeTargetDirectory(stagingRootSegments);
+  const stagingRoot = await ensureMusicLibraryTargetDirectory(stagingRootSegments);
   const stagingDirectory = path.join(
     /* turbopackIgnore: true */ stagingRoot,
     `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
@@ -1920,20 +1910,12 @@ async function createDownloadStagingDirectory(libraryPath: string) {
 }
 
 async function moveStagedDownloadToTarget({
-  fileBase,
-  format,
-  stagedPath,
-  targetDirectory
+  desiredTargetPath,
+  stagedPath
 }: {
-  fileBase: string;
-  format: DownloadFormat;
+  desiredTargetPath: string;
   stagedPath: string;
-  targetDirectory: string;
 }) {
-  const desiredTargetPath = path.join(
-    /* turbopackIgnore: true */ targetDirectory,
-    `${fileBase}.${format}`
-  );
   const targetPath = await nextAvailableFilePath(desiredTargetPath);
 
   await rename(stagedPath, targetPath);
@@ -2006,7 +1988,7 @@ async function cleanupStaleProviderTempFiles() {
     return;
   }
 
-  const libraryPath = getNavidromeLibraryPath();
+  const libraryPath = getMusicLibraryPath();
 
   if (!libraryPath) {
     return;
@@ -2467,7 +2449,7 @@ async function recordProviderDownload(entry: ProviderDownloadLogEntry) {
   log.downloads.push(entry);
   log.updatedAt = now;
 
-  const logDirectory = await ensureNavidromeTargetDirectory([".spotifybu"]);
+  const logDirectory = await ensureMusicLibraryTargetDirectory([".spotifybu"]);
   const logPath = path.join(
     /* turbopackIgnore: true */ logDirectory,
     "provider-downloads.json"
@@ -2540,7 +2522,7 @@ async function purgeProviderDownloadAttemptLog(normalizedRelativePath: string) {
 }
 
 async function writeProviderDownloadLog(log: ProviderDownloadLog) {
-  const logDirectory = await ensureNavidromeTargetDirectory([".spotifybu"]);
+  const logDirectory = await ensureMusicLibraryTargetDirectory([".spotifybu"]);
   const logPath = path.join(
     /* turbopackIgnore: true */ logDirectory,
     "provider-downloads.json"
@@ -2550,7 +2532,7 @@ async function writeProviderDownloadLog(log: ProviderDownloadLog) {
 }
 
 async function writeProviderDownloadAttemptLog(log: ProviderDownloadAttemptLog) {
-  const logDirectory = await ensureNavidromeTargetDirectory([".spotifybu"]);
+  const logDirectory = await ensureMusicLibraryTargetDirectory([".spotifybu"]);
   const logPath = path.join(
     /* turbopackIgnore: true */ logDirectory,
     "provider-download-attempts.json"
@@ -2580,7 +2562,7 @@ async function recordProviderDownloadAttempt(
 }
 
 async function readProviderDownloadLog(): Promise<ProviderDownloadLog> {
-  const libraryPath = getNavidromeLibraryPath();
+  const libraryPath = getMusicLibraryPath();
 
   if (!libraryPath) {
     return emptyProviderDownloadLog();
@@ -2615,7 +2597,7 @@ function emptyProviderDownloadLog(): ProviderDownloadLog {
 }
 
 async function readProviderDownloadAttemptLog(): Promise<ProviderDownloadAttemptLog> {
-  const libraryPath = getNavidromeLibraryPath();
+  const libraryPath = getMusicLibraryPath();
 
   if (!libraryPath) {
     return emptyProviderDownloadAttemptLog();
@@ -2673,10 +2655,6 @@ function providerBulkDownloadJobId() {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown error.";
-}
-
-function relativePathSegments(value: string) {
-  return value.replace(/\\/g, "/").split("/").filter(Boolean);
 }
 
 function toLibraryRelativePath(libraryPath: string, filePath: string) {

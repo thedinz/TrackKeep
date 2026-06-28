@@ -1,6 +1,6 @@
 # SpotifyBU 1.4.0
 
-SpotifyBU 1.4.0 adds the canonical organize scheme for staged Navidrome files.
+SpotifyBU 1.4.0 adds the canonical organize scheme for staged music library files.
 
 ## Added
 

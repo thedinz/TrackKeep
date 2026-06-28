@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { getAppInfo } from "@/lib/app-info";
-import { ensureNavidromeAutoScanScheduler } from "@/lib/navidrome-auto-scan";
+import { ensureMusicLibraryAutoScanScheduler } from "@/lib/music-library-auto-scan";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  ensureNavidromeAutoScanScheduler();
+  ensureMusicLibraryAutoScanScheduler();
 
   return NextResponse.json(getAppInfo(), {
     headers: {

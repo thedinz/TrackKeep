@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { matchNavidromeTracks } from "@/lib/navidrome";
+import { matchMusicLibraryTracks } from "@/lib/music-library";
 import type { BackupTrack } from "@/lib/spotify";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
   if (!tracks) {
     return NextResponse.json(
       {
-        error: "Send Spotify tracks before matching the Navidrome library."
+        error: "Send Spotify tracks before matching the music library."
       },
       {
         status: 400
@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json(
     {
-      libraryMatches: await matchNavidromeTracks(tracks)
+      libraryMatches: await matchMusicLibraryTracks(tracks)
     },
     {
       headers: {

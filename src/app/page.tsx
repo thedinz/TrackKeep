@@ -61,14 +61,14 @@ type SpotifyAuthConfigResponse = {
   spotifyClientConfigured: boolean;
 };
 
-type NavidromeLibraryStatus = {
+type MusicLibraryStatus = {
   configured: boolean;
   exists: boolean;
   libraryPath?: string;
   message: string;
-  navidromeUrl?: string;
+  musicLibraryUrl?: string;
   readable: boolean;
-  server: NavidromeServerStatus;
+  server: MusicServerStatus;
   state:
     | "not_configured"
     | "missing"
@@ -80,10 +80,10 @@ type NavidromeLibraryStatus = {
   writable: boolean;
 };
 
-type NavidromeServerStatus = {
+type MusicServerStatus = {
   configured: boolean;
   message: string;
-  navidromeUrl: string;
+  musicLibraryUrl: string;
   requested?: boolean;
   scanCount?: number;
   scanning?: boolean;
@@ -95,7 +95,7 @@ type NavidromeServerStatus = {
     | "error";
 };
 
-type NavidromeIndexSkip = {
+type MusicLibraryIndexSkip = {
   kind: "directory" | "file";
   reason: string;
   relativePath: string;
@@ -160,7 +160,7 @@ type IndexedTrack = {
 type LibraryMatch = {
   exists: boolean;
   expectedFolder: string;
-  matchedBy?: "duration" | "isrc" | "metadata";
+  matchedBy?: "duration" | "isrc" | "metadata" | "spotify_identity";
   matchedTrack?: IndexedTrack;
   needsMove: boolean;
   recommendedRelativePath?: string;
@@ -168,22 +168,22 @@ type LibraryMatch = {
   trackPosition: number;
 };
 
-type NavidromeLibraryIndexSummary = {
+type MusicLibraryIndexSummary = {
   generatedAt?: string;
   libraryPath?: string;
   namingSchemeChanged?: boolean;
-  navidromeScan?: NavidromeServerStatus;
+  musicLibraryScan?: MusicServerStatus;
   skippedCount?: number;
-  skippedExamples?: NavidromeIndexSkip[];
+  skippedExamples?: MusicLibraryIndexSkip[];
   stale: boolean;
   trackCount: number;
 };
 
-type NavidromeLibraryIndexScanStatus = {
+type MusicLibraryIndexScanStatus = {
   completedAt?: string;
   error?: string;
   id?: string;
-  index?: NavidromeLibraryIndexSummary;
+  index?: MusicLibraryIndexSummary;
   startedAt?: string;
   state: "failed" | "idle" | "running" | "succeeded";
 };
@@ -269,8 +269,8 @@ type ResolveResponse = {
 };
 
 type LibraryIndexResponse = {
-  index: NavidromeLibraryIndexSummary;
-  scan?: NavidromeLibraryIndexScanStatus;
+  index: MusicLibraryIndexSummary;
+  scan?: MusicLibraryIndexScanStatus;
 };
 
 type LibraryMatchesResponse = {
@@ -295,12 +295,12 @@ type LibraryTrackDeleteResponse = LibraryIndexResponse & {
   removedFromIndex: boolean;
 };
 
-type NavidromePlaylistSyncResponse = {
-  navidromePlaylist: {
+type MusicLibraryPlaylistSyncResponse = {
+  musicLibraryPlaylist: {
     addedCount?: number;
     appendedCount?: number;
     matchedCount: number;
-    mode: NavidromePlaylistSyncMode;
+    mode: MusicLibraryPlaylistSyncMode;
     name: string;
     playlistId?: string;
     removedCount?: number;
@@ -315,14 +315,14 @@ type NavidromePlaylistSyncResponse = {
   };
 };
 
-type NavidromePlaylistSyncMode = "append" | "fullsync" | "replace";
+type MusicLibraryPlaylistSyncMode = "append" | "fullsync" | "replace";
 
 type ProviderDownloadPayload = {
   bytesWritten?: number;
   diagnosticId?: string;
   destinationPath: string;
   format: string;
-  libraryIndex?: NavidromeLibraryIndexSummary;
+  libraryIndex?: MusicLibraryIndexSummary;
   providerId: string;
   quality: string;
   provenancePath?: string;
@@ -545,9 +545,9 @@ export default function Home() {
   const [folderPlans, setFolderPlans] = useState<FolderPlan[]>([]);
   const [showAllFolderPlans, setShowAllFolderPlans] = useState(false);
   const [libraryIndex, setLibraryIndex] =
-    useState<NavidromeLibraryIndexSummary | null>(null);
+    useState<MusicLibraryIndexSummary | null>(null);
   const [libraryIndexScan, setLibraryIndexScan] =
-    useState<NavidromeLibraryIndexScanStatus | null>(null);
+    useState<MusicLibraryIndexScanStatus | null>(null);
   const [libraryMatches, setLibraryMatches] = useState<LibraryMatch[]>([]);
   const [query, setQuery] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
@@ -565,18 +565,18 @@ export default function Home() {
   >(null);
   const [libraryOrganizeProgress, setLibraryOrganizeProgress] =
     useState<string | null>(null);
-  const [isCreatingNavidromePlaylist, setIsCreatingNavidromePlaylist] =
+  const [isCreatingMusicLibraryPlaylist, setIsCreatingMusicLibraryPlaylist] =
     useState(false);
-  const [navidromePlaylistSyncMode, setNavidromePlaylistSyncMode] =
-    useState<NavidromePlaylistSyncMode>("replace");
+  const [musicLibraryPlaylistSyncMode, setMusicLibraryPlaylistSyncMode] =
+    useState<MusicLibraryPlaylistSyncMode>("replace");
   const [isSearchingProvider, setIsSearchingProvider] = useState(false);
   const [isDownloadingProvider, setIsDownloadingProvider] = useState(false);
   const [isDownloadingBulkProvider, setIsDownloadingBulkProvider] =
     useState(false);
   const [isPreviewingBulkProvider, setIsPreviewingBulkProvider] =
     useState(false);
-  const [navidromeStatus, setNavidromeStatus] =
-    useState<NavidromeLibraryStatus | null>(null);
+  const [musicLibraryStatus, setMusicLibraryStatus] =
+    useState<MusicLibraryStatus | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
   const [downloadTrackPosition, setDownloadTrackPosition] = useState("");
   const [downloadQuality, setDownloadQuality] = useState("320");
@@ -607,10 +607,10 @@ export default function Home() {
     useState<ProviderBulkDownloadJob | null>(null);
   const [libraryOrganizeMessage, setLibraryOrganizeMessage] =
     useState<string | null>(null);
-  const [navidromePlaylistMessage, setNavidromePlaylistMessage] =
+  const [musicLibraryPlaylistMessage, setMusicLibraryPlaylistMessage] =
     useState<string | null>(null);
-  const [navidromePlaylistSkipped, setNavidromePlaylistSkipped] = useState<
-    NavidromePlaylistSyncResponse["navidromePlaylist"]["skipped"]
+  const [musicLibraryPlaylistSkipped, setMusicLibraryPlaylistSkipped] = useState<
+    MusicLibraryPlaylistSyncResponse["musicLibraryPlaylist"]["skipped"]
   >([]);
 
   const applyLibraryMatches = useCallback(
@@ -710,21 +710,21 @@ export default function Home() {
     }
   }, [session?.user?.id]);
 
-  const loadNavidromeStatus = useCallback(async () => {
+  const loadMusicLibraryStatus = useCallback(async () => {
     try {
-      setNavidromeStatus(
-        await fetchJson<NavidromeLibraryStatus>("/api/navidrome/library")
+      setMusicLibraryStatus(
+        await fetchJson<MusicLibraryStatus>("/api/music-library")
       );
     } catch {
-      setNavidromeStatus({
+      setMusicLibraryStatus({
         configured: false,
         exists: false,
-        message: "SpotifyBU could not check the Navidrome library target.",
+        message: "SpotifyBU could not check the music library target.",
         readable: false,
         server: {
           configured: false,
-          message: "SpotifyBU could not check the Navidrome server API.",
-          navidromeUrl: "",
+          message: "SpotifyBU could not check the music server API.",
+          musicLibraryUrl: "",
           state: "error"
         },
         state: "error",
@@ -747,7 +747,7 @@ export default function Home() {
   const loadLibraryIndex = useCallback(async () => {
     try {
       const response = await fetchJson<LibraryIndexResponse>(
-        "/api/navidrome/library/index"
+        "/api/music-library/index"
       );
       applyLibraryIndexResponse(response);
     } catch {
@@ -778,7 +778,7 @@ export default function Home() {
     }
 
     const response = await postJson<LibraryMatchesResponse>(
-      "/api/navidrome/library/matches",
+      "/api/music-library/matches",
       {
         tracks: nextTracks
       }
@@ -799,7 +799,7 @@ export default function Home() {
 
       if (
         !window.confirm(
-          `Delete this backed-up file from the Navidrome library?\n\n${normalizedRelativePath}`
+          `Delete this backed-up file from the music library?\n\n${normalizedRelativePath}`
         )
       ) {
         return;
@@ -811,7 +811,7 @@ export default function Home() {
 
       try {
         const response = await deleteJson<LibraryTrackDeleteResponse>(
-          "/api/navidrome/library/tracks",
+          "/api/music-library/tracks",
           {
             relativePath: normalizedRelativePath,
             tracks
@@ -903,14 +903,14 @@ export default function Home() {
     []
   );
 
-  const scanNavidromeLibrary = useCallback(async () => {
+  const scanMusicLibrary = useCallback(async () => {
     setIsScanningLibrary(true);
     setRequestError(null);
     let scanStarted = false;
 
     try {
       const response = await postJson<LibraryIndexResponse>(
-        "/api/navidrome/library/index",
+        "/api/music-library/index",
         {}
       );
       applyLibraryIndexResponse(response);
@@ -1014,7 +1014,7 @@ export default function Home() {
         );
 
         const response = await postJson<LibraryOrganizeResponse>(
-          "/api/navidrome/library/organize",
+          "/api/music-library/organize",
           {
             maxMoves: libraryOrganizeBatchSize,
             trackPositions: batchTrackPositions,
@@ -1063,24 +1063,24 @@ export default function Home() {
     }
   }, [applyLibraryMatches, libraryMatches, refreshLibraryMatches, tracks]);
 
-  const createNavidromePlaylist = useCallback(async () => {
+  const createMusicLibraryPlaylist = useCallback(async () => {
     if (!selectedPlaylistId) {
       return;
     }
 
-    setIsCreatingNavidromePlaylist(true);
-    setNavidromePlaylistMessage(null);
-    setNavidromePlaylistSkipped([]);
+    setIsCreatingMusicLibraryPlaylist(true);
+    setMusicLibraryPlaylistMessage(null);
+    setMusicLibraryPlaylistSkipped([]);
     setRequestError(null);
 
     try {
-      const response = await postJson<NavidromePlaylistSyncResponse>(
-        `/api/spotify/playlists/${selectedPlaylistId}/navidrome`,
+      const response = await postJson<MusicLibraryPlaylistSyncResponse>(
+        `/api/spotify/playlists/${selectedPlaylistId}/music-library`,
         {
-          mode: navidromePlaylistSyncMode
+          mode: musicLibraryPlaylistSyncMode
         }
       );
-      const result = response.navidromePlaylist;
+      const result = response.musicLibraryPlaylist;
       const action =
         result.mode === "append" && result.updated
           ? `Appended ${numberFormatter.format(result.appendedCount ?? 0)} tracks to`
@@ -1106,18 +1106,18 @@ export default function Home() {
         ? ` ${numberFormatter.format(result.skippedCount)} unmatched tracks were skipped.`
         : "";
 
-      setNavidromePlaylistMessage(
-        `${action} Navidrome playlist "${result.name}" with ${numberFormatter.format(
+      setMusicLibraryPlaylistMessage(
+        `${action} music library playlist "${result.name}" with ${numberFormatter.format(
           result.songCount
         )} tracks.${fullSyncDetails ? ` ${fullSyncDetails}.` : ""}${skipped}`
       );
-      setNavidromePlaylistSkipped(result.skipped);
+      setMusicLibraryPlaylistSkipped(result.skipped);
     } catch (error) {
       setRequestError(errorMessage(error));
     } finally {
-      setIsCreatingNavidromePlaylist(false);
+      setIsCreatingMusicLibraryPlaylist(false);
     }
-  }, [navidromePlaylistSyncMode, selectedPlaylistId]);
+  }, [musicLibraryPlaylistSyncMode, selectedPlaylistId]);
 
   const searchProviderTrack = useCallback(async (track: BackupTrack) => {
     setDownloadTrackPosition(String(track.position));
@@ -1390,8 +1390,8 @@ export default function Home() {
     setLibraryOrganizeMessage(null);
     clearBackupWorkflowState();
     setRequestError(null);
-    setNavidromePlaylistMessage(null);
-    setNavidromePlaylistSkipped([]);
+    setMusicLibraryPlaylistMessage(null);
+    setMusicLibraryPlaylistSkipped([]);
     setResolvedSource(null);
     setTracks([]);
     setFolderPlans([]);
@@ -1405,8 +1405,8 @@ export default function Home() {
     (playlistId: string) => {
       if (playlistId !== selectedPlaylistId) {
         setLibraryOrganizeMessage(null);
-        setNavidromePlaylistMessage(null);
-        setNavidromePlaylistSkipped([]);
+        setMusicLibraryPlaylistMessage(null);
+        setMusicLibraryPlaylistSkipped([]);
         clearBackupWorkflowState();
         setRequestError(null);
         setSelectedPlaylist(null);
@@ -1464,7 +1464,7 @@ export default function Home() {
       void loadSpotifyAuthConfig();
       void loadLibraryIndex();
       void loadSession();
-      void loadNavidromeStatus();
+      void loadMusicLibraryStatus();
     }
 
     void loadAuthenticatedStartupData();
@@ -1475,7 +1475,7 @@ export default function Home() {
   }, [
     loadAppInfo,
     loadLibraryIndex,
-    loadNavidromeStatus,
+    loadMusicLibraryStatus,
     loadSession,
     loadSpotifyAuthConfig
   ]);
@@ -1490,7 +1490,7 @@ export default function Home() {
     async function pollLibraryIndexScan() {
       try {
         const response = await fetchJson<LibraryIndexResponse>(
-          "/api/navidrome/library/index"
+          "/api/music-library/index"
         );
 
         if (cancelled) {
@@ -1506,7 +1506,7 @@ export default function Home() {
 
         if (response.scan?.state === "failed") {
           setRequestError(
-            response.scan.error ?? "SpotifyBU could not scan the Navidrome library."
+            response.scan.error ?? "SpotifyBU could not scan the music library."
           );
         }
       } catch (error) {
@@ -1555,8 +1555,8 @@ export default function Home() {
       setFolderPlans([]);
       setShowAllFolderPlans(false);
       setLibraryMatches([]);
-      setNavidromePlaylistMessage(null);
-      setNavidromePlaylistSkipped([]);
+      setMusicLibraryPlaylistMessage(null);
+      setMusicLibraryPlaylistSkipped([]);
       clearBackupWorkflowState();
       return;
     }
@@ -1567,8 +1567,8 @@ export default function Home() {
     async function loadTracks() {
       setIsLoadingTracks(true);
       setLibraryOrganizeMessage(null);
-      setNavidromePlaylistMessage(null);
-      setNavidromePlaylistSkipped([]);
+      setMusicLibraryPlaylistMessage(null);
+      setMusicLibraryPlaylistSkipped([]);
       clearBackupWorkflowState();
       setRequestError(null);
       setSelectedPlaylist(null);
@@ -1679,14 +1679,14 @@ export default function Home() {
   );
   const spotifyConnectDisabled =
     session?.spotifyClientConfigured === false || !spotifyAuthConfig;
-  const navidromeReady = navidromeStatus?.state === "ready";
-  const navidromeApiReady =
-    navidromeStatus?.server.state === "ready" ||
-    navidromeStatus?.server.state === "scan_requested";
-  const navidromeStatusLabel = navidromeStatus
-    ? navidromeStatusMessage(navidromeStatus)
+  const musicLibraryReady = musicLibraryStatus?.state === "ready";
+  const musicServerApiReady =
+    musicLibraryStatus?.server.state === "ready" ||
+    musicLibraryStatus?.server.state === "scan_requested";
+  const musicLibraryStatusLabel = musicLibraryStatus
+    ? musicLibraryStatusMessage(musicLibraryStatus)
     : "Checking library target";
-  const navidromeServerStatusLabel = navidromeStatus?.server.message;
+  const musicServerStatusLabel = musicLibraryStatus?.server.message;
   const libraryMatchesByPosition = useMemo(
     () =>
       new Map(
@@ -1786,17 +1786,17 @@ export default function Home() {
     }
   }, [downloadTrackOptions, downloadTrackPosition]);
   const canOrganizeLibrary =
-    navidromeReady && tracks.length > 0 && hasUsableLibraryIndex;
+    musicLibraryReady && tracks.length > 0 && hasUsableLibraryIndex;
   const organizingTrackPositionSet = new Set(organizingTrackPositions);
   const isAnyOrganizationRunning =
     isOrganizingLibrary || organizingTrackPositions.length > 0;
-  const canCreateNavidromePlaylist =
+  const canCreateMusicLibraryPlaylist =
     sourceKind === "playlist" &&
     Boolean(selectedPlaylistId) &&
     tracks.length > 0 &&
-    navidromeApiReady &&
+    musicServerApiReady &&
     !isLoadingTracks &&
-    !isCreatingNavidromePlaylist;
+    !isCreatingMusicLibraryPlaylist;
   const selectedDownloadTrack =
     downloadTrackOptions.find(
       (track) => String(track.position) === downloadTrackPosition
@@ -1820,7 +1820,7 @@ export default function Home() {
       : null;
   const canDownloadProvider =
     Boolean(
-      navidromeReady &&
+      musicLibraryReady &&
         selectedDownloadTrack &&
         selectedProviderDownloadSource?.sourceUrl &&
         downloadRightsConfirmed &&
@@ -1832,7 +1832,7 @@ export default function Home() {
     !isPreviewingBulkProvider;
   const canDownloadBulkProvider =
     Boolean(
-      navidromeReady &&
+      musicLibraryReady &&
         bulkCandidatePreview?.downloadableCount &&
         downloadRightsConfirmed &&
         downloadBulkRiskAccepted &&
@@ -1843,7 +1843,7 @@ export default function Home() {
     );
   const canPreviewBulkProvider =
     Boolean(
-      navidromeReady &&
+      musicLibraryReady &&
         downloadTrackOptions.length &&
         !isDownloadingProvider &&
         !isSearchingProvider &&
@@ -2325,19 +2325,19 @@ export default function Home() {
         </div>
       ) : null}
 
-      {navidromePlaylistMessage ? (
+      {musicLibraryPlaylistMessage ? (
         <div className="alert success">
           <CheckCircle2 size={18} />
-          <span>{navidromePlaylistMessage}</span>
+          <span>{musicLibraryPlaylistMessage}</span>
         </div>
       ) : null}
 
-      {navidromePlaylistSkipped.length ? (
+      {musicLibraryPlaylistSkipped.length ? (
         <div className="alert skipped-review">
           <ShieldCheck size={18} />
           <span>
             <strong>Skipped tracks</strong>
-            {navidromePlaylistSkipped.slice(0, 8).map((track) => (
+            {musicLibraryPlaylistSkipped.slice(0, 8).map((track) => (
               <span
                 className="skipped-review-row"
                 key={`${track.trackPosition}-${track.trackName}`}
@@ -2345,9 +2345,9 @@ export default function Home() {
                 {track.trackPosition}. {track.trackName} - {track.reason}
               </span>
             ))}
-            {navidromePlaylistSkipped.length > 8 ? (
+            {musicLibraryPlaylistSkipped.length > 8 ? (
               <span className="skipped-review-row">
-                {numberFormatter.format(navidromePlaylistSkipped.length - 8)}{" "}
+                {numberFormatter.format(musicLibraryPlaylistSkipped.length - 8)}{" "}
                 more skipped tracks
               </span>
             ) : null}
@@ -2362,10 +2362,10 @@ export default function Home() {
         </div>
       ) : null}
 
-      {navidromeStatus && !navidromeReady ? (
+      {musicLibraryStatus && !musicLibraryReady ? (
         <div className="alert">
           <HardDrive size={18} />
-          <span>{navidromeStatus.message}</span>
+          <span>{musicLibraryStatus.message}</span>
         </div>
       ) : null}
 
@@ -2583,10 +2583,10 @@ export default function Home() {
                 ) : (
                   <span className="muted">
                     {sourceKind === "track-list"
-                      ? "Paste Spotify song URLs, URIs, or IDs to preview Navidrome targets."
+                      ? "Paste Spotify song URLs, URIs, or IDs to preview music library targets."
                       : `Paste a Spotify ${sourceKindLabel(
                           sourceKind
-                        ).toLowerCase()} URL or ID to preview its Navidrome target.`}
+                        ).toLowerCase()} URL or ID to preview its music library target.`}
                   </span>
                 )}
               </div>
@@ -2606,15 +2606,15 @@ export default function Home() {
                 {sourceKind === "playlist" ? (
                   <>
                     <label className="sync-mode-control">
-                      <span className="stat-label">Navidrome</span>
+                      <span className="stat-label">Music library</span>
                       <select
-                        disabled={isCreatingNavidromePlaylist}
+                        disabled={isCreatingMusicLibraryPlaylist}
                         onChange={(event) =>
-                          setNavidromePlaylistSyncMode(
-                            parseNavidromePlaylistSyncMode(event.target.value)
+                          setMusicLibraryPlaylistSyncMode(
+                            parseMusicLibraryPlaylistSyncMode(event.target.value)
                           )
                         }
-                        value={navidromePlaylistSyncMode}
+                        value={musicLibraryPlaylistSyncMode}
                       >
                         <option value="replace">Replace</option>
                         <option value="append">Append</option>
@@ -2623,23 +2623,23 @@ export default function Home() {
                     </label>
                     <button
                       className={`command secondary ${
-                        canCreateNavidromePlaylist ? "" : "disabled"
+                        canCreateMusicLibraryPlaylist ? "" : "disabled"
                       }`}
-                      disabled={!canCreateNavidromePlaylist}
-                      onClick={() => void createNavidromePlaylist()}
+                      disabled={!canCreateMusicLibraryPlaylist}
+                      onClick={() => void createMusicLibraryPlaylist()}
                       title={
-                        navidromeApiReady
-                          ? "Sync this playlist in Navidrome"
-                          : "Connect Navidrome API credentials to create playlists"
+                        musicServerApiReady
+                          ? "Sync this playlist in the music library"
+                          : "Connect music server API credentials to create playlists"
                       }
                       type="button"
                     >
-                      {isCreatingNavidromePlaylist ? (
+                      {isCreatingMusicLibraryPlaylist ? (
                         <Loader2 className="spin" size={18} />
                       ) : (
                         <ListMusic size={18} />
                       )}
-                      Sync Navidrome
+                      Sync library
                     </button>
                   </>
                 ) : null}
@@ -2719,7 +2719,7 @@ export default function Home() {
                     <span className="stat-label">Album organization targets</span>
                     <p>
                       Existing backups, files to organize, and download
-                      destinations by Navidrome album folder.
+                      destinations by music library album folder.
                     </p>
                   </div>
                   <div className="folder-plan-list">
@@ -2811,7 +2811,7 @@ export default function Home() {
                   <div className="backup-workflow-header">
                     <div>
                       <span className="stat-label">Missing backup actions</span>
-                      <h3>Back up tracks that are not in Navidrome</h3>
+                      <h3>Back up tracks that are not in the music library</h3>
                       <p>
                         The track table below shows coverage. These controls only
                         target tracks that are still missing from the library index.
@@ -2874,7 +2874,7 @@ export default function Home() {
                         <p>
                           Choose a missing Spotify track, search provider
                           candidates, review the match, then stage it into
-                          Navidrome.
+                          the music library.
                         </p>
                       </div>
                       <label className="provider-field">
@@ -3377,7 +3377,7 @@ export default function Home() {
                     <span className="stat-label">Track backup status</span>
                     <p>
                       Every Spotify track in the selected source, with its current
-                      Navidrome match status.
+                      music library match status.
                     </p>
                   </div>
                   <div className="track-table">
@@ -3469,7 +3469,7 @@ export default function Home() {
                 <HardDrive size={20} />
                 <div>
                   <h2>Backup Sources</h2>
-                  <p className="muted">Spotify to Navidrome backup path</p>
+                  <p className="muted">Spotify to local backup path</p>
                 </div>
               </div>
             </div>
@@ -3486,42 +3486,42 @@ export default function Home() {
               <div className="provider-row">
                 <span
                   className={`provider-icon ${
-                    navidromeReady ? "green" : "amber"
+                    musicLibraryReady ? "green" : "amber"
                   }`}
                 >
-                  {navidromeReady ? (
+                  {musicLibraryReady ? (
                     <CheckCircle2 size={18} />
                   ) : (
                     <HardDrive size={18} />
                   )}
                 </span>
                 <span>
-                  <h3>Navidrome library</h3>
-                  <p>{navidromeStatusLabel}</p>
+                  <h3>Music library</h3>
+                  <p>{musicLibraryStatusLabel}</p>
                 </span>
               </div>
-              {navidromeServerStatusLabel ? (
+              {musicServerStatusLabel ? (
                 <div className="provider-row">
                   <span
                     className={`provider-icon ${
-                      navidromeStatus?.server.state === "ready" ||
-                      navidromeStatus?.server.state === "scan_requested"
+                      musicLibraryStatus?.server.state === "ready" ||
+                      musicLibraryStatus?.server.state === "scan_requested"
                         ? "green"
-                        : navidromeStatus?.server.state === "not_configured"
+                        : musicLibraryStatus?.server.state === "not_configured"
                           ? "teal"
                           : "amber"
                     }`}
                   >
-                    {navidromeStatus?.server.state === "ready" ||
-                    navidromeStatus?.server.state === "scan_requested" ? (
+                    {musicLibraryStatus?.server.state === "ready" ||
+                    musicLibraryStatus?.server.state === "scan_requested" ? (
                       <CheckCircle2 size={18} />
                     ) : (
                       <HardDrive size={18} />
                     )}
                   </span>
                   <span>
-                    <h3>Navidrome server</h3>
-                    <p>{navidromeServerStatusLabel}</p>
+                    <h3>Music server</h3>
+                    <p>{musicServerStatusLabel}</p>
                   </span>
                 </div>
               ) : null}
@@ -3537,8 +3537,8 @@ export default function Home() {
                   <h3>Library index</h3>
                   <p>{libraryIndexLabel}</p>
                   {libraryIndexScanLabel ? <p>{libraryIndexScanLabel}</p> : null}
-                  {libraryIndex?.navidromeScan ? (
-                    <p>{libraryIndex.navidromeScan.message}</p>
+                  {libraryIndex?.musicLibraryScan ? (
+                    <p>{libraryIndex.musicLibraryScan.message}</p>
                   ) : null}
                   {libraryIndex?.skippedExamples?.length ? (
                     <p>
@@ -3550,8 +3550,8 @@ export default function Home() {
                   ) : null}
                   <button
                     className="icon-command index-command"
-                    disabled={!navidromeReady || isScanningLibrary}
-                    onClick={() => void scanNavidromeLibrary()}
+                    disabled={!musicLibraryReady || isScanningLibrary}
+                    onClick={() => void scanMusicLibrary()}
                     title="Run Library Index"
                     type="button"
                   >
@@ -3615,10 +3615,10 @@ export default function Home() {
                   </div>
                 ))}
               </div>
-              {navidromeStatus?.libraryPath ? (
+              {musicLibraryStatus?.libraryPath ? (
                 <div className="path-readout">
                   <span className="stat-label">Music folder</span>
-                  <span>{navidromeStatus.libraryPath}</span>
+                  <span>{musicLibraryStatus.libraryPath}</span>
                 </div>
               ) : null}
             </div>
@@ -3679,7 +3679,7 @@ export default function Home() {
                 <ShieldCheck size={20} />
                 <div>
                 <h2>Backup Pipeline</h2>
-                <p className="muted">Spotify source to Navidrome-ready files</p>
+                <p className="muted">Spotify source to music-library-ready files</p>
                 </div>
               </div>
             </div>
@@ -3690,7 +3690,7 @@ export default function Home() {
               </div>
               <div className="signal locked">
                 <h3>Local backup target</h3>
-                <p className="muted">{navidromeStatusLabel}</p>
+                <p className="muted">{musicLibraryStatusLabel}</p>
               </div>
               <div className="signal waiting">
                 <h3>Missing track sourcing</h3>
@@ -4115,9 +4115,9 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong.";
 }
 
-function parseNavidromePlaylistSyncMode(
+function parseMusicLibraryPlaylistSyncMode(
   value: string
-): NavidromePlaylistSyncMode {
+): MusicLibraryPlaylistSyncMode {
   if (value === "append" || value === "fullsync") {
     return value;
   }
@@ -4209,7 +4209,7 @@ function playlistMissingBackupTitle(missingTrackCount: number) {
 function renderLibraryMatch(
   track: BackupTrack,
   match: LibraryMatch | undefined,
-  libraryIndex: NavidromeLibraryIndexSummary | null,
+  libraryIndex: MusicLibraryIndexSummary | null,
   options: {
     deleteDisabled?: boolean;
     isOrganizing?: boolean;
@@ -4357,13 +4357,13 @@ function formatShortDate(value: string) {
   }).format(parsedDate);
 }
 
-function navidromeStatusMessage(status: NavidromeLibraryStatus) {
+function musicLibraryStatusMessage(status: MusicLibraryStatus) {
   if (status.state === "ready") {
-    return "Ready for Navidrome library staging";
+    return "Ready for music library staging";
   }
 
   if (status.state === "not_configured") {
-    return "Set NAVIDROME_LIBRARY_PATH";
+    return "Set MUSIC_LIBRARY_PATH";
   }
 
   if (status.state === "not_writable") {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { matchNavidromeTracks, planNavidromeAlbumFolders } from "@/lib/navidrome";
+import { matchMusicLibraryTracks, planMusicLibraryAlbumFolders } from "@/lib/music-library";
 import { getSpotifySession, withSessionCookie } from "@/lib/server-session";
 import {
   getAlbum,
@@ -50,8 +50,8 @@ export async function GET(request: NextRequest) {
       const trackIds = parseSpotifyTrackIds(input);
       const tracks = await getTracks(session.token, trackIds);
       const [folderPlans, libraryMatches] = await Promise.all([
-        planNavidromeAlbumFolders(tracks),
-        matchNavidromeTracks(tracks)
+        planMusicLibraryAlbumFolders(tracks),
+        matchMusicLibraryTracks(tracks)
       ]);
 
       return withSessionCookie(
@@ -78,8 +78,8 @@ export async function GET(request: NextRequest) {
     if (spotifyItemType === "track") {
       const track = await getTrack(session.token, id);
       const [folderPlans, libraryMatches] = await Promise.all([
-        planNavidromeAlbumFolders([track]),
-        matchNavidromeTracks([track])
+        planMusicLibraryAlbumFolders([track]),
+        matchMusicLibraryTracks([track])
       ]);
 
       return withSessionCookie(
@@ -109,8 +109,8 @@ export async function GET(request: NextRequest) {
       getAlbumTracks(session.token, id)
     ]);
     const [folderPlans, libraryMatches] = await Promise.all([
-      planNavidromeAlbumFolders(tracks),
-      matchNavidromeTracks(tracks)
+      planMusicLibraryAlbumFolders(tracks),
+      matchMusicLibraryTracks(tracks)
     ]);
 
     return withSessionCookie(

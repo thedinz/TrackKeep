@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { getAppAuthStatus } from "@/lib/app-auth";
 import {
-  getNavidromeAutoScanStatus,
-  updateNavidromeAutoScanSettings,
-  type NavidromeAutoScanSettingsUpdate
-} from "@/lib/navidrome-auto-scan";
+  getMusicLibraryAutoScanStatus,
+  updateMusicLibraryAutoScanSettings,
+  type MusicLibraryAutoScanSettingsUpdate
+} from "@/lib/music-library-auto-scan";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -21,7 +21,7 @@ export async function GET() {
 
   return NextResponse.json(
     {
-      autoScan: await getNavidromeAutoScanStatus()
+      autoScan: await getMusicLibraryAutoScanStatus()
     },
     {
       headers: {
@@ -42,12 +42,12 @@ export async function POST(request: Request) {
   }
 
   const body = (await request.json().catch(() => ({}))) as {
-    autoScan?: NavidromeAutoScanSettingsUpdate;
+    autoScan?: MusicLibraryAutoScanSettingsUpdate;
   };
 
   try {
     return NextResponse.json({
-      autoScan: await updateNavidromeAutoScanSettings(body.autoScan ?? {}),
+      autoScan: await updateMusicLibraryAutoScanSettings(body.autoScan ?? {}),
       ok: true
     });
   } catch (error) {
@@ -56,7 +56,7 @@ export async function POST(request: Request) {
         error:
           error instanceof Error
             ? error.message
-            : "Could not update Navidrome auto scan settings."
+            : "Could not update music library auto scan settings."
       },
       {
         status: 400

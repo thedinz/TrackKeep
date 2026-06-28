@@ -1,21 +1,21 @@
 import { NextResponse } from "next/server";
 import {
-  emptyNavidromeLibraryIndexSummary,
-  getCachedNavidromeLibraryIndexSummary,
-  getNavidromeLibraryIndexSummary,
-  getNavidromeLibraryIndexScanStatus,
-  startNavidromeLibraryIndexScan
-} from "@/lib/navidrome";
-import { ensureNavidromeAutoScanScheduler } from "@/lib/navidrome-auto-scan";
+  emptyMusicLibraryIndexSummary,
+  getCachedMusicLibraryIndexSummary,
+  getMusicLibraryIndexSummary,
+  getMusicLibraryIndexScanStatus,
+  startMusicLibraryIndexScan
+} from "@/lib/music-library";
+import { ensureMusicLibraryAutoScanScheduler } from "@/lib/music-library-auto-scan";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 900;
 
 export async function GET() {
-  ensureNavidromeAutoScanScheduler();
+  ensureMusicLibraryAutoScanScheduler();
 
-  const scan = getNavidromeLibraryIndexScanStatus();
+  const scan = getMusicLibraryIndexScanStatus();
 
   if (scan.state !== "idle") {
     return libraryIndexResponse({
@@ -26,7 +26,7 @@ export async function GET() {
 
   try {
     return libraryIndexResponse({
-      index: await getNavidromeLibraryIndexSummary(),
+      index: await getMusicLibraryIndexSummary(),
       scan
     });
   } catch (error) {
@@ -38,7 +38,7 @@ export async function GET() {
         error:
           error instanceof Error
             ? error.message
-            : "SpotifyBU could not read the Navidrome library index.",
+            : "SpotifyBU could not read the music library index.",
         state: "failed"
       }
     });
@@ -46,10 +46,10 @@ export async function GET() {
 }
 
 export async function POST() {
-  ensureNavidromeAutoScanScheduler();
+  ensureMusicLibraryAutoScanScheduler();
 
   try {
-    const scan = startNavidromeLibraryIndexScan();
+    const scan = startMusicLibraryIndexScan();
     const index =
       scan.index ??
       getCachedIndexSummary();
@@ -64,7 +64,7 @@ export async function POST() {
         error:
           error instanceof Error
             ? error.message
-            : "SpotifyBU could not scan the Navidrome library."
+            : "SpotifyBU could not scan the music library."
       },
       {
         status: 400
@@ -75,7 +75,7 @@ export async function POST() {
 
 function libraryIndexResponse(body: {
   index: ReturnType<typeof getCachedIndexSummary>;
-  scan: ReturnType<typeof getNavidromeLibraryIndexScanStatus>;
+  scan: ReturnType<typeof getMusicLibraryIndexScanStatus>;
 }) {
   return NextResponse.json(body, {
     headers: {
@@ -86,7 +86,7 @@ function libraryIndexResponse(body: {
 
 function getCachedIndexSummary() {
   return (
-    getCachedNavidromeLibraryIndexSummary() ??
-    emptyNavidromeLibraryIndexSummary
+    getCachedMusicLibraryIndexSummary() ??
+    emptyMusicLibraryIndexSummary
   );
 }
