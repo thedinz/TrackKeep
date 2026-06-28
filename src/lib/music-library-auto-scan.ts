@@ -1,37 +1,37 @@
 import { mkdir, readFile, rename, writeFile } from "fs/promises";
 import path from "path";
 import {
-  getNavidromeLibraryIndexScanStatus,
-  startNavidromeLibraryIndexScan,
-  type NavidromeLibraryIndexScanStatus
-} from "./navidrome";
+  getMusicLibraryIndexScanStatus,
+  startMusicLibraryIndexScan,
+  type MusicLibraryIndexScanStatus
+} from "./music-library";
 
-export type NavidromeAutoScanSettings = {
+export type MusicLibraryAutoScanSettings = {
   enabled: boolean;
   time: string;
   timeZone: string;
 };
 
-export type NavidromeAutoScanSettingsUpdate =
-  Partial<NavidromeAutoScanSettings>;
+export type MusicLibraryAutoScanSettingsUpdate =
+  Partial<MusicLibraryAutoScanSettings>;
 
-export type NavidromeAutoScanStatus = {
+export type MusicLibraryAutoScanStatus = {
   lastScheduledAt?: string;
   nextRunAt?: string;
-  scan: NavidromeLibraryIndexScanStatus;
-  settings: NavidromeAutoScanSettings;
+  scan: MusicLibraryIndexScanStatus;
+  settings: MusicLibraryAutoScanSettings;
 };
 
-type StoredNavidromeAutoScanSettings = NavidromeAutoScanSettings & {
+type StoredMusicLibraryAutoScanSettings = MusicLibraryAutoScanSettings & {
   updatedAt: string;
   version: 1;
 };
 
-const defaultNavidromeAutoScanSettings = {
+const defaultMusicLibraryAutoScanSettings = {
   enabled: false,
   time: "03:00",
   timeZone: "UTC"
-} satisfies NavidromeAutoScanSettings;
+} satisfies MusicLibraryAutoScanSettings;
 const maxTimeoutMs = 2_147_483_647;
 
 let autoScanInitialized = false;
@@ -39,30 +39,30 @@ let autoScanTimer: ReturnType<typeof setTimeout> | null = null;
 let lastScheduledAt: string | undefined;
 let nextRunAt: string | undefined;
 
-export async function getNavidromeAutoScanStatus() {
-  const settings = await loadNavidromeAutoScanSettings();
-  ensureNavidromeAutoScanScheduler(settings);
+export async function getMusicLibraryAutoScanStatus() {
+  const settings = await loadMusicLibraryAutoScanSettings();
+  ensureMusicLibraryAutoScanScheduler(settings);
 
-  return navidromeAutoScanStatus(settings);
+  return musicLibraryAutoScanStatus(settings);
 }
 
-export async function updateNavidromeAutoScanSettings(
-  update: NavidromeAutoScanSettingsUpdate
+export async function updateMusicLibraryAutoScanSettings(
+  update: MusicLibraryAutoScanSettingsUpdate
 ) {
-  const current = await loadNavidromeAutoScanSettings();
-  const next = normalizeNavidromeAutoScanSettings(current, update);
+  const current = await loadMusicLibraryAutoScanSettings();
+  const next = normalizeMusicLibraryAutoScanSettings(current, update);
 
-  await saveNavidromeAutoScanSettings(next);
-  scheduleNavidromeAutoScan(next);
+  await saveMusicLibraryAutoScanSettings(next);
+  scheduleMusicLibraryAutoScan(next);
 
-  return navidromeAutoScanStatus(next);
+  return musicLibraryAutoScanStatus(next);
 }
 
-export function ensureNavidromeAutoScanScheduler(
-  settings?: NavidromeAutoScanSettings
+export function ensureMusicLibraryAutoScanScheduler(
+  settings?: MusicLibraryAutoScanSettings
 ) {
   if (settings) {
-    scheduleNavidromeAutoScan(settings);
+    scheduleMusicLibraryAutoScan(settings);
     autoScanInitialized = true;
     return;
   }
@@ -72,46 +72,46 @@ export function ensureNavidromeAutoScanScheduler(
   }
 
   autoScanInitialized = true;
-  void loadNavidromeAutoScanSettings()
-    .then(scheduleNavidromeAutoScan)
+  void loadMusicLibraryAutoScanSettings()
+    .then(scheduleMusicLibraryAutoScan)
     .catch((error) => {
-      console.warn("[spotifybu.navidrome-auto-scan] scheduler init failed", {
+      console.warn("[spotifybu.music-library-auto-scan] scheduler init failed", {
         error: errorMessage(error)
       });
     });
 }
 
-export async function loadNavidromeAutoScanSettings() {
+export async function loadMusicLibraryAutoScanSettings() {
   try {
-    const contents = await readFile(getNavidromeAutoScanSettingsPath(), "utf8");
-    const parsed = JSON.parse(contents) as Partial<StoredNavidromeAutoScanSettings>;
+    const contents = await readFile(getMusicLibraryAutoScanSettingsPath(), "utf8");
+    const parsed = JSON.parse(contents) as Partial<StoredMusicLibraryAutoScanSettings>;
 
-    return normalizeNavidromeAutoScanSettings(
-      defaultNavidromeAutoScanSettings,
+    return normalizeMusicLibraryAutoScanSettings(
+      defaultMusicLibraryAutoScanSettings,
       parsed
     );
   } catch (error) {
     if (isNodeError(error) && error.code === "ENOENT") {
-      return defaultNavidromeAutoScanSettings;
+      return defaultMusicLibraryAutoScanSettings;
     }
 
     throw error;
   }
 }
 
-export function normalizeNavidromeAutoScanSettings(
-  fallback: NavidromeAutoScanSettings,
-  partial: NavidromeAutoScanSettingsUpdate | Partial<StoredNavidromeAutoScanSettings>
+export function normalizeMusicLibraryAutoScanSettings(
+  fallback: MusicLibraryAutoScanSettings,
+  partial: MusicLibraryAutoScanSettingsUpdate | Partial<StoredMusicLibraryAutoScanSettings>
 ) {
   return {
     enabled:
       typeof partial.enabled === "boolean" ? partial.enabled : fallback.enabled,
     time: normalizeAutoScanTime(partial.time, fallback.time),
     timeZone: normalizeAutoScanTimeZone(partial.timeZone, fallback.timeZone)
-  } satisfies NavidromeAutoScanSettings;
+  } satisfies MusicLibraryAutoScanSettings;
 }
 
-export function nextNavidromeAutoScanRunAt(
+export function nextMusicLibraryAutoScanRunAt(
   time: string,
   timeZone: string,
   now = new Date()
@@ -143,7 +143,7 @@ export function nextNavidromeAutoScanRunAt(
   );
 }
 
-function scheduleNavidromeAutoScan(settings: NavidromeAutoScanSettings) {
+function scheduleMusicLibraryAutoScan(settings: MusicLibraryAutoScanSettings) {
   if (autoScanTimer) {
     clearTimeout(autoScanTimer);
     autoScanTimer = null;
@@ -155,7 +155,7 @@ function scheduleNavidromeAutoScan(settings: NavidromeAutoScanSettings) {
     return;
   }
 
-  const nextRun = nextNavidromeAutoScanRunAt(settings.time, settings.timeZone);
+  const nextRun = nextMusicLibraryAutoScanRunAt(settings.time, settings.timeZone);
   const delayMs = Math.min(
     Math.max(0, nextRun.getTime() - Date.now()),
     maxTimeoutMs
@@ -163,33 +163,33 @@ function scheduleNavidromeAutoScan(settings: NavidromeAutoScanSettings) {
 
   nextRunAt = nextRun.toISOString();
   autoScanTimer = setTimeout(() => {
-    void runScheduledNavidromeScan().catch((error) => {
-      console.warn("[spotifybu.navidrome-auto-scan] scheduled scan failed", {
+    void runScheduledMusicLibraryScan().catch((error) => {
+      console.warn("[spotifybu.music-library-auto-scan] scheduled scan failed", {
         error: errorMessage(error)
       });
     });
   }, delayMs);
 }
 
-async function runScheduledNavidromeScan() {
-  const settings = await loadNavidromeAutoScanSettings();
+async function runScheduledMusicLibraryScan() {
+  const settings = await loadMusicLibraryAutoScanSettings();
 
   if (!settings.enabled) {
-    scheduleNavidromeAutoScan(settings);
+    scheduleMusicLibraryAutoScan(settings);
     return;
   }
 
   lastScheduledAt = new Date().toISOString();
 
-  if (getNavidromeLibraryIndexScanStatus().state !== "running") {
-    startNavidromeLibraryIndexScan();
+  if (getMusicLibraryIndexScanStatus().state !== "running") {
+    startMusicLibraryIndexScan();
   }
 
-  scheduleNavidromeAutoScan(settings);
+  scheduleMusicLibraryAutoScan(settings);
 }
 
-async function saveNavidromeAutoScanSettings(
-  settings: NavidromeAutoScanSettings
+async function saveMusicLibraryAutoScanSettings(
+  settings: MusicLibraryAutoScanSettings
 ) {
   await mkdir(getConfigDirectory(), {
     recursive: true
@@ -199,21 +199,21 @@ async function saveNavidromeAutoScanSettings(
     ...settings,
     updatedAt: new Date().toISOString(),
     version: 1
-  } satisfies StoredNavidromeAutoScanSettings;
-  const settingsPath = getNavidromeAutoScanSettingsPath();
+  } satisfies StoredMusicLibraryAutoScanSettings;
+  const settingsPath = getMusicLibraryAutoScanSettingsPath();
   const temporaryPath = `${settingsPath}.tmp`;
 
   await writeFile(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
   await rename(temporaryPath, settingsPath);
 }
 
-function navidromeAutoScanStatus(
-  settings: NavidromeAutoScanSettings
-): NavidromeAutoScanStatus {
+function musicLibraryAutoScanStatus(
+  settings: MusicLibraryAutoScanSettings
+): MusicLibraryAutoScanStatus {
   return {
     lastScheduledAt,
     nextRunAt,
-    scan: getNavidromeLibraryIndexScanStatus(),
+    scan: getMusicLibraryIndexScanStatus(),
     settings
   };
 }
@@ -351,8 +351,8 @@ function addLocalDays(
   };
 }
 
-function getNavidromeAutoScanSettingsPath() {
-  return path.join(getConfigDirectory(), "navidrome-auto-scan.json");
+function getMusicLibraryAutoScanSettingsPath() {
+  return path.join(getConfigDirectory(), "music-library-auto-scan.json");
 }
 
 function getConfigDirectory() {

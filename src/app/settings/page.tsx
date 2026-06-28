@@ -32,13 +32,13 @@ type OrganizeSettingsResponse = {
   naming: OrganizeNamingSettings;
 };
 
-type NavidromeAutoScanSettings = {
+type MusicLibraryAutoScanSettings = {
   enabled: boolean;
   time: string;
   timeZone: string;
 };
 
-type NavidromeAutoScanStatus = {
+type MusicLibraryAutoScanStatus = {
   lastScheduledAt?: string;
   nextRunAt?: string;
   scan: {
@@ -47,11 +47,11 @@ type NavidromeAutoScanStatus = {
     startedAt?: string;
     state: "failed" | "idle" | "running" | "succeeded";
   };
-  settings: NavidromeAutoScanSettings;
+  settings: MusicLibraryAutoScanSettings;
 };
 
-type NavidromeAutoScanResponse = {
-  autoScan: NavidromeAutoScanStatus;
+type MusicLibraryAutoScanResponse = {
+  autoScan: MusicLibraryAutoScanStatus;
 };
 
 export default function SettingsPage() {
@@ -60,7 +60,7 @@ export default function SettingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingAuthMode, setIsSavingAuthMode] = useState(false);
   const [isSavingAutoScan, setIsSavingAutoScan] = useState(false);
-  const [autoScan, setAutoScan] = useState<NavidromeAutoScanStatus | null>(null);
+  const [autoScan, setAutoScan] = useState<MusicLibraryAutoScanStatus | null>(null);
   const [namingSettings, setNamingSettings] =
     useState<OrganizeNamingSettings | null>(null);
   const [newPassword, setNewPassword] = useState("");
@@ -90,13 +90,13 @@ export default function SettingsPage() {
         setError("Could not load organize settings.");
       });
 
-    void fetch("/api/navidrome/library/auto-scan")
-      .then(readJson<NavidromeAutoScanResponse>)
+    void fetch("/api/music-library/auto-scan")
+      .then(readJson<MusicLibraryAutoScanResponse>)
       .then((response) => {
         setAutoScan(withBrowserTimeZoneDefault(response.autoScan));
       })
       .catch(() => {
-        setError("Could not load Navidrome auto scan settings.");
+        setError("Could not load music library auto scan settings.");
       });
   }, []);
 
@@ -200,7 +200,7 @@ export default function SettingsPage() {
   );
 
   const updateAutoScanSettings = useCallback(
-    (update: Partial<NavidromeAutoScanSettings>) => {
+    (update: Partial<MusicLibraryAutoScanSettings>) => {
       setAutoScan((current) =>
         current
           ? {
@@ -229,7 +229,7 @@ export default function SettingsPage() {
       setIsSavingAutoScan(true);
 
       try {
-        const response = await fetch("/api/navidrome/library/auto-scan", {
+        const response = await fetch("/api/music-library/auto-scan", {
           body: JSON.stringify({
             autoScan: autoScan.settings
           }),
@@ -238,15 +238,15 @@ export default function SettingsPage() {
           },
           method: "POST"
         });
-        const body = await readJson<NavidromeAutoScanResponse>(response);
+        const body = await readJson<MusicLibraryAutoScanResponse>(response);
 
         setAutoScan(withBrowserTimeZoneDefault(body.autoScan));
-        setSuccess("Navidrome auto scan schedule saved.");
+        setSuccess("Music library auto scan schedule saved.");
       } catch (settingsError) {
         setError(
           settingsError instanceof Error
             ? settingsError.message
-            : "Could not save Navidrome auto scan settings."
+            : "Could not save music library auto scan settings."
         );
       } finally {
         setIsSavingAutoScan(false);
@@ -405,7 +405,7 @@ export default function SettingsPage() {
             <div className="panel-title">
               <Clock size={20} />
               <div>
-                <h2>Navidrome Auto Scan</h2>
+                <h2>Music Library Auto Scan</h2>
                 <p className="muted">Daily library index and server rescan</p>
               </div>
             </div>
@@ -477,7 +477,7 @@ export default function SettingsPage() {
               <SlidersHorizontal size={20} />
               <div>
                 <h2>Organize Scheme</h2>
-                <p className="muted">Choose how SpotifyBU stages organized Navidrome files</p>
+                <p className="muted">Choose how SpotifyBU stages organized music library files</p>
               </div>
             </div>
           </div>
@@ -489,7 +489,7 @@ export default function SettingsPage() {
                   <CheckCircle2 size={18} />
                   <span>
                     SpotifyBU uses one Spotify metadata layout for organized
-                    Navidrome files.
+                    music library files.
                   </span>
                 </div>
 
@@ -552,8 +552,8 @@ async function readJson<T>(response: Response) {
 }
 
 function withBrowserTimeZoneDefault(
-  autoScan: NavidromeAutoScanStatus
-): NavidromeAutoScanStatus {
+  autoScan: MusicLibraryAutoScanStatus
+): MusicLibraryAutoScanStatus {
   const timeZone =
     !autoScan.settings.enabled && autoScan.settings.timeZone === "UTC"
       ? browserTimeZone()
@@ -572,7 +572,7 @@ function browserTimeZone() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
-function autoScanScheduleLabel(autoScan: NavidromeAutoScanStatus) {
+function autoScanScheduleLabel(autoScan: MusicLibraryAutoScanStatus) {
   if (!autoScan.settings.enabled) {
     return "Daily scan is off.";
   }

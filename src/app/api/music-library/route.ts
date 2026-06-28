@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { getNavidromeLibraryStatus, getNavidromeUrl } from "@/lib/navidrome";
+import { getMusicLibraryStatus, getMusicLibraryUrl } from "@/lib/music-library";
 
 export async function GET() {
   try {
-    return NextResponse.json(await getNavidromeLibraryStatus(), {
+    return NextResponse.json(await getMusicLibraryStatus(), {
       headers: {
         "Cache-Control": "no-store"
       }
@@ -12,19 +12,19 @@ export async function GET() {
     const message =
       error instanceof Error
         ? error.message
-        : "SpotifyBU could not check the Navidrome library target.";
+        : "SpotifyBU could not check the music library target.";
 
     return NextResponse.json(
       {
         configured: false,
         exists: false,
         message,
-        navidromeUrl: getNavidromeUrl(),
+        musicLibraryUrl: getMusicLibraryUrl(),
         readable: false,
         server: {
           configured: false,
           message,
-          navidromeUrl: getNavidromeUrl(),
+          musicLibraryUrl: getMusicLibraryUrl(),
           state: "error"
         },
         state: "error",

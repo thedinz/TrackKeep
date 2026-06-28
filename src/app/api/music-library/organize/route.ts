@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { organizeNavidromeMatchedTracks } from "@/lib/navidrome";
+import { organizeMusicLibraryMatchedTracks } from "@/lib/music-library";
 import type { BackupTrack } from "@/lib/spotify";
 
 export async function POST(request: NextRequest) {
@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
   if (!tracks) {
     return NextResponse.json(
       {
-        error: "Send Spotify tracks before organizing matched Navidrome files."
+        error: "Send Spotify tracks before organizing matched music library files."
       },
       {
         status: 400
@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await organizeNavidromeMatchedTracks(tracks, {
+    const result = await organizeMusicLibraryMatchedTracks(tracks, {
       maxMoves: Number.isFinite(maxMoves) ? maxMoves : undefined,
       trackPositions
     });
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
         error:
           error instanceof Error
             ? error.message
-            : "SpotifyBU could not organize matched Navidrome files."
+            : "SpotifyBU could not organize matched music library files."
       },
       {
         status: 400

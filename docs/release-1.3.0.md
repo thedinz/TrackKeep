@@ -1,20 +1,20 @@
 # SpotifyBU 1.3.0
 
-SpotifyBU 1.3.0 adds an explicit full-sync mode for Navidrome playlists.
+SpotifyBU 1.3.0 adds an explicit full-sync mode for music library playlists.
 
 ## Added
 
-- Navidrome playlist sync now includes `Full sync` alongside `Replace` and
+- Music library playlist sync now includes `Full sync` alongside `Replace` and
   `Append`.
-- Full sync removes stale Navidrome playlist entries before adding the current
+- Full sync removes stale music library playlist entries before adding the current
   matched Spotify track order, so tracks removed from Spotify can be removed
-  from the same-named Navidrome playlist too.
+  from the same-named music library playlist too.
 - Full-sync results report stale removals and missing additions in the playlist
   sync confirmation message.
 
 ## Changed
 
-- Navidrome playlist sync API requests now preserve all recognized sync modes
+- Music library playlist sync API requests now preserve all recognized sync modes
   instead of treating unknown non-append values as replace.
 
 ## Verified

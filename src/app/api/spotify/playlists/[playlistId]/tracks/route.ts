@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { matchNavidromeTracks, planNavidromeAlbumFolders } from "@/lib/navidrome";
+import { matchMusicLibraryTracks, planMusicLibraryAlbumFolders } from "@/lib/music-library";
 import { persistPlaylistBackup } from "@/lib/backup-store";
 import { appendDiagnosticLog, diagnosticError } from "@/lib/diagnostics";
 import { getSpotifySession, withSessionCookie } from "@/lib/server-session";
@@ -43,8 +43,8 @@ export async function GET(request: Request, context: RouteContext) {
       (track) => !isUnresolvedSpotifyLocalBackupTrack(track)
     );
     const [folderPlans, libraryMatches] = await Promise.all([
-      planNavidromeAlbumFolders(folderPlanTracks),
-      matchNavidromeTracks(tracks)
+      planMusicLibraryAlbumFolders(folderPlanTracks),
+      matchMusicLibraryTracks(tracks)
     ]);
     const metadataBackup = persistPlaylistBackup({
       playlist: playlistWithTrackTotal,

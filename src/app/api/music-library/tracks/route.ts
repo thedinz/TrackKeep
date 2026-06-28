@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  deleteNavidromeLibraryTrack,
-  matchNavidromeTracks
-} from "@/lib/navidrome";
+  deleteMusicLibraryTrack,
+  matchMusicLibraryTracks
+} from "@/lib/music-library";
 import { purgeProviderDownloadLogsForRelativePath } from "@/lib/providers/download";
 import type { BackupTrack } from "@/lib/spotify";
 
@@ -29,7 +29,7 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    const deleteResult = await deleteNavidromeLibraryTrack(relativePath);
+    const deleteResult = await deleteMusicLibraryTrack(relativePath);
     const providerLogCleanup = deleteResult.deleted
       ? await purgeProviderDownloadLogsForRelativePath(relativePath)
       : {
@@ -37,7 +37,7 @@ export async function DELETE(request: NextRequest) {
           downloadsRemoved: 0
         };
     const libraryMatches = tracks
-      ? await matchNavidromeTracks(tracks)
+      ? await matchMusicLibraryTracks(tracks)
       : undefined;
 
     return NextResponse.json(

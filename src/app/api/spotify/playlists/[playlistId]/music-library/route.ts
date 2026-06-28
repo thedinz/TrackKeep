@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { appendDiagnosticLog, diagnosticError } from "@/lib/diagnostics";
-import { createOrUpdateNavidromePlaylistFromSpotify } from "@/lib/navidrome";
+import { createOrUpdateMusicLibraryPlaylistFromSpotify } from "@/lib/music-library";
 import { getSpotifySession, withSessionCookie } from "@/lib/server-session";
 import { getPlaylist, getPlaylistTracks } from "@/lib/spotify";
-import type { NavidromePlaylistSyncMode } from "@/lib/navidrome";
+import type { MusicLibraryPlaylistSyncMode } from "@/lib/music-library";
 
 type RouteContext = {
   params: Promise<{ playlistId: string }> | { playlistId: string };
@@ -30,20 +30,20 @@ export async function POST(request: Request, context: RouteContext) {
           mode?: unknown;
         }
       | null;
-    const mode: NavidromePlaylistSyncMode = parsePlaylistSyncMode(body?.mode);
+    const mode: MusicLibraryPlaylistSyncMode = parsePlaylistSyncMode(body?.mode);
     const [playlist, tracks] = await Promise.all([
       getPlaylist(session.token, playlistId),
       getPlaylistTracks(session.token, playlistId)
     ]);
-    const navidromePlaylist =
-      await createOrUpdateNavidromePlaylistFromSpotify(playlist, tracks, {
+    const musicLibraryPlaylist =
+      await createOrUpdateMusicLibraryPlaylistFromSpotify(playlist, tracks, {
         mode
       });
 
     return withSessionCookie(
       NextResponse.json(
         {
-          navidromePlaylist
+          musicLibraryPlaylist
         },
         {
           headers: {
@@ -57,10 +57,10 @@ export async function POST(request: Request, context: RouteContext) {
   } catch (error) {
     const params = await context.params;
 
-    await appendDiagnosticLog("spotify.playlist_navidrome.route_failed", {
+    await appendDiagnosticLog("spotify.playlist_music_library.route_failed", {
       error: diagnosticError(error),
       playlistId: params.playlistId,
-      route: "/api/spotify/playlists/[playlistId]/navidrome"
+      route: "/api/spotify/playlists/[playlistId]/music-library"
     });
 
     return withSessionCookie(
@@ -69,7 +69,7 @@ export async function POST(request: Request, context: RouteContext) {
           error:
             error instanceof Error
               ? error.message
-              : "SpotifyBU could not create the Navidrome playlist."
+              : "SpotifyBU could not create the music library playlist."
         },
         {
           status: 400
@@ -81,7 +81,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
 }
 
-function parsePlaylistSyncMode(mode: unknown): NavidromePlaylistSyncMode {
+function parsePlaylistSyncMode(mode: unknown): MusicLibraryPlaylistSyncMode {
   if (mode === "append" || mode === "fullsync") {
     return mode;
   }
