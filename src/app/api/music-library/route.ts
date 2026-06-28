@@ -12,7 +12,7 @@ export async function GET() {
     const message =
       error instanceof Error
         ? error.message
-        : "SpotifyBU could not check the music library target.";
+        : "SpotifyBU could not check the Navidrome music folder.";
 
     return NextResponse.json(
       {
