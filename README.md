@@ -4,7 +4,7 @@ SpotifyBU is a Docker-first web app for turning a Spotify library into a local, 
 
 The point is not to replace local music library search. Your music library already tells you what files exist locally. SpotifyBU uses Spotify as the source-of-truth list, uses local library matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
 
-Current stable release: `1.5.0`. It includes the web UI, local or external-proxy app auth, Spotify OAuth diagnostics, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, music library checks, SpotifyBU organize naming, library indexing, matched-file organization, music library playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
+Current stable release: `1.6.0`. It includes the web UI, local or external-proxy app auth, Spotify OAuth diagnostics, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, music library checks, SpotifyBU organize naming, library indexing, durable Spotify identity tags for downloaded files, matched-file organization, music library playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
 Download the latest stable release from GitHub: https://github.com/thedinz/SpotifyBU/releases/latest
 
@@ -57,14 +57,14 @@ The test image built from the `dev` branch is:
 ghcr.io/thedinz/spotifybu:dev
 ```
 
-Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.5.0-dev.1`; stable releases use normal version tags such as `1.5.0`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
+Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.6.0-dev.1`; stable releases use normal version tags such as `1.6.0`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
 
-For the exact v1.5.0 release, pin one of these tags:
+For the exact v1.6.0 release, pin one of these tags:
 
 ```text
-ghcr.io/thedinz/spotifybu:v1.5.0
-ghcr.io/thedinz/spotifybu:1.5.0
-ghcr.io/thedinz/spotifybu:1.5
+ghcr.io/thedinz/spotifybu:v1.6.0
+ghcr.io/thedinz/spotifybu:1.6.0
+ghcr.io/thedinz/spotifybu:1.6
 ```
 
 Create a folder for SpotifyBU and save this Compose template as `docker-compose.yml`:
