@@ -277,8 +277,20 @@ type LibraryMatchesResponse = {
   libraryMatches: LibraryMatch[];
 };
 
+type MusicLibraryMoveFailure = {
+  code?: string;
+  message: string;
+  sourcePath: string;
+  sourceRelativePath: string;
+  targetPath: string;
+  targetRelativePath: string;
+  trackName: string;
+  trackPosition: number;
+};
+
 type LibraryOrganizeResponse = LibraryIndexResponse & LibraryMatchesResponse & {
   attemptedCount: number;
+  moveFailures: MusicLibraryMoveFailure[];
   movedCount: number;
   remainingMoveCount: number;
   skippedCount: number;
@@ -607,6 +619,9 @@ export default function Home() {
     useState<ProviderBulkDownloadJob | null>(null);
   const [libraryOrganizeMessage, setLibraryOrganizeMessage] =
     useState<string | null>(null);
+  const [libraryOrganizeFailures, setLibraryOrganizeFailures] = useState<
+    MusicLibraryMoveFailure[]
+  >([]);
   const [musicLibraryPlaylistMessage, setMusicLibraryPlaylistMessage] =
     useState<string | null>(null);
   const [musicLibraryPlaylistSkipped, setMusicLibraryPlaylistSkipped] = useState<
@@ -967,12 +982,14 @@ export default function Home() {
       setIsOrganizingLibrary(true);
     }
     setLibraryOrganizeMessage(null);
+    setLibraryOrganizeFailures([]);
     setLibraryOrganizeProgress(null);
     setRequestError(null);
 
     try {
       const attemptedTrackPositions = new Set<number>();
       let latestLibraryMatches = libraryMatches;
+      const moveFailures: MusicLibraryMoveFailure[] = [];
       let totalMovedCount = 0;
       let totalSkippedCount = 0;
       const initialMoveCount = latestLibraryMatches.filter(
@@ -1024,6 +1041,7 @@ export default function Home() {
 
         totalMovedCount += response.movedCount;
         totalSkippedCount += response.skippedCount;
+        moveFailures.push(...(response.moveFailures ?? []));
         latestLibraryMatches = response.libraryMatches;
         setLibraryIndex(response.index);
         applyLibraryMatches(tracks, response.libraryMatches);
@@ -1038,7 +1056,7 @@ export default function Home() {
             (!requestedPositions || requestedPositions.has(match.trackPosition))
         ).length;
         setLibraryOrganizeMessage(
-          `Orginized ${numberFormatter.format(totalMovedCount)} files${
+          `Organized ${numberFormatter.format(totalMovedCount)} files${
             totalSkippedCount
               ? `; ${numberFormatter.format(totalSkippedCount)} could not be moved`
               : ""
@@ -1050,6 +1068,7 @@ export default function Home() {
               : ""
           }.`
         );
+        setLibraryOrganizeFailures(moveFailures.slice(0, 5));
       }
     } catch (error) {
       setRequestError(errorMessage(error));
@@ -2319,9 +2338,27 @@ export default function Home() {
       ) : null}
 
       {libraryOrganizeMessage ? (
-        <div className="alert success">
-          <CheckCircle2 size={18} />
-          <span>{libraryOrganizeMessage}</span>
+        <div
+          className={`alert ${
+            libraryOrganizeFailures.length ? "skipped-review" : "success"
+          }`}
+        >
+          {libraryOrganizeFailures.length ? (
+            <CircleAlert size={18} />
+          ) : (
+            <CheckCircle2 size={18} />
+          )}
+          <span>
+            <span>{libraryOrganizeMessage}</span>
+            {libraryOrganizeFailures.map((failure) => (
+              <span
+                className="skipped-review-row"
+                key={`${failure.trackPosition}:${failure.sourcePath}:${failure.targetPath}`}
+              >
+                {formatMoveFailure(failure)}
+              </span>
+            ))}
+          </span>
         </div>
       ) : null}
 
@@ -2661,7 +2698,7 @@ export default function Home() {
                     ? `Organizing ${
                         libraryOrganizeProgress ?? ""
                       }`.trim()
-                    : "Orginize"}
+                    : "Organize"}
                 </button>
               </div>
             </div>
@@ -2747,7 +2784,7 @@ export default function Home() {
                                   plan.organizeTrackPositions
                                 )
                               }
-                              title={`Orginize files into ${plan.relativePath}`}
+                              title={`Organize files into ${plan.relativePath}`}
                               type="button"
                             >
                               {plan.organizeTrackPositions.some((position) =>
@@ -2760,7 +2797,7 @@ export default function Home() {
                               {plan.organizeTrackPositions.some((position) =>
                                 organizingTrackPositionSet.has(position)
                               )
-                                ? "Orginizing"
+                                ? "Organizing"
                                 : plan.statusLabel}
                             </button>
                           ) : (
@@ -4115,6 +4152,12 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong.";
 }
 
+function formatMoveFailure(failure: MusicLibraryMoveFailure) {
+  const code = failure.code ? `${failure.code}: ` : "";
+
+  return `${failure.trackPosition}. ${failure.trackName} - ${code}${failure.message} Source: ${failure.sourcePath} Target: ${failure.targetPath}`;
+}
+
 function parseMusicLibraryPlaylistSyncMode(
   value: string
 ): MusicLibraryPlaylistSyncMode {
@@ -4279,7 +4322,7 @@ function renderLibraryMatch(
             className="track-status move actionable"
             disabled={options.organizeDisabled}
             onClick={options.onOrganize}
-            title={`Orginize into ${
+            title={`Organize into ${
               match.recommendedRelativePath ?? match.expectedFolder
             }`}
             type="button"
@@ -4289,7 +4332,7 @@ function renderLibraryMatch(
             ) : (
               <RotateCcw size={13} />
             )}
-            {options.isOrganizing ? "Orginizing" : "Orginize"}
+            {options.isOrganizing ? "Organizing" : "Organize"}
           </button>
         </span>
         <span className="track-note">
@@ -4302,7 +4345,7 @@ function renderLibraryMatch(
   return (
     <span className="track-status-stack">
       <span className="track-status-actions">
-        <span className="track-status exists">Orginized</span>
+        <span className="track-status exists">Organized</span>
         {renderDeleteLibraryTrackButton(match, options)}
       </span>
       <span className="track-note">
@@ -4518,7 +4561,7 @@ function folderPlanStatus(
   if (organizeCount) {
     return {
       status: "organize",
-      statusLabel: "Orginize"
+      statusLabel: "Organize"
     };
   }
 
@@ -4532,7 +4575,7 @@ function folderPlanStatus(
   if (backedUpCount) {
     return {
       status: "ready",
-      statusLabel: "Orginized"
+      statusLabel: "Organized"
     };
   }
 

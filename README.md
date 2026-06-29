@@ -88,8 +88,11 @@ services:
       NAVIDROME_USERNAME: your-navidrome-username
       NAVIDROME_PASSWORD: your-navidrome-password
       NEXT_PUBLIC_APP_URL: http://127.0.0.1:3000
+      PGID: "1000"
+      PUID: "1000"
       SPOTIFYBU_APP_SECRET: change-this-to-a-long-random-value
       SPOTIFYBU_AUTH_MODE: internal
+      SPOTIFYBU_CHOWN_MUSIC: "false"
       SPOTIFYBU_CONFIG_DIR: /config
       SPOTIFY_CLIENT_ID: your-spotify-client-id
     volumes:
@@ -142,6 +145,9 @@ Set these values before starting the app:
 | `NEXT_PUBLIC_APP_URL` | No | Public URL for SpotifyBU. Set this for reverse-proxy installs. If blank, SpotifyBU derives it from `X-Forwarded-Host`/`X-Forwarded-Proto` or the request host. |
 | `SPOTIFYBU_APP_SECRET` | Yes | Long random value used to sign SpotifyBU's own login sessions. This is not your Spotify app Client Secret. |
 | `SPOTIFYBU_DATABASE_PATH` | No | Optional SQLite path. Defaults to `<SPOTIFYBU_CONFIG_DIR>/spotifybu.sqlite`. |
+| `PUID` | No | User ID used by the SpotifyBU process inside the container. Defaults to `1000` for compatibility with older images. On Unraid, set this to match NaviClean/Navidrome, commonly `99`. |
+| `PGID` | No | Group ID used by the SpotifyBU process inside the container. Defaults to `1000` for compatibility with older images. On Unraid, set this to match NaviClean/Navidrome, commonly `100`. |
+| `SPOTIFYBU_CHOWN_MUSIC` | No | Advanced opt-in repair switch. Set `true` only if you intentionally want container startup to recursively chown the mounted music library to `PUID:PGID`. Defaults to `false`. |
 | `SPOTIFYBU_SECURE_COOKIES` | No | Set `true` for HTTPS reverse-proxy installs. Defaults to `false` in the Docker example for Unraid-style HTTP installs. |
 | `SPOTIFYBU_AUTH_MODE` | No | Set `external` when Authentik or another trusted reverse proxy protects SpotifyBU. Defaults to `internal`, which keeps the built-in login page enabled. |
 | `NAVIDROME_MUSIC_PATH` | Yes | Host path to the Navidrome music folder. |
@@ -170,9 +176,27 @@ Inside the container:
 - `MUSIC_LIBRARY_PATH` is set to `/music`.
 - `SPOTIFYBU_CONFIG_DIR` is set to `/config`.
 
-At startup, the container makes `/config` writable by UID/GID `1000`, then runs
-the app as that user. On Linux hosts, make sure the mapped Navidrome music
-folder is writable by UID/GID `1000`.
+At startup, the container creates `/config`, makes it writable by `PUID:PGID`,
+then runs the app as that UID/GID. Existing installs that do not set `PUID` or
+`PGID` keep the previous `1000:1000` behavior. SpotifyBU does not recursively
+change ownership of `/music` by default. On large libraries, that can be slow and
+risky, so `SPOTIFYBU_CHOWN_MUSIC=true` is an explicit repair option only.
+
+### Unraid Shared Library Permissions
+
+The Unraid template is included at [unraid/spotifybu.xml](unraid/spotifybu.xml).
+When SpotifyBU shares a mounted music library with NaviClean and Navidrome, set
+SpotifyBU's `PUID` and `PGID` to the same values used by those containers. Many
+Unraid installs use `PUID=99` and `PGID=100`, but the right values are the ones
+already writing your music files.
+
+If NaviClean creates or moves folders as `99:100` while SpotifyBU runs as
+`1000:1000`, SpotifyBU may still read and index the files but fail to rename or
+move them during Organize. In the UI this shows up as files that "could not be
+moved." Matching `PUID`/`PGID` lets both apps create and move files with the
+same ownership model. Keep `SPOTIFYBU_CHOWN_MUSIC=false` unless you have
+intentionally decided SpotifyBU should take ownership of the whole mounted
+library at startup.
 
 ## Reverse Proxy
 
@@ -415,7 +439,10 @@ To build from source instead of using GHCR:
 docker build -t spotifybu:local .
 docker run --rm -p 3000:3000 \
   -e NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000 \
+  -e PUID=1000 \
+  -e PGID=1000 \
   -e SPOTIFYBU_APP_SECRET=change-this-to-a-long-random-value \
+  -e SPOTIFYBU_CHOWN_MUSIC=false \
   -e SPOTIFY_CLIENT_ID=your-spotify-client-id \
   -e MUSIC_LIBRARY_PATH=/music \
   -e NAVIDROME_USERNAME=your-navidrome-username \
