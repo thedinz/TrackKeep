@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>SpotifyBU</Name>
+  <Repository>ghcr.io/thedinz/spotifybu:latest</Repository>
+  <Registry>https://github.com/thedinz/SpotifyBU/pkgs/container/spotifybu</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/thedinz/SpotifyBU/issues</Support>
+  <Project>https://github.com/thedinz/SpotifyBU</Project>
+  <Overview>SpotifyBU backs up Spotify metadata, checks a mounted Navidrome music folder, organizes matched files, and stages authorized provider downloads into clean Navidrome album folders. Set PUID/PGID to match NaviClean/Navidrome when sharing the same music library.</Overview>
+  <Category>MediaApp:Music</Category>
+  <WebUI>http://[IP]:[PORT:3000]</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/thedinz/SpotifyBU/dev/unraid/spotifybu.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/thedinz/SpotifyBU/dev/src/app/icon.svg</Icon>
+  <ExtraParams>--add-host=host.docker.internal:host-gateway</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="Web UI Port" Target="3000" Default="3000" Mode="tcp" Description="Host port for the SpotifyBU web UI." Type="Port" Display="always" Required="true" Mask="false">3000</Config>
+  <Config Name="Config Path" Target="/config" Default="/mnt/user/appdata/spotifybu" Mode="rw" Description="Stores SpotifyBU settings, login credentials, metadata backups, logs, and SQLite database." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/spotifybu</Config>
+  <Config Name="Music Library Path" Target="/music" Default="/mnt/user/music" Mode="rw" Description="Host path to the Navidrome music library. Use the same path shared with NaviClean/Navidrome." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/music</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID used by SpotifyBU inside the container. Match NaviClean/Navidrome on shared Unraid libraries, commonly 99." Type="Variable" Display="always" Required="true" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group ID used by SpotifyBU inside the container. Match NaviClean/Navidrome on shared Unraid libraries, commonly 100." Type="Variable" Display="always" Required="true" Mask="false">100</Config>
+  <Config Name="SpotifyBU App Secret" Target="SPOTIFYBU_APP_SECRET" Default="" Mode="" Description="Required long random value used to sign SpotifyBU login cookies. This is not your Spotify Client Secret." Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="Spotify Client ID" Target="SPOTIFY_CLIENT_ID" Default="" Mode="" Description="Spotify Developer Dashboard app Client ID. SpotifyBU uses PKCE and does not need the Spotify Client Secret." Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="SpotifyBU Public URL" Target="NEXT_PUBLIC_APP_URL" Default="" Mode="" Description="Public URL for SpotifyBU, for example https://spotifybu.example.com. Leave blank only when proxy headers produce the correct Spotify redirect URI." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="Secure Cookies" Target="SPOTIFYBU_SECURE_COOKIES" Default="false" Mode="" Description="Set true when accessing SpotifyBU only over HTTPS. Keep false for local HTTP." Type="Variable" Display="always" Required="false" Mask="false">false</Config>
+  <Config Name="Auth Mode" Target="SPOTIFYBU_AUTH_MODE" Default="internal" Mode="" Description="Use internal for SpotifyBU's login form or external when a trusted reverse proxy handles access control." Type="Variable" Display="advanced" Required="false" Mask="false">internal</Config>
+  <Config Name="Config Directory" Target="SPOTIFYBU_CONFIG_DIR" Default="/config" Mode="" Description="Container path for SpotifyBU config and database files." Type="Variable" Display="advanced" Required="true" Mask="false">/config</Config>
+  <Config Name="Music Library Container Path" Target="MUSIC_LIBRARY_PATH" Default="/music" Mode="" Description="Container path for the mounted Navidrome music library." Type="Variable" Display="advanced" Required="true" Mask="false">/music</Config>
+  <Config Name="Navidrome URL" Target="NAVIDROME_URL" Default="http://host.docker.internal:4533" Mode="" Description="Navidrome URL as seen by the SpotifyBU container." Type="Variable" Display="always" Required="false" Mask="false">http://host.docker.internal:4533</Config>
+  <Config Name="Navidrome Username" Target="NAVIDROME_USERNAME" Default="" Mode="" Description="Optional Navidrome username used to request scans and sync playlists." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="Navidrome Password" Target="NAVIDROME_PASSWORD" Default="" Mode="" Description="Optional Navidrome password used with Navidrome Username." Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="Chown Music Library" Target="SPOTIFYBU_CHOWN_MUSIC" Default="false" Mode="" Description="Advanced repair option. Leave false unless you intentionally want SpotifyBU startup to recursively chown the entire mounted music library to PUID:PGID." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+</Container>

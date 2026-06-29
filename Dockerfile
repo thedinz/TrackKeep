@@ -30,8 +30,11 @@ ENV NEXT_PUBLIC_GIT_BRANCH=${GIT_BRANCH}
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 ENV NODE_OPTIONS=--experimental-sqlite
+ENV PGID=1000
 ENV PORT=3000
+ENV PUID=1000
 ENV SPOTIFYBU_CONFIG_DIR=/config
+ENV SPOTIFYBU_CHOWN_MUSIC=false
 
 WORKDIR /app
 
@@ -46,7 +49,8 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/* \
   && python3 -m pip install --no-cache-dir --break-system-packages --upgrade --pre "yt-dlp[default]" \
   && mkdir -p /config /music \
-  && chown -R node:node /app /config /music
+  && chown -R node:node /app /config \
+  && chown node:node /music
 
 COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static

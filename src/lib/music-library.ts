@@ -208,10 +208,22 @@ export type MusicLibraryTrackMatchMethod =
 export type MusicLibraryTrackOrganizationResult = {
   attemptedCount: number;
   libraryMatches: MusicLibraryTrackMatch[];
+  moveFailures: MusicLibraryTrackMoveFailure[];
   movedCount: number;
   remainingMoveCount: number;
   skippedCount: number;
   summary: MusicLibraryIndexSummary;
+};
+
+export type MusicLibraryTrackMoveFailure = {
+  code?: string;
+  message: string;
+  sourcePath: string;
+  sourceRelativePath: string;
+  targetPath: string;
+  targetRelativePath: string;
+  trackName: string;
+  trackPosition: number;
 };
 
 export type MusicLibraryPlaylistSyncResult = {
@@ -254,6 +266,7 @@ export type MusicLibraryIdentityTagBackfillResult = {
 const albumFolderLogSegments = [".spotifybu", "album-folders.json"];
 const libraryIndexSegments = [".spotifybu", "library-index.json"];
 const defaultOrganizeMoveLimit = 15;
+const organizeMoveFailureLimit = 10;
 const indexValidationConcurrency = 64;
 const unknownReleaseYear = "Unknown Year";
 const defaultOrganizeNamingSettingsKey = organizeNamingSettingsKey(
@@ -1168,6 +1181,9 @@ export async function organizeMusicLibraryMatchedTracks(
       (!trackPositionFilter || trackPositionFilter.has(match.trackPosition))
   );
   const batchCandidates = moveCandidates.slice(0, maxMoves);
+  const backupTracksByPosition = new Map(
+    tracks.map((track) => [track.position, track] as const)
+  );
   let updatedTracks = currentIndex.tracks.map((track) => ({ ...track }));
   const tracksByRelativePath = new Map(
     updatedTracks.map((track) => [
@@ -1176,6 +1192,7 @@ export async function organizeMusicLibraryMatchedTracks(
     ])
   );
   const occupiedRelativePaths = new Set(tracksByRelativePath.keys());
+  const moveFailures: MusicLibraryTrackMoveFailure[] = [];
   let movedCount = 0;
   let skippedCount = 0;
 
@@ -1220,8 +1237,24 @@ export async function organizeMusicLibraryMatchedTracks(
       occupiedRelativePaths.delete(sourceRelativePathKey);
       occupiedRelativePaths.add(targetRelativePathKey);
       movedCount += 1;
-    } catch {
+    } catch (error) {
       skippedCount += 1;
+
+      if (moveFailures.length < organizeMoveFailureLimit) {
+        moveFailures.push(
+          musicLibraryMoveFailureFromError({
+            error,
+            match,
+            sourcePath,
+            sourceRelativePath: indexedTrack.relativePath,
+            targetPath,
+            targetRelativePath,
+            trackName:
+              backupTracksByPosition.get(match.trackPosition)?.name ??
+              `Track ${match.trackPosition}`
+          })
+        );
+      }
     }
   }
 
@@ -1244,6 +1277,7 @@ export async function organizeMusicLibraryMatchedTracks(
   return {
     attemptedCount: batchCandidates.length,
     libraryMatches,
+    moveFailures,
     movedCount,
     remainingMoveCount: libraryMatches.filter((match) => match.needsMove).length,
     skippedCount,
@@ -1253,6 +1287,38 @@ export async function organizeMusicLibraryMatchedTracks(
       organizeNamingSettingsKey(naming)
     )
   } satisfies MusicLibraryTrackOrganizationResult;
+}
+
+function musicLibraryMoveFailureFromError({
+  error,
+  match,
+  sourcePath,
+  sourceRelativePath,
+  targetPath,
+  targetRelativePath,
+  trackName
+}: {
+  error: unknown;
+  match: MusicLibraryTrackMatch;
+  sourcePath: string;
+  sourceRelativePath: string;
+  targetPath: string;
+  targetRelativePath: string;
+  trackName: string;
+}) {
+  return {
+    code:
+      isNodeError(error) && typeof error.code === "string"
+        ? error.code
+        : undefined,
+    message: error instanceof Error ? error.message : "Unknown move error.",
+    sourcePath,
+    sourceRelativePath,
+    targetPath,
+    targetRelativePath,
+    trackName,
+    trackPosition: match.trackPosition
+  } satisfies MusicLibraryTrackMoveFailure;
 }
 
 export async function createOrUpdateMusicLibraryPlaylistFromSpotify(

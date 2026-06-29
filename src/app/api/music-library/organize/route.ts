@@ -39,6 +39,7 @@ export async function POST(request: NextRequest) {
         attemptedCount: result.attemptedCount,
         index: result.summary,
         libraryMatches: result.libraryMatches,
+        moveFailures: result.moveFailures,
         movedCount: result.movedCount,
         remainingMoveCount: result.remainingMoveCount,
         skippedCount: result.skippedCount
