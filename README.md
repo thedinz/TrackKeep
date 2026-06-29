@@ -184,7 +184,8 @@ risky, so `SPOTIFYBU_CHOWN_MUSIC=true` is an explicit repair option only.
 
 ### Unraid Shared Library Permissions
 
-The Unraid template is included at [unraid/spotifybu.xml](unraid/spotifybu.xml).
+The Unraid template lives in
+[thedinz/unraid-templates](https://github.com/thedinz/unraid-templates/blob/main/templates/spotifybu.xml).
 When SpotifyBU shares a mounted music library with NaviClean and Navidrome, set
 SpotifyBU's `PUID` and `PGID` to the same values used by those containers. Many
 Unraid installs use `PUID=99` and `PGID=100`, but the right values are the ones
