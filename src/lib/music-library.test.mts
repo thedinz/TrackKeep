@@ -5,10 +5,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
 import {
+  clearMusicLibraryTrackOrganizationIgnore,
   deleteMusicLibraryTrack,
   getMusicLibraryStatus,
   getMusicServerStatus,
+  ignoreMusicLibraryTrackOrganization,
+  matchMusicLibraryTracks,
   matchMusicLibraryTracksWithIndex,
+  organizeMusicLibraryMatchedTracks,
   parseMusicLibraryIndexedTrackIdentityTags,
   planMusicLibraryAlbumFolders,
   prepareMusicLibraryTrackFileDestination,
@@ -825,6 +829,70 @@ test("library index parses standard folders when parent artist stripped trailing
     assert.equal(index?.tracks.length, 1);
     assert.equal(track?.albumArtist, "Journey Worship Co.");
     assert.equal(track?.album, "Come to the Lord");
+  });
+});
+
+test("organization ignores are reversible and skipped by organize", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const libraryPath = await mkdtemp(
+      path.join(tmpdir(), "spotifybu-library-")
+    );
+    const spotifyTrack = {
+      ...exampleTrack,
+      id: "trackabc123",
+      spotifyUri: "spotify:track:trackabc123"
+    } satisfies BackupTrack;
+    const looseRelativePath = "Loose/Example Artist - Opening.mp3";
+    const loosePath = path.join(libraryPath, ...looseRelativePath.split("/"));
+
+    t.after(async () => {
+      await rm(libraryPath, {
+        force: true,
+        recursive: true
+      });
+    });
+
+    await withEnvironment(t, { MUSIC_LIBRARY_PATH: libraryPath }, async () => {
+      await mkdir(path.dirname(loosePath), {
+        recursive: true
+      });
+      await writeFile(loosePath, "not real audio", "utf8");
+
+      await scanMusicLibraryIndex();
+
+      const initialMatches = await matchMusicLibraryTracks([spotifyTrack]);
+
+      assert.equal(initialMatches[0].exists, true);
+      assert.equal(initialMatches[0].needsMove, true);
+
+      const ignored = await ignoreMusicLibraryTrackOrganization(spotifyTrack, [
+        spotifyTrack
+      ]);
+
+      assert.equal(ignored.libraryMatches[0].exists, true);
+      assert.equal(ignored.libraryMatches[0].needsMove, false);
+      assert.equal(ignored.libraryMatches[0].organizeIgnored, true);
+      assert.equal(
+        ignored.libraryMatches[0].matchedTrack?.relativePath,
+        looseRelativePath
+      );
+
+      const organizeResult = await organizeMusicLibraryMatchedTracks([
+        spotifyTrack
+      ]);
+
+      assert.equal(organizeResult.attemptedCount, 0);
+      assert.equal(organizeResult.movedCount, 0);
+      await stat(loosePath);
+
+      const cleared = await clearMusicLibraryTrackOrganizationIgnore(
+        spotifyTrack,
+        [spotifyTrack]
+      );
+
+      assert.equal(Boolean(cleared.libraryMatches[0].organizeIgnored), false);
+      assert.equal(cleared.libraryMatches[0].needsMove, true);
+    });
   });
 });
 

@@ -161,6 +161,18 @@ export type MusicLibraryIndex = {
   version: 1;
 };
 
+type MusicLibraryOrganizeIgnore = {
+  ignoredAt: string;
+  recommendedRelativePath?: string;
+  relativePath: string;
+};
+
+type MusicLibraryOrganizeIgnoreStore = {
+  ignores: Record<string, MusicLibraryOrganizeIgnore>;
+  updatedAt: string;
+  version: 1;
+};
+
 export type MusicLibraryIndexSummary = {
   generatedAt?: string;
   libraryPath?: string;
@@ -194,6 +206,7 @@ export type MusicLibraryTrackMatch = {
   matchedBy?: MusicLibraryTrackMatchMethod;
   matchedTrack?: MusicLibraryIndexedTrack;
   needsMove: boolean;
+  organizeIgnored?: boolean;
   recommendedRelativePath?: string;
   trackId?: string;
   trackPosition: number;
@@ -213,6 +226,13 @@ export type MusicLibraryTrackOrganizationResult = {
   remainingMoveCount: number;
   skippedCount: number;
   summary: MusicLibraryIndexSummary;
+};
+
+export type MusicLibraryTrackOrganizationIgnoreResult = {
+  ignored: boolean;
+  index: MusicLibraryIndexSummary;
+  libraryMatches: MusicLibraryTrackMatch[];
+  relativePath?: string;
 };
 
 export type MusicLibraryTrackMoveFailure = {
@@ -265,6 +285,7 @@ export type MusicLibraryIdentityTagBackfillResult = {
 
 const albumFolderLogSegments = [".spotifybu", "album-folders.json"];
 const libraryIndexSegments = [".spotifybu", "library-index.json"];
+const organizeIgnoresSegments = [".spotifybu", "organize-ignores.json"];
 const defaultOrganizeMoveLimit = 15;
 const organizeMoveFailureLimit = 10;
 const indexValidationConcurrency = 64;
@@ -746,6 +767,55 @@ export async function readMusicLibraryIndex() {
   }
 }
 
+async function readMusicLibraryOrganizeIgnores(libraryPath: string) {
+  try {
+    const contents = await readFile(
+      path.join(/* turbopackIgnore: true */ libraryPath, ...organizeIgnoresSegments),
+      "utf8"
+    );
+    const parsed = JSON.parse(contents) as Partial<MusicLibraryOrganizeIgnoreStore>;
+
+    if (parsed.version !== 1 || !parsed.ignores) {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(parsed.ignores).filter(
+        (entry): entry is [string, MusicLibraryOrganizeIgnore] =>
+          Boolean(
+            entry[0] &&
+              entry[1] &&
+              typeof entry[1].ignoredAt === "string" &&
+              typeof entry[1].relativePath === "string"
+          )
+      )
+    );
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return {};
+    }
+
+    throw error;
+  }
+}
+
+async function writeMusicLibraryOrganizeIgnores(
+  ignores: Record<string, MusicLibraryOrganizeIgnore>
+) {
+  const storeDirectory = await ensureMusicLibraryTargetDirectory([".spotifybu"]);
+  const store = {
+    ignores,
+    updatedAt: new Date().toISOString(),
+    version: 1
+  } satisfies MusicLibraryOrganizeIgnoreStore;
+
+  await writeFile(
+    path.join(/* turbopackIgnore: true */ storeDirectory, "organize-ignores.json"),
+    `${JSON.stringify(store, null, 2)}\n`,
+    "utf8"
+  );
+}
+
 export async function readCurrentMusicLibraryIndex() {
   const libraryPath = getMusicLibraryPath();
   const index = await readMusicLibraryIndex();
@@ -999,6 +1069,140 @@ export async function deleteMusicLibraryTrack(relativePath: string) {
   };
 }
 
+export async function ignoreMusicLibraryTrackOrganization(
+  track: BackupTrack,
+  tracks: BackupTrack[] = [track]
+): Promise<MusicLibraryTrackOrganizationIgnoreResult> {
+  const context = await musicLibraryOrganizationIgnoreContext();
+  const identityKey = musicLibraryTrackOrganizationIgnoreKey(track);
+  const [rawMatch] = matchMusicLibraryTracksWithIndexUsingSettings(
+    [track],
+    context.index,
+    context.naming,
+    {}
+  );
+
+  if (!rawMatch?.matchedTrack) {
+    throw new Error("SpotifyBU could not find the matched Navidrome file to ignore.");
+  }
+
+  if (!rawMatch.needsMove || !rawMatch.recommendedRelativePath) {
+    throw new Error("That matched file is already in the active organize layout.");
+  }
+
+  const nextIgnores = {
+    ...context.ignores,
+    [identityKey]: {
+      ignoredAt: new Date().toISOString(),
+      recommendedRelativePath: rawMatch.recommendedRelativePath,
+      relativePath: rawMatch.matchedTrack.relativePath
+    }
+  } satisfies Record<string, MusicLibraryOrganizeIgnore>;
+
+  await writeMusicLibraryOrganizeIgnores(nextIgnores);
+
+  return musicLibraryOrganizationIgnoreResult({
+    ignored: true,
+    ignores: nextIgnores,
+    index: context.index,
+    libraryPath: context.libraryPath,
+    naming: context.naming,
+    relativePath: rawMatch.matchedTrack.relativePath,
+    tracks
+  });
+}
+
+export async function clearMusicLibraryTrackOrganizationIgnore(
+  track: BackupTrack,
+  tracks: BackupTrack[] = [track]
+): Promise<MusicLibraryTrackOrganizationIgnoreResult> {
+  const context = await musicLibraryOrganizationIgnoreContext();
+  const identityKey = musicLibraryTrackOrganizationIgnoreKey(track);
+  const relativePath = context.ignores[identityKey]?.relativePath;
+  const nextIgnores = { ...context.ignores };
+
+  delete nextIgnores[identityKey];
+
+  await writeMusicLibraryOrganizeIgnores(nextIgnores);
+
+  return musicLibraryOrganizationIgnoreResult({
+    ignored: false,
+    ignores: nextIgnores,
+    index: context.index,
+    libraryPath: context.libraryPath,
+    naming: context.naming,
+    relativePath,
+    tracks
+  });
+}
+
+async function musicLibraryOrganizationIgnoreContext() {
+  const libraryPath = getMusicLibraryPath();
+
+  if (!libraryPath) {
+    throw new Error("Navidrome music path is not configured.");
+  }
+
+  const index = await readCurrentMusicLibraryIndex();
+  const naming = await loadOrganizeNamingSettings();
+
+  if (!index || index.libraryPath !== libraryPath) {
+    throw new Error("Scan the current Navidrome folder before changing organize ignores.");
+  }
+
+  return {
+    ignores: await readMusicLibraryOrganizeIgnores(libraryPath),
+    index,
+    libraryPath,
+    naming
+  };
+}
+
+function musicLibraryOrganizationIgnoreResult({
+  ignored,
+  ignores,
+  index,
+  libraryPath,
+  naming,
+  relativePath,
+  tracks
+}: {
+  ignored: boolean;
+  ignores: Record<string, MusicLibraryOrganizeIgnore>;
+  index: MusicLibraryIndex;
+  libraryPath: string;
+  naming: OrganizeNamingSettings;
+  relativePath?: string;
+  tracks: BackupTrack[];
+}) {
+  const namingSchemeKey = organizeNamingSettingsKey(naming);
+  const summary = summarizeMusicLibraryIndex(index, libraryPath, namingSchemeKey);
+
+  lastLibraryIndexSummary = summary;
+
+  return {
+    ignored,
+    index: summary,
+    libraryMatches: matchMusicLibraryTracksWithIndexUsingSettings(
+      tracks,
+      index,
+      naming,
+      ignores
+    ),
+    relativePath
+  } satisfies MusicLibraryTrackOrganizationIgnoreResult;
+}
+
+function musicLibraryTrackOrganizationIgnoreKey(track: BackupTrack) {
+  const identityKey = spotifyBuIdentityKeyForTrack(track);
+
+  if (!identityKey) {
+    throw new Error("SpotifyBU cannot ignore organization for an unresolved Spotify local track.");
+  }
+
+  return identityKey;
+}
+
 export async function backfillMusicLibrarySpotifyIdentityTags() {
   const libraryPath = getMusicLibraryPath();
 
@@ -1131,11 +1335,15 @@ export async function matchMusicLibraryTracks(tracks: BackupTrack[]) {
   const libraryPath = getMusicLibraryPath();
   const index = await readCurrentMusicLibraryIndex();
   const naming = await loadOrganizeNamingSettings();
+  const organizeIgnores = libraryPath
+    ? await readMusicLibraryOrganizeIgnores(libraryPath)
+    : {};
 
   return matchMusicLibraryTracksWithIndexUsingSettings(
     tracks,
     libraryPath && index?.libraryPath === libraryPath ? index : null,
-    naming
+    naming,
+    organizeIgnores
   );
 }
 
@@ -1157,6 +1365,7 @@ export async function organizeMusicLibraryMatchedTracks(
     ? await pruneMissingMusicLibraryIndexTracks(index, libraryPath)
     : null;
   const naming = await loadOrganizeNamingSettings();
+  const organizeIgnores = await readMusicLibraryOrganizeIgnores(libraryPath);
 
   if (!currentIndex) {
     throw new Error("Scan the Navidrome folder before organizing matched files.");
@@ -1169,7 +1378,8 @@ export async function organizeMusicLibraryMatchedTracks(
   const matches = matchMusicLibraryTracksWithIndexUsingSettings(
     tracks,
     currentIndex,
-    naming
+    naming,
+    organizeIgnores
   );
   const trackPositionFilter = normalizeTrackPositionFilter(options.trackPositions);
   const maxMoves = normalizeOrganizeMoveLimit(options.maxMoves);
@@ -1271,7 +1481,8 @@ export async function organizeMusicLibraryMatchedTracks(
   const libraryMatches = matchMusicLibraryTracksWithIndexUsingSettings(
     tracks,
     updatedIndex,
-    naming
+    naming,
+    organizeIgnores
   );
 
   return {
@@ -2929,7 +3140,8 @@ export async function matchMusicLibraryTracksWithIndex(
 function matchMusicLibraryTracksWithIndexUsingSettings(
   tracks: BackupTrack[],
   index: MusicLibraryIndex | null,
-  naming: OrganizeNamingSettings
+  naming: OrganizeNamingSettings,
+  organizeIgnores: Record<string, MusicLibraryOrganizeIgnore> = {}
 ) {
   const indexedTracks = index?.tracks ?? [];
   const lookup = buildMusicLibraryTrackLookup(indexedTracks);
@@ -2953,14 +3165,22 @@ function matchMusicLibraryTracksWithIndexUsingSettings(
       match.track,
       naming
     );
+    const organizeIgnore = matchingOrganizeIgnore(
+      track,
+      match.track,
+      organizationPlan,
+      organizeIgnores
+    );
+    const needsMove = organizationPlan.needsMove && !organizeIgnore;
 
     return {
       exists: true,
       expectedFolder: organizationPlan.expectedFolder,
       matchedBy: match.matchedBy,
       matchedTrack: match.track,
-      needsMove: organizationPlan.needsMove,
-      recommendedRelativePath: organizationPlan.needsMove
+      needsMove,
+      organizeIgnored: Boolean(organizeIgnore),
+      recommendedRelativePath: needsMove
         ? organizationPlan.recommendedRelativePath
         : undefined,
       trackId: track.id,
@@ -2989,6 +3209,30 @@ function buildTrackOrganizationPlan(
       normalizeRelativePathKey(renderedRelativePath),
     recommendedRelativePath: renderedRelativePath
   };
+}
+
+function matchingOrganizeIgnore(
+  track: BackupTrack,
+  matchedTrack: MusicLibraryIndexedTrack,
+  organizationPlan: ReturnType<typeof buildTrackOrganizationPlan>,
+  organizeIgnores: Record<string, MusicLibraryOrganizeIgnore>
+) {
+  if (!organizationPlan.needsMove) {
+    return null;
+  }
+
+  const identityKey = spotifyBuIdentityKeyForTrack(track);
+  const ignore = identityKey ? organizeIgnores[identityKey] : undefined;
+
+  if (
+    ignore &&
+    normalizeRelativePathKey(ignore.relativePath) ===
+      normalizeRelativePathKey(matchedTrack.relativePath)
+  ) {
+    return ignore;
+  }
+
+  return null;
 }
 
 function findIndexedTrackMatch(

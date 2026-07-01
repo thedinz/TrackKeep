@@ -163,6 +163,7 @@ type LibraryMatch = {
   matchedBy?: "duration" | "isrc" | "metadata" | "spotify_identity";
   matchedTrack?: IndexedTrack;
   needsMove: boolean;
+  organizeIgnored?: boolean;
   recommendedRelativePath?: string;
   trackId?: string;
   trackPosition: number;
@@ -296,6 +297,13 @@ type LibraryOrganizeResponse = LibraryIndexResponse & LibraryMatchesResponse & {
   skippedCount: number;
 };
 
+type LibraryOrganizeIgnoreResponse =
+  LibraryIndexResponse &
+    LibraryMatchesResponse & {
+      ignored: boolean;
+      relativePath?: string;
+    };
+
 type LibraryTrackDeleteResponse = LibraryIndexResponse & {
   deleted: boolean;
   libraryMatches?: LibraryMatch[];
@@ -328,6 +336,11 @@ type MusicLibraryPlaylistSyncResponse = {
 };
 
 type MusicLibraryPlaylistSyncMode = "append" | "fullsync" | "replace";
+
+type TrackOrganizeDialogState = {
+  match: LibraryMatch;
+  track: BackupTrack;
+};
 
 type ProviderDownloadPayload = {
   bytesWritten?: number;
@@ -572,6 +585,10 @@ export default function Home() {
   const [organizingTrackPositions, setOrganizingTrackPositions] = useState<
     number[]
   >([]);
+  const [organizeIgnoreTrackPositions, setOrganizeIgnoreTrackPositions] =
+    useState<number[]>([]);
+  const [trackOrganizeDialog, setTrackOrganizeDialog] =
+    useState<TrackOrganizeDialogState | null>(null);
   const [deletingLibraryTrackPath, setDeletingLibraryTrackPath] = useState<
     string | null
   >(null);
@@ -863,6 +880,67 @@ export default function Home() {
     ]
   );
 
+  const closeTrackOrganizeDialog = useCallback(() => {
+    setTrackOrganizeDialog(null);
+  }, []);
+
+  const openTrackOrganizeDialog = useCallback(
+    (track: BackupTrack, match: LibraryMatch) => {
+      setTrackOrganizeDialog({
+        match,
+        track
+      });
+    },
+    []
+  );
+
+  const updateTrackOrganizeIgnore = useCallback(
+    async (track: BackupTrack, action: "clear" | "ignore") => {
+      setOrganizeIgnoreTrackPositions((current) =>
+        current.includes(track.position) ? current : [...current, track.position]
+      );
+      setRequestError(null);
+      setLibraryOrganizeMessage(null);
+
+      try {
+        const response =
+          action === "ignore"
+            ? await postJson<LibraryOrganizeIgnoreResponse>(
+                "/api/music-library/organize-ignore",
+                {
+                  track,
+                  tracks
+                }
+              )
+            : await deleteJson<LibraryOrganizeIgnoreResponse>(
+                "/api/music-library/organize-ignore",
+                {
+                  track,
+                  tracks
+                }
+              );
+
+        setLibraryIndex(response.index);
+        applyLibraryMatches(tracks, response.libraryMatches);
+        setLibraryOrganizeMessage(
+          action === "ignore"
+            ? `Manually organized ${track.name} at ${
+                response.relativePath ?? "the current location"
+              }.`
+            : `Removed manual organization for ${track.name}.`
+        );
+        closeTrackOrganizeDialog();
+      } catch (error) {
+        setRequestError(errorMessage(error));
+      } finally {
+        setOrganizeIgnoreTrackPositions((current) =>
+          current.filter((position) => position !== track.position)
+        );
+      }
+    },
+    [applyLibraryMatches, closeTrackOrganizeDialog, tracks]
+  );
+
   const markDownloadedTrackInLibrary = useCallback(
     (track: BackupTrack, relativePath: string) => {
       const normalizedRelativePath = normalizeRelativePath(relativePath);
@@ -1081,6 +1159,17 @@ export default function Home() {
       setLibraryOrganizeProgress(null);
     }
   }, [applyLibraryMatches, libraryMatches, refreshLibraryMatches, tracks]);
+
+  const autoOrganizeDialogTrack = useCallback(async () => {
+    const dialog = trackOrganizeDialog;
+
+    if (!dialog) {
+      return;
+    }
+
+    closeTrackOrganizeDialog();
+    await organizeLibraryMatches([dialog.track.position]);
+  }, [closeTrackOrganizeDialog, organizeLibraryMatches, trackOrganizeDialog]);
 
   const createMusicLibraryPlaylist = useCallback(async () => {
     if (!selectedPlaylistId) {
@@ -1807,8 +1896,11 @@ export default function Home() {
   const canOrganizeLibrary =
     musicLibraryReady && tracks.length > 0 && hasUsableLibraryIndex;
   const organizingTrackPositionSet = new Set(organizingTrackPositions);
+  const organizeIgnoreTrackPositionSet = new Set(organizeIgnoreTrackPositions);
   const isAnyOrganizationRunning =
-    isOrganizingLibrary || organizingTrackPositions.length > 0;
+    isOrganizingLibrary ||
+    organizingTrackPositions.length > 0 ||
+    organizeIgnoreTrackPositions.length > 0;
   const canCreateMusicLibraryPlaylist =
     sourceKind === "playlist" &&
     Boolean(selectedPlaylistId) &&
@@ -3453,8 +3545,18 @@ export default function Home() {
                               {
                                 isOrganizing:
                                   organizingTrackPositionSet.has(track.position),
+                                isUpdatingOrganizeIgnore:
+                                  organizeIgnoreTrackPositionSet.has(
+                                    track.position
+                                  ),
+                                onClearOrganizeIgnore: () =>
+                                  void updateTrackOrganizeIgnore(track, "clear"),
                                 onOrganize: () =>
-                                  void organizeLibraryMatches([track.position]),
+                                  libraryMatch
+                                    ? openTrackOrganizeDialog(track, libraryMatch)
+                                    : void organizeLibraryMatches([
+                                        track.position
+                                      ]),
                                 onDelete: libraryMatch?.matchedTrack
                                   ?.relativePath
                                   ? () =>
@@ -3737,6 +3839,92 @@ export default function Home() {
           </div>
         </section>
       )}
+      {trackOrganizeDialog ? (
+        <div className="dialog-backdrop" onClick={closeTrackOrganizeDialog}>
+          <section
+            aria-labelledby="track-organize-title"
+            aria-modal="true"
+            className="track-organize-dialog"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="dialog-header">
+              <span className="provider-icon amber">
+                <HardDrive size={18} />
+              </span>
+              <div>
+                <p className="eyebrow">Track organize</p>
+                <h2 id="track-organize-title">
+                  {trackOrganizeDialog.track.name}
+                </h2>
+                <p>
+                  {trackOrganizeDialog.match.matchedTrack?.relativePath ??
+                    "Matched Navidrome file"}
+                </p>
+              </div>
+              <button
+                className="icon-command dialog-close"
+                onClick={closeTrackOrganizeDialog}
+                title="Close"
+                type="button"
+              >
+                <XCircle size={18} />
+              </button>
+            </div>
+            <div className="organize-choice-summary">
+              <span>
+                <span className="stat-label">Current</span>
+                <span>
+                  {trackOrganizeDialog.match.matchedTrack?.relativePath ??
+                    "Indexed match"}
+                </span>
+              </span>
+              <span>
+                <span className="stat-label">Auto target</span>
+                <span>
+                  {trackOrganizeDialog.match.recommendedRelativePath ??
+                    trackOrganizeDialog.match.expectedFolder}
+                </span>
+              </span>
+            </div>
+            <div className="organize-choice-actions">
+              <button
+                className="command"
+                disabled={isAnyOrganizationRunning}
+                onClick={() => void autoOrganizeDialogTrack()}
+                title="Move this file into the SpotifyBU organize scheme"
+                type="button"
+              >
+                {isAnyOrganizationRunning ? (
+                  <Loader2 className="spin" size={18} />
+                ) : (
+                  <RotateCcw size={18} />
+                )}
+                Auto Organize
+              </button>
+              <button
+                className="command secondary"
+                disabled={isAnyOrganizationRunning}
+                onClick={() =>
+                  void updateTrackOrganizeIgnore(
+                    trackOrganizeDialog.track,
+                    "ignore"
+                  )
+                }
+                title="Keep this file where SpotifyBU found it"
+                type="button"
+              >
+                {isAnyOrganizationRunning ? (
+                  <Loader2 className="spin" size={18} />
+                ) : (
+                  <CheckCircle2 size={18} />
+                )}
+                Ignore current location
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
       <footer className="app-footer">
         <span>SpotifyBU</span>
         <span>v{appInfo?.version ?? "..."}</span>
@@ -4255,8 +4443,10 @@ function renderLibraryMatch(
   libraryIndex: MusicLibraryIndexSummary | null,
   options: {
     deleteDisabled?: boolean;
+    isUpdatingOrganizeIgnore?: boolean;
     isOrganizing?: boolean;
     isDeleting?: boolean;
+    onClearOrganizeIgnore?: () => void;
     onDelete?: () => void;
     onOrganize?: () => void;
     onSearchMissing?: () => void;
@@ -4312,6 +4502,35 @@ function renderLibraryMatch(
     }
 
     return <span className="track-status missing">Not backed up</span>;
+  }
+
+  if (match.organizeIgnored) {
+    return (
+      <span className="track-status-stack">
+        <span className="track-status-actions">
+          <button
+            className="track-status exists actionable"
+            disabled={options.organizeDisabled || options.isUpdatingOrganizeIgnore}
+            onClick={options.onClearOrganizeIgnore}
+            title="Undo manual organization and let SpotifyBU organize this file again"
+            type="button"
+          >
+            {options.isUpdatingOrganizeIgnore ? (
+              <Loader2 className="spin" size={13} />
+            ) : (
+              <CheckCircle2 size={13} />
+            )}
+            {options.isUpdatingOrganizeIgnore
+              ? "Updating"
+              : "Manually organized"}
+          </button>
+          {renderDeleteLibraryTrackButton(match, options)}
+        </span>
+        <span className="track-note">
+          Kept at {match.matchedTrack?.relativePath ?? "indexed location"}
+        </span>
+      </span>
+    );
   }
 
   if (match.needsMove) {
