@@ -368,6 +368,190 @@ test("matching still falls back for old indexed files without identity tags", as
   });
 });
 
+test("matching does not use a same-title single as cross-artist context", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const jaidenTrack = {
+      ...exampleTrack,
+      album: "Dead 2 Me",
+      albumArtist: "Jaiden",
+      albumId: "album-jaiden-dead-2-me",
+      albumReleaseDate: "2017-01-01",
+      artists: ["Jaiden"],
+      id: "track-jaiden-dead-2-me",
+      isrc: undefined,
+      name: "Dead 2 Me",
+      trackNumber: 1
+    } satisfies BackupTrack;
+    const tomMacDonaldPath =
+      "Tom MacDonald/Tom MacDonald - Infidelity in the Throne Room (2012)/Tom MacDonald - Infidelity in the Throne Room (2012) - 22 - Dead 2 Me.mp3";
+    const matches = await matchMusicLibraryTracksWithIndex([jaidenTrack], {
+      generatedAt: new Date(0).toISOString(),
+      libraryPath: "/music",
+      tracks: [
+        {
+          album: "Infidelity in the Throne Room",
+          albumArtist: "Tom MacDonald",
+          artist: "Tom MacDonald",
+          artists: ["Tom MacDonald"],
+          durationMs: jaidenTrack.durationMs,
+          fileName: path.posix.basename(tomMacDonaldPath),
+          mtimeMs: 0,
+          relativeDirectory: path.posix.dirname(tomMacDonaldPath),
+          relativePath: tomMacDonaldPath,
+          sizeBytes: 1,
+          source: "path",
+          title: "Dead 2 Me",
+          trackNumber: 22
+        }
+      ],
+      version: 1
+    } satisfies MusicLibraryIndex);
+
+    assert.equal(matches[0].exists, false);
+  });
+});
+
+test("matching uses exact organized paths before stale identity tags", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const hurtMeTrack = {
+      ...exampleTrack,
+      album: "Spirit",
+      albumArtist: "Amos Lee",
+      albumId: "album-amos-spirit",
+      albumReleaseDate: "2016-01-01",
+      artists: ["Amos Lee"],
+      id: "track-amos-hurt-me",
+      isrc: undefined,
+      name: "Hurt Me",
+      spotifyUri: "spotify:track:track-amos-hurt-me",
+      trackNumber: 10
+    } satisfies BackupTrack;
+    const vaporizeTrack = {
+      ...hurtMeTrack,
+      id: "track-amos-vaporize",
+      name: "Vaporize",
+      spotifyUri: "spotify:track:track-amos-vaporize",
+      trackNumber: 11
+    } satisfies BackupTrack;
+    const folder = "Amos Lee/Amos Lee - Spirit (2016)";
+    const hurtMePath = `${folder}/Amos Lee - Spirit (2016) - 10 - Hurt Me.flac`;
+    const vaporizePath = `${folder}/Amos Lee - Spirit (2016) - 11 - Vaporize.flac`;
+    const matches = await matchMusicLibraryTracksWithIndex(
+      [hurtMeTrack, vaporizeTrack],
+      {
+        generatedAt: new Date(0).toISOString(),
+        libraryPath: "/music",
+        tracks: [
+          {
+            album: "Spirit",
+            albumArtist: "Amos Lee",
+            artist: "Amos Lee",
+            artists: ["Amos Lee"],
+            durationMs: hurtMeTrack.durationMs,
+            fileName: path.posix.basename(hurtMePath),
+            mtimeMs: 0,
+            relativeDirectory: path.posix.dirname(hurtMePath),
+            relativePath: hurtMePath,
+            sizeBytes: 1,
+            source: "tags",
+            spotifyTrackId: vaporizeTrack.id,
+            spotifyTrackUri: vaporizeTrack.spotifyUri,
+            spotifybuIdentityVersion: spotifyBuIdentityVersion,
+            title: "Vaporize",
+            trackNumber: 11
+          },
+          {
+            album: "Spirit",
+            albumArtist: "Amos Lee",
+            artist: "Amos Lee",
+            artists: ["Amos Lee"],
+            durationMs: vaporizeTrack.durationMs,
+            fileName: path.posix.basename(vaporizePath),
+            mtimeMs: 0,
+            relativeDirectory: path.posix.dirname(vaporizePath),
+            relativePath: vaporizePath,
+            sizeBytes: 1,
+            source: "path",
+            title: "Vaporize",
+            trackNumber: 11
+          }
+        ],
+        version: 1
+      } satisfies MusicLibraryIndex
+    );
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].matchedBy, "path");
+    assert.equal(matches[0].needsMove, false);
+    assert.equal(matches[0].matchedTrack?.relativePath, hurtMePath);
+    assert.equal(matches[1].exists, true);
+    assert.equal(matches[1].matchedBy, "path");
+    assert.equal(matches[1].needsMove, false);
+    assert.equal(matches[1].matchedTrack?.relativePath, vaporizePath);
+  });
+});
+
+test("matching does not let different Spotify tracks share one indexed file", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const hurtMeTrack = {
+      ...exampleTrack,
+      album: "Spirit",
+      albumArtist: "Amos Lee",
+      albumId: "album-amos-spirit",
+      albumReleaseDate: "2016-01-01",
+      artists: ["Amos Lee"],
+      id: "track-amos-hurt-me",
+      isrc: undefined,
+      name: "Hurt Me",
+      spotifyUri: "spotify:track:track-amos-hurt-me",
+      trackNumber: 10
+    } satisfies BackupTrack;
+    const vaporizeTrack = {
+      ...hurtMeTrack,
+      id: "track-amos-vaporize",
+      name: "Vaporize",
+      spotifyUri: "spotify:track:track-amos-vaporize",
+      trackNumber: 11
+    } satisfies BackupTrack;
+    const hurtMePath =
+      "Amos Lee/Amos Lee - Spirit (2016)/Amos Lee - Spirit (2016) - 10 - Hurt Me.flac";
+    const matches = await matchMusicLibraryTracksWithIndex(
+      [hurtMeTrack, vaporizeTrack],
+      {
+        generatedAt: new Date(0).toISOString(),
+        libraryPath: "/music",
+        tracks: [
+          {
+            album: "Spirit",
+            albumArtist: "Amos Lee",
+            artist: "Amos Lee",
+            artists: ["Amos Lee"],
+            durationMs: hurtMeTrack.durationMs,
+            fileName: path.posix.basename(hurtMePath),
+            mtimeMs: 0,
+            relativeDirectory: path.posix.dirname(hurtMePath),
+            relativePath: hurtMePath,
+            sizeBytes: 1,
+            source: "tags",
+            spotifyTrackId: vaporizeTrack.id,
+            spotifyTrackUri: vaporizeTrack.spotifyUri,
+            spotifybuIdentityVersion: spotifyBuIdentityVersion,
+            title: "Vaporize",
+            trackNumber: 11
+          }
+        ],
+        version: 1
+      } satisfies MusicLibraryIndex
+    );
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].matchedBy, "path");
+    assert.equal(matches[0].matchedTrack?.relativePath, hurtMePath);
+    assert.equal(matches[1].exists, false);
+    assert.equal(matches[1].needsMove, false);
+  });
+});
+
 test("standard matching uses shared path token normalization", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
     const spotifyTrack = {
