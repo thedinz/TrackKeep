@@ -36,9 +36,13 @@ test("Plex settings save selects the configured music library", async (t) => {
 test("Plex playlist sync creates an audio playlist from matched tracks", async (t) => {
   await withTempEnvironment(t, async ({ libraryPath }) => {
     const playlistCreates: string[] = [];
+    const posterUpdates: string[] = [];
     const server = await startMockPlexServer({
       onCreatePlaylist(uri) {
         playlistCreates.push(uri);
+      },
+      onPosterUpdate(url) {
+        posterUpdates.push(url);
       }
     });
 
@@ -67,9 +71,12 @@ test("Plex playlist sync creates an audio playlist from matched tracks", async (
     assert.equal(result.skippedCount, 0);
     assert.equal(result.songCount, 1);
     assert.equal(result.updated, false);
+    assert.equal(result.artworkUpdated, true);
+    assert.equal(result.artworkError, undefined);
     assert.deepEqual(playlistCreates, [
       "server://mock-machine/com.plexapp.plugins.library/library/metadata/501"
     ]);
+    assert.deepEqual(posterUpdates, [examplePlaylist.imageUrl]);
   });
 });
 
@@ -107,6 +114,7 @@ async function withTempEnvironment(
 async function startMockPlexServer(options: {
   onAddPlaylistItems?: (uri: string) => void;
   onCreatePlaylist?: (uri: string) => void;
+  onPosterUpdate?: (url: string) => void;
 } = {}) {
   let createdPlaylist = false;
   let playlistItemCount = 0;
@@ -285,6 +293,19 @@ async function startMockPlexServer(options: {
       return;
     }
 
+    if (
+      request.method === "POST" &&
+      url.pathname === "/library/metadata/900/posters"
+    ) {
+      options.onPosterUpdate?.(url.searchParams.get("url") ?? "");
+      response.end(
+        JSON.stringify({
+          MediaContainer: {}
+        })
+      );
+      return;
+    }
+
     response.statusCode = 404;
     response.end(JSON.stringify({}));
   });
@@ -375,6 +396,7 @@ const examplePlaylist = {
   collaborative: false,
   description: "",
   id: "spotify-playlist",
+  imageUrl: "https://i.scdn.co/image/custom-playlist-cover",
   name: "Road Mix",
   owner: "SpotifyBU",
   public: false,

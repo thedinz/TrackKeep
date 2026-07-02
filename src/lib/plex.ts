@@ -54,6 +54,11 @@ export type PublicPlexSettings = {
   tokenConfigured: boolean;
 };
 
+type PlexPlaylistArtworkSyncResult = Pick<
+  MusicLibraryPlaylistSyncResult,
+  "artworkError" | "artworkUpdated"
+>;
+
 type StoredPlexSettings = PlexSettings & {
   updatedAt: string;
   version: 1;
@@ -355,9 +360,15 @@ export async function createOrUpdatePlexPlaylistFromSpotify(
     const updatedPlaylist =
       (await getPlexPlaylist(settings, existingPlaylist.ratingKey)) ??
       existingPlaylist;
+    const artwork = await syncPlexPlaylistArtwork(
+      settings,
+      playlist,
+      updatedPlaylist.ratingKey ?? existingPlaylist.ratingKey
+    );
 
     return {
       addedCount,
+      ...artwork,
       matchedCount: ratingKeys.length,
       mode,
       name: updatedPlaylist.title ?? name,
@@ -384,9 +395,15 @@ export async function createOrUpdatePlexPlaylistFromSpotify(
     const updatedPlaylist =
       (await getPlexPlaylist(settings, existingPlaylist.ratingKey)) ??
       existingPlaylist;
+    const artwork = await syncPlexPlaylistArtwork(
+      settings,
+      playlist,
+      updatedPlaylist.ratingKey ?? existingPlaylist.ratingKey
+    );
 
     return {
       appendedCount: appendRatingKeys.length,
+      ...artwork,
       matchedCount: ratingKeys.length,
       mode,
       name: updatedPlaylist.title ?? name,
@@ -411,8 +428,14 @@ export async function createOrUpdatePlexPlaylistFromSpotify(
     const updatedPlaylist =
       (await getPlexPlaylist(settings, existingPlaylist.ratingKey)) ??
       existingPlaylist;
+    const artwork = await syncPlexPlaylistArtwork(
+      settings,
+      playlist,
+      updatedPlaylist.ratingKey ?? existingPlaylist.ratingKey
+    );
 
     return {
+      ...artwork,
       matchedCount: ratingKeys.length,
       mode,
       name: updatedPlaylist.title ?? name,
@@ -441,10 +464,16 @@ export async function createOrUpdatePlexPlaylistFromSpotify(
   const updatedPlaylist =
     (await getPlexPlaylist(settings, createdPlaylist.ratingKey)) ??
     createdPlaylist;
+  const artwork = await syncPlexPlaylistArtwork(
+    settings,
+    playlist,
+    updatedPlaylist.ratingKey ?? createdPlaylist.ratingKey
+  );
 
   return {
     addedCount: mode === "fullsync" ? ratingKeys.length : undefined,
     appendedCount: mode === "append" ? appendRatingKeys.length : undefined,
+    ...artwork,
     matchedCount: ratingKeys.length,
     mode,
     name: updatedPlaylist.title ?? name,
@@ -743,6 +772,49 @@ async function addPlexPlaylistItems(
   }
 }
 
+async function syncPlexPlaylistArtwork(
+  settings: PlexSettings,
+  playlist: PlaylistSummary,
+  playlistId: string | number | undefined
+): Promise<PlexPlaylistArtworkSyncResult> {
+  const artworkUrl = normalizePlexArtworkUrl(playlist.imageUrl);
+
+  if (!playlistId || !artworkUrl) {
+    return {};
+  }
+
+  try {
+    await updatePlexPlaylistPoster(settings, playlistId, artworkUrl);
+
+    return {
+      artworkUpdated: true
+    };
+  } catch (error) {
+    return {
+      artworkError: errorMessage(error),
+      artworkUpdated: false
+    };
+  }
+}
+
+async function updatePlexPlaylistPoster(
+  settings: PlexSettings,
+  playlistId: string | number,
+  artworkUrl: string
+) {
+  await plexApiRequest<PlexMetadataResponse>(
+    settings,
+    `/library/metadata/${encodeURIComponent(String(playlistId))}/posters`,
+    {
+      method: "POST",
+      parseJson: false,
+      query: {
+        url: artworkUrl
+      }
+    }
+  );
+}
+
 async function resolvePlexTrack(
   settings: PlexSettings,
   musicLibraryKey: string,
@@ -921,6 +993,7 @@ async function plexApiRequest<T>(
   endpoint: string,
   options: {
     method: "DELETE" | "GET" | "POST" | "PUT";
+    parseJson?: boolean;
     query?: Record<string, string | number>;
   }
 ) {
@@ -961,6 +1034,10 @@ async function plexApiRequest<T>(
   }
 
   if (response.status === 204) {
+    return {} as T;
+  }
+
+  if (options.parseJson === false) {
     return {} as T;
   }
 
@@ -1006,6 +1083,24 @@ function plexLibraryMetadataUri(
 
 function musicLibraryPlaylistName(playlist: PlaylistSummary) {
   return playlist.name.trim().slice(0, 120) || `Spotify playlist ${playlist.id}`;
+}
+
+function normalizePlexArtworkUrl(value?: string) {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  let url: URL;
+
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return null;
+  }
+
+  return url.protocol === "http:" || url.protocol === "https:"
+    ? url.toString()
+    : null;
 }
 
 function normalizePlaylistSyncMode(

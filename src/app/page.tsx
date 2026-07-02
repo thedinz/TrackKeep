@@ -320,6 +320,8 @@ type MusicLibraryPlaylistSyncResponse = {
   musicLibraryPlaylist: {
     addedCount?: number;
     appendedCount?: number;
+    artworkError?: string;
+    artworkUpdated?: boolean;
     matchedCount: number;
     mode: MusicLibraryPlaylistSyncMode;
     name: string;
@@ -1279,11 +1281,17 @@ export default function Home() {
       const skipped = result.skippedCount
         ? ` ${numberFormatter.format(result.skippedCount)} unmatched tracks were skipped.`
         : "";
+      const artworkDetails =
+        result.artworkUpdated === true
+          ? " Artwork synced."
+          : result.artworkError
+            ? ` Artwork could not be synced: ${result.artworkError}`
+            : "";
 
       setMusicLibraryPlaylistMessage(
         `${action} ${targetName} playlist "${result.name}" with ${numberFormatter.format(
           result.songCount
-        )} tracks.${fullSyncDetails ? ` ${fullSyncDetails}.` : ""}${skipped}`
+        )} tracks.${fullSyncDetails ? ` ${fullSyncDetails}.` : ""}${skipped}${artworkDetails}`
       );
       setMusicLibraryPlaylistSkipped(result.skipped);
     } catch (error) {

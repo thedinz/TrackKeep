@@ -250,6 +250,8 @@ export type MusicLibraryTrackMoveFailure = {
 export type MusicLibraryPlaylistSyncResult = {
   addedCount?: number;
   appendedCount?: number;
+  artworkError?: string;
+  artworkUpdated?: boolean;
   matchedCount: number;
   mode: MusicLibraryPlaylistSyncMode;
   name: string;
