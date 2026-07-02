@@ -78,9 +78,19 @@ export function spotifyAudioMetadataArgs(track: BackupTrack) {
     "-metadata",
     `disc=${track.discNumber ?? 1}`
   ];
+  const releaseDate = spotifyReleaseDateTag(track.albumReleaseDate);
 
   if (track.isrc) {
     metadataArgs.push("-metadata", `isrc=${track.isrc}`);
+  }
+
+  if (releaseDate) {
+    metadataArgs.push("-metadata", `date=${releaseDate}`);
+    metadataArgs.push("-metadata", `releasedate=${releaseDate}`);
+  }
+
+  if (isSpotifyCompilationAlbum(track)) {
+    metadataArgs.push("-metadata", "compilation=1");
   }
 
   metadataArgs.push(...spotifyIdentityMetadataArgs(track));
@@ -92,6 +102,20 @@ export function spotifyIdentityMetadataArgs(track: BackupTrack) {
   return spotifyBuIdentityMetadataEntries(
     spotifyBuIdentityMetadataForTrack(track)
   ).flatMap(([key, value]) => ["-metadata", `${key}=${value}`]);
+}
+
+function spotifyReleaseDateTag(value: string | undefined) {
+  const trimmed = value?.trim();
+
+  if (!trimmed) {
+    return "";
+  }
+
+  return /^\d{4}(?:-\d{2}(?:-\d{2})?)?$/.test(trimmed) ? trimmed : "";
+}
+
+function isSpotifyCompilationAlbum(track: BackupTrack) {
+  return track.albumType?.trim().toLowerCase() === "compilation";
 }
 
 async function writeTaggedAudioFile(
