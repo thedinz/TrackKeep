@@ -49,6 +49,40 @@ test("tagDownloadedFile metadata arguments include SpotifyBU identity tags", () 
   );
 });
 
+test("tagDownloadedFile metadata arguments include Navidrome-facing release tags", () => {
+  const metadataValues = metadataArgumentValues(
+    spotifyAudioMetadataArgs({
+      ...exampleTrack,
+      albumReleaseDate: "2012-08-07",
+      albumType: "compilation"
+    })
+  );
+
+  assert.ok(metadataValues.includes("date=2012-08-07"));
+  assert.ok(metadataValues.includes("releasedate=2012-08-07"));
+  assert.ok(metadataValues.includes("compilation=1"));
+});
+
+test("tagDownloadedFile metadata arguments skip invalid release dates and non-compilations", () => {
+  const metadataValues = metadataArgumentValues(
+    spotifyAudioMetadataArgs({
+      ...exampleTrack,
+      albumReleaseDate: "soon",
+      albumType: "album"
+    })
+  );
+
+  assert.equal(
+    metadataValues.some((value) => value.startsWith("date=")),
+    false
+  );
+  assert.equal(
+    metadataValues.some((value) => value.startsWith("releasedate=")),
+    false
+  );
+  assert.equal(metadataValues.includes("compilation=1"), false);
+});
+
 test("tagDownloadedFile metadata arguments skip unresolved Spotify local identities", () => {
   const metadataValues = metadataArgumentValues(
     spotifyAudioMetadataArgs({
@@ -130,6 +164,7 @@ test("rewrites provider audio tags with Spotify metadata", async (t) => {
     album: "Late Nights With Jeremih",
     albumArtist: "Jeremih",
     albumArtistIds: [],
+    albumReleaseDate: "2012-08-07",
     artists: ["Jeremih"],
     artistIds: [],
     discNumber: 1,
@@ -148,6 +183,7 @@ test("rewrites provider audio tags with Spotify metadata", async (t) => {
   assert.equal(tags.album_artist, "Jeremih");
   assert.equal(tags.track, "7");
   assert.equal(tags.disc, "1");
+  assert.equal(tags.date, "2012-08-07");
 });
 
 test("fails instead of silently skipping expected Spotify artwork", async (t) => {
@@ -204,6 +240,7 @@ const exampleTrack = {
   album: "Late Nights With Jeremih",
   albumArtist: "Jeremih",
   albumArtistIds: [],
+  albumReleaseDate: "2012",
   artists: ["Jeremih"],
   artistIds: [],
   discNumber: 1,
