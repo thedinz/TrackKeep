@@ -113,6 +113,70 @@ test("Plex playlist sync rejects metadata-only tracks that cannot play", async (
   });
 });
 
+test("Plex playlist sync rejects stale Plex paths that do not match the local file", async (t) => {
+  await withTempEnvironment(t, async ({ libraryPath }) => {
+    const playlistCreates: string[] = [];
+    const server = await startMockPlexServer({
+      onCreatePlaylist(uri) {
+        playlistCreates.push(uri);
+      },
+      sectionMetadata: [exampleStalePathPlexTrack]
+    });
+
+    t.after(async () => {
+      await server.close();
+    });
+
+    await writeLibraryIndex(libraryPath);
+    await updatePlexSettings({
+      enabled: true,
+      serverUrl: server.url,
+      token: "test-token"
+    });
+
+    await assert.rejects(
+      () =>
+        createOrUpdatePlexPlaylistFromSpotify(examplePlaylist, [exampleTrack], {
+          mode: "replace"
+        }),
+      /No backed-up tracks could be resolved to Plex tracks/
+    );
+    assert.deepEqual(playlistCreates, []);
+  });
+});
+
+test("Plex playlist sync rejects inaccessible Plex media parts", async (t) => {
+  await withTempEnvironment(t, async ({ libraryPath }) => {
+    const playlistCreates: string[] = [];
+    const server = await startMockPlexServer({
+      onCreatePlaylist(uri) {
+        playlistCreates.push(uri);
+      },
+      sectionMetadata: [exampleInaccessiblePlexTrack]
+    });
+
+    t.after(async () => {
+      await server.close();
+    });
+
+    await writeLibraryIndex(libraryPath);
+    await updatePlexSettings({
+      enabled: true,
+      serverUrl: server.url,
+      token: "test-token"
+    });
+
+    await assert.rejects(
+      () =>
+        createOrUpdatePlexPlaylistFromSpotify(examplePlaylist, [exampleTrack], {
+          mode: "replace"
+        }),
+      /No backed-up tracks could be resolved to Plex tracks/
+    );
+    assert.deepEqual(playlistCreates, []);
+  });
+});
+
 async function withTempEnvironment(
   t: TestContext,
   run: (context: { configDirectory: string; libraryPath: string }) => Promise<void>
@@ -226,6 +290,15 @@ async function startMockPlexServer(options: {
           }
         })
       );
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      url.pathname === "/library/sections/10/refresh"
+    ) {
+      response.statusCode = 204;
+      response.end();
       return;
     }
 
@@ -440,6 +513,33 @@ const exampleMetadataOnlyPlexTrack = {
   ratingKey: "501",
   title: "Opening",
   type: "track"
+};
+
+const exampleStalePathPlexTrack = {
+  ...examplePlayablePlexTrack,
+  Media: [
+    {
+      Part: [
+        {
+          file: "Old Artist/Old Record/01 - Opening.mp3"
+        }
+      ]
+    }
+  ]
+};
+
+const exampleInaccessiblePlexTrack = {
+  ...examplePlayablePlexTrack,
+  Media: [
+    {
+      Part: [
+        {
+          accessible: false,
+          file: "Example Artist/Example Record/01 - Opening.mp3"
+        }
+      ]
+    }
+  ]
 };
 
 const examplePlaylist = {

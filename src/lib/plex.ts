@@ -114,6 +114,8 @@ type PlexMedia = {
 };
 
 type PlexPart = {
+  accessible?: boolean | number | string;
+  exists?: boolean | number | string;
   file?: string;
 };
 
@@ -277,6 +279,10 @@ export async function createOrUpdatePlexPlaylistFromSpotify(
   const matches = await matchMusicLibraryTracks(tracks);
   const ratingKeys: string[] = [];
   const skipped: MusicLibraryPlaylistSyncResult["skipped"] = [];
+
+  await requestPlexMusicLibraryScan(settings, status.musicLibraryKey).catch(
+    () => undefined
+  );
 
   for (const track of tracks) {
     if (isUnresolvedSpotifyLocalBackupTrack(track)) {
@@ -855,7 +861,8 @@ async function resolvePlexTrack(
   for (const candidate of candidates.values()) {
     const playableCandidate = await playablePlexTrackCandidate(
       settings,
-      candidate
+      candidate,
+      matchedTrack
     );
 
     if (!playableCandidate) {
@@ -877,9 +884,10 @@ async function resolvePlexTrack(
 
 async function playablePlexTrackCandidate(
   settings: PlexSettings,
-  candidate: PlexMetadataItem
+  candidate: PlexMetadataItem,
+  matchedTrack: MusicLibraryIndexedTrack
 ) {
-  if (plexPartFiles(candidate).length) {
+  if (plexTrackHasIndexedFile(candidate, matchedTrack)) {
     return candidate;
   }
 
@@ -897,7 +905,7 @@ async function playablePlexTrackCandidate(
   if (
     hydratedCandidate?.type !== "track" ||
     !hydratedCandidate.ratingKey ||
-    !plexPartFiles(hydratedCandidate).length
+    !plexTrackHasIndexedFile(hydratedCandidate, matchedTrack)
   ) {
     return null;
   }
@@ -918,6 +926,20 @@ async function getPlexMetadataItem(
   );
 
   return plexMetadataItems(response)[0] ?? null;
+}
+
+async function requestPlexMusicLibraryScan(
+  settings: PlexSettings,
+  musicLibraryKey: string
+) {
+  await plexApiRequest<PlexMetadataResponse>(
+    settings,
+    `/library/sections/${encodeURIComponent(musicLibraryKey)}/refresh`,
+    {
+      method: "GET",
+      parseJson: false
+    }
+  );
 }
 
 async function searchPlexLibraryTracks(
@@ -1120,9 +1142,39 @@ function plexMetadataItems(response: PlexMetadataResponse | null) {
 function plexPartFiles(item: PlexMetadataItem) {
   return arrayFrom(item.Media).flatMap((media) =>
     arrayFrom(media.Part)
+      .filter(plexPartIsAvailable)
       .map((part) => part.file)
       .filter((file): file is string => Boolean(file))
       .map(normalizeRelativePath)
+  );
+}
+
+function plexTrackHasIndexedFile(
+  item: PlexMetadataItem,
+  matchedTrack: MusicLibraryIndexedTrack
+) {
+  const matchedRelativePath = normalizeRelativePathKey(matchedTrack.relativePath);
+
+  return plexPartFiles(item)
+    .map(normalizeRelativePathKey)
+    .some(
+      (file) => file === matchedRelativePath || file.endsWith(`/${matchedRelativePath}`)
+    );
+}
+
+function plexPartIsAvailable(part: PlexPart) {
+  return (
+    !plexFlagIsFalse(part.accessible) &&
+    !plexFlagIsFalse(part.exists)
+  );
+}
+
+function plexFlagIsFalse(value: boolean | number | string | undefined) {
+  return (
+    value === false ||
+    value === 0 ||
+    (typeof value === "string" &&
+      ["0", "false", "no"].includes(value.trim().toLowerCase()))
   );
 }
 
