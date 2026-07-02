@@ -437,7 +437,7 @@ export default function SettingsPage() {
       }
 
       if (job.status === "failed") {
-        setError(job.error ?? "Could not backfill Spotify identity tags.");
+        setError(job.error ?? "Could not backfill Spotify metadata tags.");
       }
     },
     []
@@ -483,7 +483,7 @@ export default function SettingsPage() {
       setError(
         settingsError instanceof Error
           ? settingsError.message
-          : "Could not backfill Spotify identity tags."
+          : "Could not backfill Spotify metadata tags."
       );
       setIsBackfillingIdentityTags(false);
     }
@@ -538,7 +538,7 @@ export default function SettingsPage() {
         setError(
           settingsError instanceof Error
             ? settingsError.message
-            : "Could not load Spotify identity tag progress."
+            : "Could not load Spotify metadata tag progress."
         );
         setIsBackfillingIdentityTags(false);
       });
@@ -841,7 +841,7 @@ export default function SettingsPage() {
             <div className="panel-title">
               <Fingerprint size={20} />
               <div>
-                <h2>Spotify Identity Tags</h2>
+                <h2>Spotify Metadata Tags</h2>
                 <p className="muted">Maintenance for matched local backups</p>
               </div>
             </div>
@@ -851,8 +851,8 @@ export default function SettingsPage() {
             <div className="auth-note">
               <Fingerprint size={18} />
               <span>
-                Add SpotifyBU identity tags to matched files from saved
-                playlist snapshots.
+                Add SpotifyBU identity, release date, and compilation tags to
+                matched files from saved playlist snapshots.
               </span>
             </div>
 
@@ -883,7 +883,7 @@ export default function SettingsPage() {
                   </strong>
                 </div>
                 <div
-                  aria-label="Spotify identity tag progress"
+                  aria-label="Spotify metadata tag progress"
                   aria-valuemax={identityBackfillTotalCount || 100}
                   aria-valuemin={0}
                   aria-valuenow={
@@ -1141,7 +1141,7 @@ function identityBackfillJobProgressNote(
   job: MusicLibraryIdentityTagBackfillJob
 ) {
   if (job.status === "failed") {
-    return job.error ?? "SpotifyBU could not backfill Spotify identity tags.";
+    return job.error ?? "SpotifyBU could not backfill Spotify metadata tags.";
   }
 
   if (job.currentTrackName && isIdentityBackfillJobActive(job)) {
@@ -1185,7 +1185,7 @@ function identityBackfillSummary(
     parts.push(`${numberFormatter.format(backfill.failedCount)} failed`);
   }
 
-  return `Identity backfill checked ${numberFormatter.format(
+  return `Metadata backfill checked ${numberFormatter.format(
     backfill.trackCount
   )} tracks from ${numberFormatter.format(
     backfill.snapshotCount

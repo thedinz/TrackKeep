@@ -63,6 +63,29 @@ export async function tagAudioFileWithSpotifyIdentity(
   }
 }
 
+export async function tagAudioFileWithSpotifyBackfillMetadata(
+  filePath: string,
+  track: BackupTrack
+) {
+  const parsedPath = path.parse(filePath);
+  const tempPath = path.join(
+    /* turbopackIgnore: true */ parsedPath.dir,
+    `${parsedPath.name}.spotifybu-backfill${parsedPath.ext}`
+  );
+
+  try {
+    await writeIdentityTaggedAudioFile(
+      filePath,
+      tempPath,
+      spotifyBackfillMetadataArgs(track)
+    );
+    await rename(tempPath, filePath);
+  } catch (error) {
+    await removeTaggingTempPath(tempPath);
+    throw new Error(formatSpotifyIdentityTaggingError(error));
+  }
+}
+
 export function spotifyAudioMetadataArgs(track: BackupTrack) {
   const metadataArgs = [
     "-metadata",
@@ -78,11 +101,27 @@ export function spotifyAudioMetadataArgs(track: BackupTrack) {
     "-metadata",
     `disc=${track.discNumber ?? 1}`
   ];
-  const releaseDate = spotifyReleaseDateTag(track.albumReleaseDate);
 
   if (track.isrc) {
     metadataArgs.push("-metadata", `isrc=${track.isrc}`);
   }
+
+  metadataArgs.push(...spotifyNavidromeMetadataArgs(track));
+  metadataArgs.push(...spotifyIdentityMetadataArgs(track));
+
+  return metadataArgs;
+}
+
+export function spotifyBackfillMetadataArgs(track: BackupTrack) {
+  return [
+    ...spotifyNavidromeMetadataArgs(track),
+    ...spotifyIdentityMetadataArgs(track)
+  ];
+}
+
+export function spotifyNavidromeMetadataArgs(track: BackupTrack) {
+  const metadataArgs: string[] = [];
+  const releaseDate = spotifyReleaseDateTag(track.albumReleaseDate);
 
   if (releaseDate) {
     metadataArgs.push("-metadata", `date=${releaseDate}`);
@@ -93,8 +132,6 @@ export function spotifyAudioMetadataArgs(track: BackupTrack) {
     metadataArgs.push("-metadata", "compilation=1");
   }
 
-  metadataArgs.push(...spotifyIdentityMetadataArgs(track));
-
   return metadataArgs;
 }
 
@@ -104,7 +141,7 @@ export function spotifyIdentityMetadataArgs(track: BackupTrack) {
   ).flatMap(([key, value]) => ["-metadata", `${key}=${value}`]);
 }
 
-function spotifyReleaseDateTag(value: string | undefined) {
+export function spotifyReleaseDateTag(value: string | undefined) {
   const trimmed = value?.trim();
 
   if (!trimmed) {
@@ -114,7 +151,7 @@ function spotifyReleaseDateTag(value: string | undefined) {
   return /^\d{4}(?:-\d{2}(?:-\d{2})?)?$/.test(trimmed) ? trimmed : "";
 }
 
-function isSpotifyCompilationAlbum(track: BackupTrack) {
+export function isSpotifyCompilationAlbum(track: BackupTrack) {
   return track.albumType?.trim().toLowerCase() === "compilation";
 }
 

@@ -17,7 +17,11 @@ import {
   type BackupTrack,
   type PlaylistSummary
 } from "./spotify";
-import { tagAudioFileWithSpotifyIdentity } from "./providers/tagging";
+import {
+  isSpotifyCompilationAlbum,
+  spotifyReleaseDateTag,
+  tagAudioFileWithSpotifyBackfillMetadata
+} from "./providers/tagging";
 import {
   spotifyBuIdentityKeyForTrack,
   spotifyBuIdentityMetadataForTrack,
@@ -118,11 +122,13 @@ export type MusicLibraryIndexedTrack = {
   albumArtist?: string;
   artist?: string;
   artists: string[];
+  compilation?: boolean;
   discNumber?: number;
   durationMs?: number;
   fileName: string;
   isrc?: string;
   mtimeMs: number;
+  releaseDate?: string;
   relativeDirectory: string;
   relativePath: string;
   sizeBytes: number;
@@ -1419,7 +1425,7 @@ export async function backfillMusicLibrarySpotifyIdentityTags(
 
   if (!index || index.libraryPath !== libraryPath) {
     throw new Error(
-      "Scan the current Navidrome folder before backfilling Spotify identity tags."
+      "Scan the current Navidrome folder before backfilling Spotify metadata tags."
     );
   }
 
@@ -1499,7 +1505,7 @@ export async function backfillMusicLibrarySpotifyIdentityTags(
       continue;
     }
 
-    if (indexedTrackHasSpotifyIdentity(indexedTrack, identityMetadata)) {
+    if (!indexedTrackNeedsSpotifyBackfill(indexedTrack, track, identityMetadata)) {
       alreadyTaggedCount += 1;
       processedCount += 1;
       reportProgress(track);
@@ -1511,7 +1517,7 @@ export async function backfillMusicLibrarySpotifyIdentityTags(
     try {
       const filePath = absoluteLibraryPath(libraryPath, indexedTrack.relativePath);
 
-      await tagAudioFileWithSpotifyIdentity(filePath, track);
+      await tagAudioFileWithSpotifyBackfillMetadata(filePath, track);
       updatedTracksByRelativePath.set(
         relativePathKey,
         await indexAudioFile(libraryPath, filePath)
@@ -3133,6 +3139,12 @@ async function indexAudioFile(libraryPath: string, filePath: string) {
   const tagTrackNumber = parsePositiveInteger(
     tagValue(probe?.tags, ["track", "tracknumber"])
   );
+  const releaseDate = normalizeMusicLibraryReleaseDate(
+    tagValue(probe?.tags, ["releasedate", "release_date", "date", "year"])
+  );
+  const compilation = parseCompilationTag(
+    tagValue(probe?.tags, ["compilation", "tcmp", "cpil", "iscompilation"])
+  );
   const identityMetadata = parseMusicLibraryIndexedTrackIdentityTags(probe?.tags);
   const artists = tagArtists.length ? tagArtists : artist ? [artist] : [];
   const usedTags = Boolean(tagTitle || tagArtist || tagAlbumArtist || tagAlbum);
@@ -3148,11 +3160,13 @@ async function indexAudioFile(libraryPath: string, filePath: string) {
     albumArtist,
     artist,
     artists,
+    compilation,
     discNumber: tagDiscNumber ?? inferred.discNumber,
     durationMs: probe?.durationMs,
     fileName: path.posix.basename(relativePath),
     isrc: normalizeIsrc(tagValue(probe?.tags, ["isrc"])),
     mtimeMs: fileStats.mtimeMs,
+    releaseDate,
     relativeDirectory: relativeDirectoryName(relativePath),
     relativePath,
     sizeBytes: fileStats.size,
@@ -3332,6 +3346,36 @@ function tagValue(
     if (value) {
       return value;
     }
+  }
+
+  return undefined;
+}
+
+function normalizeMusicLibraryReleaseDate(value?: string) {
+  const trimmed = value?.trim();
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const match = trimmed.match(/^\d{4}(?:-\d{2}(?:-\d{2})?)?/);
+
+  return match?.[0];
+}
+
+function parseCompilationTag(value?: string) {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+
+  if (["1", "true", "yes", "y"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "n"].includes(normalized)) {
+    return false;
   }
 
   return undefined;
@@ -4176,6 +4220,24 @@ function indexedTrackHasSpotifyIdentity(
   }
 
   return true;
+}
+
+function indexedTrackNeedsSpotifyBackfill(
+  indexedTrack: MusicLibraryIndexedTrack,
+  track: BackupTrack,
+  identityMetadata: SpotifyBuIdentityMetadata
+) {
+  if (!indexedTrackHasSpotifyIdentity(indexedTrack, identityMetadata)) {
+    return true;
+  }
+
+  const releaseDate = spotifyReleaseDateTag(track.albumReleaseDate);
+
+  if (releaseDate && indexedTrack.releaseDate !== releaseDate) {
+    return true;
+  }
+
+  return isSpotifyCompilationAlbum(track) && indexedTrack.compilation !== true;
 }
 
 function normalizedSpotifyArtists(track: BackupTrack) {

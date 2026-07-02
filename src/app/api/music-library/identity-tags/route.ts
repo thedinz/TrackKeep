@@ -24,7 +24,7 @@ export async function POST() {
         error:
           error instanceof Error
             ? error.message
-            : "SpotifyBU could not backfill Spotify identity tags."
+            : "SpotifyBU could not backfill Spotify metadata tags."
       },
       {
         status: 400

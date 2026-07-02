@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import http from "node:http";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
+import { promisify } from "node:util";
+import { persistPlaylistBackup } from "./backup-store.ts";
 import {
+  backfillMusicLibrarySpotifyIdentityTags,
   clearMusicLibraryTrackOrganizationIgnore,
   deleteMusicLibraryTrack,
   getMusicLibraryStatus,
@@ -21,11 +25,14 @@ import {
   scanMusicLibraryIndex,
   type MusicLibraryIndex
 } from "./music-library.ts";
+import { tagAudioFileWithSpotifyIdentity } from "./providers/tagging.ts";
 import {
   spotifyBuIdentityTags,
   spotifyBuIdentityVersion
 } from "./spotify-identity-tags.ts";
 import type { BackupTrack } from "./spotify.ts";
+
+const execFileAsync = promisify(execFile);
 
 test("standard album folder uses artist album year layout", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
@@ -1080,6 +1087,86 @@ test("organization ignores are reversible and skipped by organize", async (t) =>
   });
 });
 
+test("metadata backfill upgrades existing identity-tagged backups with release tags", async (t) => {
+  if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
+    t.skip("ffmpeg and ffprobe are required for metadata backfill coverage.");
+    return;
+  }
+
+  await withDefaultOrganizeSettings(t, async () => {
+    const libraryPath = await mkdtemp(
+      path.join(tmpdir(), "spotifybu-library-")
+    );
+    const spotifyTrack = {
+      ...exampleTrack,
+      albumReleaseDate: "2026-02-03",
+      albumType: "compilation",
+      id: "4uLU6hMCjMI75M1A2tKUQC",
+      isrc: "USABC1234567",
+      spotifyUri: "spotify:track:4uLU6hMCjMI75M1A2tKUQC"
+    } satisfies BackupTrack;
+    const relativePath =
+      "Example Artist/Example Artist - Example Record (2026)/Example Artist - Example Record (2026) - 01 - Opening.mp3";
+    const filePath = path.join(libraryPath, ...relativePath.split("/"));
+
+    t.after(async () => {
+      await rm(libraryPath, {
+        force: true,
+        recursive: true
+      });
+    });
+
+    await withEnvironment(t, { MUSIC_LIBRARY_PATH: libraryPath }, async () => {
+      await mkdir(path.dirname(filePath), {
+        recursive: true
+      });
+      await writeSilentMp3(filePath, [
+        "title=Opening",
+        "artist=Example Artist",
+        "album=Example Record"
+      ]);
+      await tagAudioFileWithSpotifyIdentity(filePath, spotifyTrack);
+      await scanMusicLibraryIndex();
+
+      persistPlaylistBackup({
+        playlist: {
+          collaborative: false,
+          description: "",
+          id: "playlist-backfill",
+          name: "Backfill",
+          owner: "SpotifyBU",
+          public: false,
+          tracksTotal: 1
+        },
+        source: "playlist-load",
+        tracks: [spotifyTrack]
+      });
+
+      const beforeBackfillTags = await readAudioTags(filePath);
+
+      assert.equal(beforeBackfillTags.date, undefined);
+      assert.equal(beforeBackfillTags.compilation, undefined);
+
+      const result = await backfillMusicLibrarySpotifyIdentityTags();
+
+      assert.equal(result.matchedCount, 1);
+      assert.equal(result.taggedCount, 1);
+      assert.equal(result.alreadyTaggedCount, 0);
+
+      const tags = await readAudioTags(filePath);
+      const index = await readCurrentMusicLibraryIndex();
+      const indexedTrack = index?.tracks.find(
+        (track) => track.relativePath === relativePath
+      );
+
+      assert.equal(tags.date, "2026-02-03");
+      assert.equal(tags.compilation, "1");
+      assert.equal(indexedTrack?.releaseDate, "2026-02-03");
+      assert.equal(indexedTrack?.compilation, true);
+    });
+  });
+});
+
 test("music library status accepts Navidrome library path env var", async (t) => {
   const libraryPath = await mkdtemp(path.join(tmpdir(), "spotifybu-library-"));
 
@@ -1322,4 +1409,66 @@ async function withOrganizeSettings(
   });
 
   await run();
+}
+
+async function hasCommand(command: string) {
+  try {
+    await execFileAsync(command, ["-version"], {
+      timeout: 10000
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function writeSilentMp3(filePath: string, metadata: string[]) {
+  await execFileAsync(
+    "ffmpeg",
+    [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "anullsrc=r=44100:cl=mono",
+      "-t",
+      "0.1",
+      "-q:a",
+      "9",
+      ...metadata.flatMap((value) => ["-metadata", value]),
+      filePath
+    ],
+    {
+      timeout: 60000
+    }
+  );
+}
+
+async function readAudioTags(filePath: string) {
+  const { stdout } = await execFileAsync(
+    "ffprobe",
+    [
+      "-v",
+      "quiet",
+      "-print_format",
+      "json",
+      "-show_format",
+      filePath
+    ],
+    {
+      timeout: 60000
+    }
+  );
+  const body = JSON.parse(stdout.toString()) as {
+    format?: {
+      tags?: Record<string, string>;
+    };
+  };
+
+  return Object.fromEntries(
+    Object.entries(body.format?.tags ?? {}).map(([key, value]) => [
+      key.toLowerCase(),
+      value
+    ])
+  );
 }
