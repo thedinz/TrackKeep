@@ -427,18 +427,17 @@ export async function createOrUpdatePlexPlaylistFromSpotify(
     };
   }
 
-  const createdPlaylist = await createPlexPlaylist(settings, name);
+  const createdPlaylist = await createPlexPlaylist(
+    settings,
+    name,
+    server.machineIdentifier,
+    ratingKeys
+  );
 
   if (!createdPlaylist?.ratingKey) {
     throw new Error("Plex created the playlist but did not return its id.");
   }
 
-  await addPlexPlaylistItems(
-    settings,
-    createdPlaylist.ratingKey,
-    server.machineIdentifier,
-    ratingKeys
-  );
   const updatedPlaylist =
     (await getPlexPlaylist(settings, createdPlaylist.ratingKey)) ??
     createdPlaylist;
@@ -681,7 +680,12 @@ async function getPlexPlaylistItems(
   return plexMetadataItems(response);
 }
 
-async function createPlexPlaylist(settings: PlexSettings, name: string) {
+async function createPlexPlaylist(
+  settings: PlexSettings,
+  name: string,
+  machineIdentifier: string,
+  ratingKeys: string[]
+) {
   const response = await plexApiRequest<PlexMetadataResponse>(
     settings,
     "/playlists",
@@ -690,7 +694,8 @@ async function createPlexPlaylist(settings: PlexSettings, name: string) {
       query: {
         smart: "0",
         title: name,
-        type: "audio"
+        type: "audio",
+        uri: plexLibraryMetadataUri(machineIdentifier, ratingKeys)
       }
     }
   );

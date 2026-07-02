@@ -35,10 +35,10 @@ test("Plex settings save selects the configured music library", async (t) => {
 
 test("Plex playlist sync creates an audio playlist from matched tracks", async (t) => {
   await withTempEnvironment(t, async ({ libraryPath }) => {
-    const playlistAdds: string[] = [];
+    const playlistCreates: string[] = [];
     const server = await startMockPlexServer({
-      onAddPlaylistItems(uri) {
-        playlistAdds.push(uri);
+      onCreatePlaylist(uri) {
+        playlistCreates.push(uri);
       }
     });
 
@@ -67,7 +67,7 @@ test("Plex playlist sync creates an audio playlist from matched tracks", async (
     assert.equal(result.skippedCount, 0);
     assert.equal(result.songCount, 1);
     assert.equal(result.updated, false);
-    assert.deepEqual(playlistAdds, [
+    assert.deepEqual(playlistCreates, [
       "server://mock-machine/com.plexapp.plugins.library/library/metadata/501"
     ]);
   });
@@ -106,6 +106,7 @@ async function withTempEnvironment(
 
 async function startMockPlexServer(options: {
   onAddPlaylistItems?: (uri: string) => void;
+  onCreatePlaylist?: (uri: string) => void;
 } = {}) {
   let createdPlaylist = false;
   let playlistItemCount = 0;
@@ -219,7 +220,21 @@ async function startMockPlexServer(options: {
     }
 
     if (request.method === "POST" && url.pathname === "/playlists") {
+      const uri = url.searchParams.get("uri") ?? "";
+
+      if (!uri) {
+        response.statusCode = 400;
+        response.end(
+          JSON.stringify({
+            error: "Playlist creation requires initial items."
+          })
+        );
+        return;
+      }
+
+      options.onCreatePlaylist?.(uri);
       createdPlaylist = true;
+      playlistItemCount = uri ? uri.split("/metadata/")[1]?.split(",").length ?? 0 : 0;
       response.end(
         JSON.stringify({
           MediaContainer: {

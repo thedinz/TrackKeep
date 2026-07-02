@@ -284,6 +284,56 @@ export type MusicLibraryIdentityTagBackfillResult = {
   trackCount: number;
 };
 
+export type MusicLibraryIdentityTagBackfillJobStatus =
+  | "completed"
+  | "failed"
+  | "queued"
+  | "running";
+
+export type MusicLibraryIdentityTagBackfillJobSnapshot = {
+  alreadyTaggedCount: number;
+  attemptedCount: number;
+  completedAt?: string;
+  createdAt: string;
+  currentTrackName?: string;
+  currentTrackPosition?: number;
+  error?: string;
+  failedCount: number;
+  id: string;
+  matchedCount: number;
+  processedCount: number;
+  result?: MusicLibraryIdentityTagBackfillResult;
+  skippedCount: number;
+  snapshotCount: number;
+  status: MusicLibraryIdentityTagBackfillJobStatus;
+  taggedCount: number;
+  totalCount: number;
+  trackCount: number;
+  updatedAt: string;
+};
+
+type MusicLibraryIdentityTagBackfillProgress = {
+  alreadyTaggedCount: number;
+  attemptedCount: number;
+  currentTrackName?: string;
+  currentTrackPosition?: number;
+  failedCount: number;
+  matchedCount: number;
+  processedCount: number;
+  skippedCount: number;
+  snapshotCount: number;
+  taggedCount: number;
+  totalCount: number;
+  trackCount: number;
+};
+
+type MusicLibraryIdentityTagBackfillOptions = {
+  onProgress?: (progress: MusicLibraryIdentityTagBackfillProgress) => void;
+};
+
+type MusicLibraryIdentityTagBackfillJobRecord =
+  MusicLibraryIdentityTagBackfillJobSnapshot;
+
 const albumFolderLogSegments = [".spotifybu", "album-folders.json"];
 const libraryIndexSegments = [".spotifybu", "library-index.json"];
 const organizeIgnoresSegments = [".spotifybu", "organize-ignores.json"];
@@ -298,6 +348,12 @@ const controlCharacters = /[\u0000-\u001f]/g;
 const combiningMarks = /[\u0300-\u036f]/g;
 const reservedWindowsNames = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 const unsafePathCharacters = ["\\", "/", "<", ">", "?", "*", "|", "\""];
+const identityTagBackfillJobs = new Map<
+  string,
+  MusicLibraryIdentityTagBackfillJobRecord
+>();
+const activeIdentityTagBackfillJobs = new Set<string>();
+const maxIdentityTagBackfillJobs = 10;
 const pathReplacementCharacters = ["+", "+", "", "", "!", "-", "", ""];
 const audioFileExtensions = new Set([
   ".aac",
@@ -1204,7 +1260,151 @@ function musicLibraryTrackOrganizationIgnoreKey(track: BackupTrack) {
   return identityKey;
 }
 
-export async function backfillMusicLibrarySpotifyIdentityTags() {
+export function startMusicLibrarySpotifyIdentityTagBackfillJob() {
+  const now = new Date().toISOString();
+  const job = {
+    alreadyTaggedCount: 0,
+    attemptedCount: 0,
+    createdAt: now,
+    failedCount: 0,
+    id: randomBytes(8).toString("hex"),
+    matchedCount: 0,
+    processedCount: 0,
+    skippedCount: 0,
+    snapshotCount: 0,
+    status: "queued",
+    taggedCount: 0,
+    totalCount: 0,
+    trackCount: 0,
+    updatedAt: now
+  } satisfies MusicLibraryIdentityTagBackfillJobRecord;
+
+  identityTagBackfillJobs.set(job.id, job);
+  pruneIdentityTagBackfillJobs();
+  scheduleMusicLibrarySpotifyIdentityTagBackfillJob(job.id);
+
+  return snapshotMusicLibraryIdentityTagBackfillJob(job);
+}
+
+export function getMusicLibrarySpotifyIdentityTagBackfillJobSnapshot(
+  jobId: string
+) {
+  const job = identityTagBackfillJobs.get(jobId);
+
+  return job ? snapshotMusicLibraryIdentityTagBackfillJob(job) : null;
+}
+
+function scheduleMusicLibrarySpotifyIdentityTagBackfillJob(jobId: string) {
+  setTimeout(() => {
+    void runMusicLibrarySpotifyIdentityTagBackfillJob(jobId);
+  }, 0);
+}
+
+async function runMusicLibrarySpotifyIdentityTagBackfillJob(jobId: string) {
+  const job = identityTagBackfillJobs.get(jobId);
+
+  if (!job || activeIdentityTagBackfillJobs.has(jobId)) {
+    return;
+  }
+
+  activeIdentityTagBackfillJobs.add(jobId);
+  job.status = "running";
+  job.updatedAt = new Date().toISOString();
+
+  try {
+    job.result = await backfillMusicLibrarySpotifyIdentityTags({
+      onProgress(progress) {
+        updateMusicLibraryIdentityTagBackfillJob(job, progress);
+      }
+    });
+    updateMusicLibraryIdentityTagBackfillJob(job, {
+      ...job.result,
+      processedCount: job.result.trackCount,
+      totalCount: job.result.trackCount
+    });
+    job.status = "completed";
+    job.completedAt = new Date().toISOString();
+    job.currentTrackName = undefined;
+    job.currentTrackPosition = undefined;
+    job.updatedAt = job.completedAt;
+  } catch (error) {
+    job.error = errorMessage(error);
+    job.status = "failed";
+    job.completedAt = new Date().toISOString();
+    job.currentTrackName = undefined;
+    job.currentTrackPosition = undefined;
+    job.updatedAt = job.completedAt;
+  } finally {
+    activeIdentityTagBackfillJobs.delete(jobId);
+  }
+}
+
+function updateMusicLibraryIdentityTagBackfillJob(
+  job: MusicLibraryIdentityTagBackfillJobRecord,
+  progress: MusicLibraryIdentityTagBackfillProgress
+) {
+  job.alreadyTaggedCount = progress.alreadyTaggedCount;
+  job.attemptedCount = progress.attemptedCount;
+  job.currentTrackName = progress.currentTrackName;
+  job.currentTrackPosition = progress.currentTrackPosition;
+  job.failedCount = progress.failedCount;
+  job.matchedCount = progress.matchedCount;
+  job.processedCount = progress.processedCount;
+  job.skippedCount = progress.skippedCount;
+  job.snapshotCount = progress.snapshotCount;
+  job.taggedCount = progress.taggedCount;
+  job.totalCount = progress.totalCount;
+  job.trackCount = progress.trackCount;
+  job.updatedAt = new Date().toISOString();
+}
+
+function snapshotMusicLibraryIdentityTagBackfillJob(
+  job: MusicLibraryIdentityTagBackfillJobRecord
+): MusicLibraryIdentityTagBackfillJobSnapshot {
+  return {
+    alreadyTaggedCount: job.alreadyTaggedCount,
+    attemptedCount: job.attemptedCount,
+    completedAt: job.completedAt,
+    createdAt: job.createdAt,
+    currentTrackName: job.currentTrackName,
+    currentTrackPosition: job.currentTrackPosition,
+    error: job.error,
+    failedCount: job.failedCount,
+    id: job.id,
+    matchedCount: job.matchedCount,
+    processedCount: job.processedCount,
+    result: job.result,
+    skippedCount: job.skippedCount,
+    snapshotCount: job.snapshotCount,
+    status: job.status,
+    taggedCount: job.taggedCount,
+    totalCount: job.totalCount,
+    trackCount: job.trackCount,
+    updatedAt: job.updatedAt
+  };
+}
+
+function pruneIdentityTagBackfillJobs() {
+  if (identityTagBackfillJobs.size <= maxIdentityTagBackfillJobs) {
+    return;
+  }
+
+  const removableJobs = [...identityTagBackfillJobs.values()]
+    .filter((job) => job.status === "completed" || job.status === "failed")
+    .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
+
+  for (const job of removableJobs) {
+    if (identityTagBackfillJobs.size <= maxIdentityTagBackfillJobs) {
+      break;
+    }
+
+    identityTagBackfillJobs.delete(job.id);
+  }
+}
+
+export async function backfillMusicLibrarySpotifyIdentityTags(
+  options: MusicLibraryIdentityTagBackfillOptions = {}
+) {
   const libraryPath = getMusicLibraryPath();
 
   if (!libraryPath) {
@@ -1238,15 +1438,39 @@ export async function backfillMusicLibrarySpotifyIdentityTags() {
   let alreadyTaggedCount = 0;
   let attemptedCount = 0;
   let matchedCount = 0;
+  let processedCount = 0;
   let skippedCount = 0;
   let taggedCount = 0;
+  const totalCount = tracks.length;
+  const reportProgress = (track?: BackupTrack) => {
+    options.onProgress?.({
+      alreadyTaggedCount,
+      attemptedCount,
+      currentTrackName: track?.name,
+      currentTrackPosition: track?.position,
+      failedCount: failures.length,
+      matchedCount,
+      processedCount,
+      skippedCount,
+      snapshotCount: snapshots.length,
+      taggedCount,
+      totalCount,
+      trackCount: tracks.length
+    });
+  };
+
+  reportProgress();
 
   for (const [trackIndex, track] of tracks.entries()) {
     const match = matches[trackIndex];
     const matchedTrack = match?.matchedTrack;
 
+    reportProgress(track);
+
     if (!match?.exists || !matchedTrack) {
       skippedCount += 1;
+      processedCount += 1;
+      reportProgress(track);
       continue;
     }
 
@@ -1254,6 +1478,8 @@ export async function backfillMusicLibrarySpotifyIdentityTags() {
 
     if (processedRelativePathKeys.has(relativePathKey)) {
       skippedCount += 1;
+      processedCount += 1;
+      reportProgress(track);
       continue;
     }
 
@@ -1266,11 +1492,15 @@ export async function backfillMusicLibrarySpotifyIdentityTags() {
 
     if (!spotifyBuIdentityMetadataHasTrackIdentity(identityMetadata)) {
       skippedCount += 1;
+      processedCount += 1;
+      reportProgress(track);
       continue;
     }
 
     if (indexedTrackHasSpotifyIdentity(indexedTrack, identityMetadata)) {
       alreadyTaggedCount += 1;
+      processedCount += 1;
+      reportProgress(track);
       continue;
     }
 
@@ -1292,6 +1522,9 @@ export async function backfillMusicLibrarySpotifyIdentityTags() {
         trackName: track.name
       });
     }
+
+    processedCount += 1;
+    reportProgress(track);
   }
 
   const updatedIndex =

@@ -96,11 +96,40 @@ type MusicLibraryIdentityTagBackfillResult = {
   trackCount: number;
 };
 
+type MusicLibraryIdentityTagBackfillJobStatus =
+  | "completed"
+  | "failed"
+  | "queued"
+  | "running";
+
+type MusicLibraryIdentityTagBackfillJob = {
+  alreadyTaggedCount: number;
+  attemptedCount: number;
+  completedAt?: string;
+  createdAt: string;
+  currentTrackName?: string;
+  currentTrackPosition?: number;
+  error?: string;
+  failedCount: number;
+  id: string;
+  matchedCount: number;
+  processedCount: number;
+  result?: MusicLibraryIdentityTagBackfillResult;
+  skippedCount: number;
+  snapshotCount: number;
+  status: MusicLibraryIdentityTagBackfillJobStatus;
+  taggedCount: number;
+  totalCount: number;
+  trackCount: number;
+  updatedAt: string;
+};
+
 type MusicLibraryIdentityTagBackfillResponse = {
-  backfill: MusicLibraryIdentityTagBackfillResult;
+  job: MusicLibraryIdentityTagBackfillJob;
 };
 
 const numberFormatter = new Intl.NumberFormat("en-US");
+const identityBackfillJobStorageKey = "spotifybu.identityBackfillJobId";
 
 export default function SettingsPage() {
   const [currentPassword, setCurrentPassword] = useState("");
@@ -114,6 +143,8 @@ export default function SettingsPage() {
   const [autoScan, setAutoScan] = useState<MusicLibraryAutoScanStatus | null>(null);
   const [identityBackfill, setIdentityBackfill] =
     useState<MusicLibraryIdentityTagBackfillResult | null>(null);
+  const [identityBackfillJob, setIdentityBackfillJob] =
+    useState<MusicLibraryIdentityTagBackfillJob | null>(null);
   const [namingSettings, setNamingSettings] =
     useState<OrganizeNamingSettings | null>(null);
   const [newPassword, setNewPassword] = useState("");
@@ -384,10 +415,54 @@ export default function SettingsPage() {
     [plexSettings, plexToken]
   );
 
+  const applyIdentityBackfillJob = useCallback(
+    (job: MusicLibraryIdentityTagBackfillJob) => {
+      setIdentityBackfillJob(job);
+      setIsBackfillingIdentityTags(isIdentityBackfillJobActive(job));
+
+      if (!isIdentityBackfillJobTerminal(job)) {
+        return;
+      }
+
+      try {
+        window.localStorage.removeItem(identityBackfillJobStorageKey);
+      } catch {
+        // Ignore localStorage failures in private browsing modes.
+      }
+
+      if (job.status === "completed" && job.result) {
+        setIdentityBackfill(job.result);
+        setSuccess(identityBackfillSummary(job.result));
+        return;
+      }
+
+      if (job.status === "failed") {
+        setError(job.error ?? "Could not backfill Spotify identity tags.");
+      }
+    },
+    []
+  );
+
+  const loadIdentityBackfillJob = useCallback(
+    async (jobId: string) => {
+      const response = await fetch(
+        `/api/music-library/identity-tags/${encodeURIComponent(jobId)}`
+      );
+      const body =
+        await readJson<MusicLibraryIdentityTagBackfillResponse>(response);
+
+      applyIdentityBackfillJob(body.job);
+
+      return body.job;
+    },
+    [applyIdentityBackfillJob]
+  );
+
   const backfillIdentityTags = useCallback(async () => {
     setError(null);
     setSuccess(null);
     setIdentityBackfill(null);
+    setIdentityBackfillJob(null);
     setIsBackfillingIdentityTags(true);
 
     try {
@@ -397,19 +472,100 @@ export default function SettingsPage() {
       const body =
         await readJson<MusicLibraryIdentityTagBackfillResponse>(response);
 
-      setIdentityBackfill(body.backfill);
-      setSuccess(identityBackfillSummary(body.backfill));
+      try {
+        window.localStorage.setItem(identityBackfillJobStorageKey, body.job.id);
+      } catch {
+        // Progress still works during this page session.
+      }
+
+      applyIdentityBackfillJob(body.job);
     } catch (settingsError) {
       setError(
         settingsError instanceof Error
           ? settingsError.message
           : "Could not backfill Spotify identity tags."
       );
-    } finally {
       setIsBackfillingIdentityTags(false);
     }
-  }, []);
+  }, [applyIdentityBackfillJob]);
 
+  useEffect(() => {
+    let storedJobId = "";
+
+    try {
+      storedJobId =
+        window.localStorage.getItem(identityBackfillJobStorageKey) ?? "";
+    } catch {
+      return;
+    }
+
+    if (!storedJobId || identityBackfillJob?.id === storedJobId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void loadIdentityBackfillJob(storedJobId).catch(() => {
+      if (cancelled) {
+        return;
+      }
+
+      try {
+        window.localStorage.removeItem(identityBackfillJobStorageKey);
+      } catch {
+        // Ignore localStorage cleanup failures.
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [identityBackfillJob?.id, loadIdentityBackfillJob]);
+
+  useEffect(() => {
+    if (!identityBackfillJob || !isIdentityBackfillJobActive(identityBackfillJob)) {
+      return;
+    }
+
+    let cancelled = false;
+    const jobId = identityBackfillJob.id;
+    const refreshJob = () => {
+      void loadIdentityBackfillJob(jobId).catch((settingsError) => {
+        if (cancelled) {
+          return;
+        }
+
+        setError(
+          settingsError instanceof Error
+            ? settingsError.message
+            : "Could not load Spotify identity tag progress."
+        );
+        setIsBackfillingIdentityTags(false);
+      });
+    };
+    const interval = window.setInterval(refreshJob, 1250);
+
+    refreshJob();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [
+    identityBackfillJob?.id,
+    identityBackfillJob?.status,
+    loadIdentityBackfillJob
+  ]);
+
+  const identityBackfillTotalCount = identityBackfillJob?.totalCount ?? 0;
+  const identityBackfillProcessedCount = identityBackfillJob
+    ? Math.min(identityBackfillJob.processedCount, identityBackfillTotalCount)
+    : 0;
+  const identityBackfillProgressPercent = identityBackfillTotalCount
+    ? Math.round(
+        (identityBackfillProcessedCount / identityBackfillTotalCount) * 100
+      )
+    : 0;
   const internalAuthEnabled = authMode === "internal";
 
   return (
@@ -714,6 +870,50 @@ export default function SettingsPage() {
               Retag matched backups
             </button>
 
+            {identityBackfillJob ? (
+              <div className="download-progress">
+                <div className="download-progress-meta">
+                  <span>{identityBackfillJobStatusLabel(identityBackfillJob)}</span>
+                  <strong>
+                    {identityBackfillTotalCount
+                      ? `${numberFormatter.format(
+                          identityBackfillProcessedCount
+                        )}/${numberFormatter.format(identityBackfillTotalCount)}`
+                      : "Preparing"}
+                  </strong>
+                </div>
+                <div
+                  aria-label="Spotify identity tag progress"
+                  aria-valuemax={identityBackfillTotalCount || 100}
+                  aria-valuemin={0}
+                  aria-valuenow={
+                    identityBackfillTotalCount
+                      ? identityBackfillProcessedCount
+                      : undefined
+                  }
+                  className="download-progress-bar"
+                  role="progressbar"
+                >
+                  <span
+                    className={`download-progress-fill${
+                      !identityBackfillTotalCount &&
+                      isIdentityBackfillJobActive(identityBackfillJob)
+                        ? " indeterminate"
+                        : ""
+                    }`}
+                    style={
+                      identityBackfillTotalCount
+                        ? { width: `${identityBackfillProgressPercent}%` }
+                        : undefined
+                    }
+                  />
+                </div>
+                <p className="download-progress-note">
+                  {identityBackfillJobProgressNote(identityBackfillJob)}
+                </p>
+              </div>
+            ) : null}
+
             {identityBackfill ? (
               <div className="auth-note">
                 <CheckCircle2 size={18} />
@@ -917,6 +1117,59 @@ function autoScanScheduleLabel(autoScan: MusicLibraryAutoScanStatus) {
   }
 
   return "Next scan will be scheduled after saving.";
+}
+
+function identityBackfillJobStatusLabel(
+  job: MusicLibraryIdentityTagBackfillJob
+) {
+  if (job.status === "completed") {
+    return "Complete";
+  }
+
+  if (job.status === "failed") {
+    return "Failed";
+  }
+
+  if (job.status === "queued") {
+    return "Queued";
+  }
+
+  return "Running";
+}
+
+function identityBackfillJobProgressNote(
+  job: MusicLibraryIdentityTagBackfillJob
+) {
+  if (job.status === "failed") {
+    return job.error ?? "SpotifyBU could not backfill Spotify identity tags.";
+  }
+
+  if (job.currentTrackName && isIdentityBackfillJobActive(job)) {
+    const position =
+      typeof job.currentTrackPosition === "number"
+        ? `${numberFormatter.format(job.currentTrackPosition)}. `
+        : "";
+
+    return `${position}${job.currentTrackName}`;
+  }
+
+  return `${numberFormatter.format(job.taggedCount)} tagged, ${numberFormatter.format(
+    job.alreadyTaggedCount
+  )} already tagged, ${numberFormatter.format(job.skippedCount)} skipped${
+    job.failedCount ? `, ${numberFormatter.format(job.failedCount)} failed` : ""
+  }.`;
+}
+
+function isIdentityBackfillJobActive(
+  job: MusicLibraryIdentityTagBackfillJob
+) {
+  return job.status === "queued" || job.status === "running";
+}
+
+function isIdentityBackfillJobTerminal(
+  job: MusicLibraryIdentityTagBackfillJob
+) {
+  return job.status === "completed" || job.status === "failed";
 }
 
 function identityBackfillSummary(

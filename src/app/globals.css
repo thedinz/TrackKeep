@@ -1814,7 +1814,7 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   width: 42%;
 }
 
-.provider-download .download-progress-note {
+.download-progress-note {
   color: #b9ffd0;
   font-size: 0.78rem;
   overflow-wrap: anywhere;
