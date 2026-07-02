@@ -80,6 +80,39 @@ test("Plex playlist sync creates an audio playlist from matched tracks", async (
   });
 });
 
+test("Plex playlist sync rejects metadata-only tracks that cannot play", async (t) => {
+  await withTempEnvironment(t, async ({ libraryPath }) => {
+    const playlistCreates: string[] = [];
+    const server = await startMockPlexServer({
+      hubMetadata: [exampleMetadataOnlyPlexTrack],
+      onCreatePlaylist(uri) {
+        playlistCreates.push(uri);
+      },
+      sectionMetadata: []
+    });
+
+    t.after(async () => {
+      await server.close();
+    });
+
+    await writeLibraryIndex(libraryPath);
+    await updatePlexSettings({
+      enabled: true,
+      serverUrl: server.url,
+      token: "test-token"
+    });
+
+    await assert.rejects(
+      () =>
+        createOrUpdatePlexPlaylistFromSpotify(examplePlaylist, [exampleTrack], {
+          mode: "replace"
+        }),
+      /No backed-up tracks could be resolved to Plex tracks/
+    );
+    assert.deepEqual(playlistCreates, []);
+  });
+});
+
 async function withTempEnvironment(
   t: TestContext,
   run: (context: { configDirectory: string; libraryPath: string }) => Promise<void>
@@ -112,9 +145,11 @@ async function withTempEnvironment(
 }
 
 async function startMockPlexServer(options: {
+  hubMetadata?: unknown[];
   onAddPlaylistItems?: (uri: string) => void;
   onCreatePlaylist?: (uri: string) => void;
   onPosterUpdate?: (url: string) => void;
+  sectionMetadata?: unknown[];
 } = {}) {
   let createdPlaylist = false;
   let playlistItemCount = 0;
@@ -170,25 +205,7 @@ async function startMockPlexServer(options: {
       response.end(
         JSON.stringify({
           MediaContainer: {
-            Metadata: [
-              {
-                Media: [
-                  {
-                    Part: [
-                      {
-                        file: "Example Artist/Example Record/01 - Opening.mp3"
-                      }
-                    ]
-                  }
-                ],
-                duration: exampleTrack.durationMs,
-                grandparentTitle: "Example Artist",
-                parentTitle: "Example Record",
-                ratingKey: "501",
-                title: "Opening",
-                type: "track"
-              }
-            ]
+            Metadata: options.sectionMetadata ?? [examplePlayablePlexTrack]
           }
         })
       );
@@ -199,7 +216,13 @@ async function startMockPlexServer(options: {
       response.end(
         JSON.stringify({
           MediaContainer: {
-            Hub: []
+            Hub: options.hubMetadata?.length
+              ? [
+                  {
+                    Metadata: options.hubMetadata
+                  }
+                ]
+              : []
           }
         })
       );
@@ -391,6 +414,33 @@ function restoreEnvironmentValue(name: string, value: string | undefined) {
 
   delete process.env[name];
 }
+
+const examplePlayablePlexTrack = {
+  Media: [
+    {
+      Part: [
+        {
+          file: "Example Artist/Example Record/01 - Opening.mp3"
+        }
+      ]
+    }
+  ],
+  duration: 180000,
+  grandparentTitle: "Example Artist",
+  parentTitle: "Example Record",
+  ratingKey: "501",
+  title: "Opening",
+  type: "track"
+};
+
+const exampleMetadataOnlyPlexTrack = {
+  duration: 180000,
+  grandparentTitle: "Example Artist",
+  parentTitle: "Example Record",
+  ratingKey: "501",
+  title: "Opening",
+  type: "track"
+};
 
 const examplePlaylist = {
   collaborative: false,

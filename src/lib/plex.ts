@@ -853,17 +853,71 @@ async function resolvePlexTrack(
   let bestMatch: { score: number; track: PlexMetadataItem } | null = null;
 
   for (const candidate of candidates.values()) {
-    const score = scorePlexTrackCandidate(track, matchedTrack, candidate);
+    const playableCandidate = await playablePlexTrackCandidate(
+      settings,
+      candidate
+    );
+
+    if (!playableCandidate) {
+      continue;
+    }
+
+    const score = scorePlexTrackCandidate(track, matchedTrack, playableCandidate);
 
     if (!bestMatch || score > bestMatch.score) {
       bestMatch = {
         score,
-        track: candidate
+        track: playableCandidate
       };
     }
   }
 
   return bestMatch && bestMatch.score >= 60 ? bestMatch.track : null;
+}
+
+async function playablePlexTrackCandidate(
+  settings: PlexSettings,
+  candidate: PlexMetadataItem
+) {
+  if (plexPartFiles(candidate).length) {
+    return candidate;
+  }
+
+  const ratingKey = candidate.ratingKey;
+
+  if (!ratingKey) {
+    return null;
+  }
+
+  const hydratedCandidate = await getPlexMetadataItem(
+    settings,
+    ratingKey
+  ).catch(() => null);
+
+  if (
+    hydratedCandidate?.type !== "track" ||
+    !hydratedCandidate.ratingKey ||
+    !plexPartFiles(hydratedCandidate).length
+  ) {
+    return null;
+  }
+
+  return hydratedCandidate;
+}
+
+async function getPlexMetadataItem(
+  settings: PlexSettings,
+  ratingKey: string | number
+) {
+  const response = await plexApiRequest<PlexMetadataResponse>(
+    settings,
+    `/library/metadata/${encodeURIComponent(String(ratingKey))}`,
+    {
+      method: "GET"
+    }
+  );
+
+  return plexMetadataItems(response)[0] ?? null;
 }
 
 async function searchPlexLibraryTracks(
