@@ -8,6 +8,7 @@ import {
   LockKeyhole,
   RefreshCw,
   Save,
+  Server,
   SlidersHorizontal
 } from "lucide-react";
 import type { FormEvent } from "react";
@@ -55,6 +56,35 @@ type MusicLibraryAutoScanResponse = {
   autoScan: MusicLibraryAutoScanStatus;
 };
 
+type PlexMusicLibrary = {
+  key: string;
+  title: string;
+};
+
+type PlexStatus = {
+  configured: boolean;
+  libraries: PlexMusicLibrary[];
+  message: string;
+  musicLibraryKey?: string;
+  musicLibraryTitle?: string;
+  serverUrl: string;
+  state: "auth_failed" | "disabled" | "error" | "not_configured" | "ready";
+};
+
+type PublicPlexSettings = {
+  enabled: boolean;
+  libraries: PlexMusicLibrary[];
+  musicLibraryKey: string;
+  musicLibraryTitle?: string;
+  serverUrl: string;
+  status: PlexStatus;
+  tokenConfigured: boolean;
+};
+
+type PlexSettingsResponse = {
+  plex: PublicPlexSettings;
+};
+
 type MusicLibraryIdentityTagBackfillResult = {
   alreadyTaggedCount: number;
   attemptedCount: number;
@@ -78,6 +108,7 @@ export default function SettingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingAuthMode, setIsSavingAuthMode] = useState(false);
   const [isSavingAutoScan, setIsSavingAutoScan] = useState(false);
+  const [isSavingPlex, setIsSavingPlex] = useState(false);
   const [isBackfillingIdentityTags, setIsBackfillingIdentityTags] =
     useState(false);
   const [autoScan, setAutoScan] = useState<MusicLibraryAutoScanStatus | null>(null);
@@ -87,6 +118,10 @@ export default function SettingsPage() {
     useState<OrganizeNamingSettings | null>(null);
   const [newPassword, setNewPassword] = useState("");
   const [authMode, setAuthMode] = useState<"external" | "internal">("internal");
+  const [plexSettings, setPlexSettings] = useState<PublicPlexSettings | null>(
+    null
+  );
+  const [plexToken, setPlexToken] = useState("");
   const [status, setStatus] = useState<AppAuthStatus | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [username, setUsername] = useState("");
@@ -119,6 +154,15 @@ export default function SettingsPage() {
       })
       .catch(() => {
         setError("Could not load Navidrome auto scan settings.");
+      });
+
+    void fetch("/api/plex/settings")
+      .then(readJson<PlexSettingsResponse>)
+      .then((response) => {
+        setPlexSettings(response.plex);
+      })
+      .catch(() => {
+        setError("Could not load Plex settings.");
       });
   }, []);
 
@@ -275,6 +319,69 @@ export default function SettingsPage() {
       }
     },
     [autoScan]
+  );
+
+  const updatePlexSettingsState = useCallback(
+    (update: Partial<PublicPlexSettings>) => {
+      setPlexSettings((current) =>
+        current
+          ? {
+              ...current,
+              ...update
+            }
+          : current
+      );
+    },
+    []
+  );
+
+  const submitPlexSettings = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+
+      if (!plexSettings) {
+        return;
+      }
+
+      setError(null);
+      setSuccess(null);
+      setIsSavingPlex(true);
+
+      try {
+        const response = await fetch("/api/plex/settings", {
+          body: JSON.stringify({
+            plex: {
+              enabled: plexSettings.enabled,
+              musicLibraryKey: plexSettings.musicLibraryKey,
+              serverUrl: plexSettings.serverUrl,
+              token: plexToken
+            }
+          }),
+          headers: {
+            "Content-Type": "application/json"
+          },
+          method: "POST"
+        });
+        const body = await readJson<PlexSettingsResponse>(response);
+
+        setPlexSettings(body.plex);
+        setPlexToken("");
+        setSuccess(
+          body.plex.enabled
+            ? `Plex playlist sync saved. ${body.plex.status.message}`
+            : "Plex playlist sync disabled."
+        );
+      } catch (settingsError) {
+        setError(
+          settingsError instanceof Error
+            ? settingsError.message
+            : "Could not save Plex settings."
+        );
+      } finally {
+        setIsSavingPlex(false);
+      }
+    },
+    [plexSettings, plexToken]
   );
 
   const backfillIdentityTags = useCallback(async () => {
@@ -445,6 +552,131 @@ export default function SettingsPage() {
                 Save internal login
               </button>
             </form>
+          </div>
+        </div>
+
+        <div className="panel settings-panel">
+          <div className="panel-header">
+            <div className="panel-title">
+              <Server size={20} />
+              <div>
+                <h2>Plex Playlist Sync</h2>
+                <p className="muted">Server URL and X-Plex-Token access</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="settings-body">
+            {plexSettings ? (
+              <form className="auth-form" onSubmit={submitPlexSettings}>
+                <label className="checkbox-field">
+                  <input
+                    checked={plexSettings.enabled}
+                    onChange={(event) =>
+                      updatePlexSettingsState({
+                        enabled: event.target.checked
+                      })
+                    }
+                    type="checkbox"
+                  />
+                  <span>Sync playlists to Plex</span>
+                </label>
+
+                {plexSettings.enabled ? (
+                  <div className="settings-subsection">
+                    <label className="form-field">
+                      <span className="stat-label">Plex Server URL</span>
+                      <input
+                        onChange={(event) =>
+                          updatePlexSettingsState({
+                            serverUrl: event.target.value
+                          })
+                        }
+                        placeholder="http://localhost:32400"
+                        value={plexSettings.serverUrl}
+                      />
+                    </label>
+
+                    <label className="form-field">
+                      <span className="stat-label">X-Plex-Token</span>
+                      <input
+                        autoComplete="off"
+                        onChange={(event) => setPlexToken(event.target.value)}
+                        placeholder={
+                          plexSettings.tokenConfigured
+                            ? "Saved token on file"
+                            : "Plex token"
+                        }
+                        type="password"
+                        value={plexToken}
+                      />
+                    </label>
+
+                    <label className="form-field">
+                      <span className="stat-label">Music Library</span>
+                      <select
+                        disabled={!plexSettings.libraries.length}
+                        onChange={(event) =>
+                          updatePlexSettingsState({
+                            musicLibraryKey: event.target.value
+                          })
+                        }
+                        value={plexSettings.musicLibraryKey}
+                      >
+                        {plexSettings.libraries.length ? null : (
+                          <option value={plexSettings.musicLibraryKey}>
+                            {plexSettings.musicLibraryKey
+                              ? "Selected library unavailable"
+                              : "Save to load libraries"}
+                          </option>
+                        )}
+                        {plexSettings.libraries.map((library) => (
+                          <option key={library.key} value={library.key}>
+                            {library.title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <div
+                      className={`auth-note ${
+                        plexSettings.status.state === "ready" ? "success" : ""
+                      }`}
+                    >
+                      {plexSettings.status.state === "ready" ? (
+                        <CheckCircle2 size={18} />
+                      ) : (
+                        <Server size={18} />
+                      )}
+                      <span>{plexSettings.status.message}</span>
+                    </div>
+                  </div>
+                ) : null}
+
+                <button
+                  className="command green"
+                  disabled={
+                    isSavingPlex ||
+                    (plexSettings.enabled &&
+                      (!plexSettings.serverUrl.trim() ||
+                        (!plexSettings.tokenConfigured && !plexToken.trim())))
+                  }
+                  type="submit"
+                >
+                  {isSavingPlex ? (
+                    <RefreshCw className="spin" size={18} />
+                  ) : (
+                    <Save size={18} />
+                  )}
+                  Save Plex
+                </button>
+              </form>
+            ) : (
+              <div className="auth-note">
+                <RefreshCw className="spin" size={18} />
+                <span>Loading Plex settings</span>
+              </div>
+            )}
           </div>
         </div>
 

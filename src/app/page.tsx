@@ -18,6 +18,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  Server,
   Settings,
   ShieldCheck,
   Trash2,
@@ -331,11 +332,44 @@ type MusicLibraryPlaylistSyncResponse = {
     }>;
     skippedCount: number;
     songCount: number;
+    target: MusicLibraryPlaylistSyncTarget;
+    targetName: string;
     updated: boolean;
   };
 };
 
 type MusicLibraryPlaylistSyncMode = "append" | "fullsync" | "replace";
+
+type MusicLibraryPlaylistSyncTarget = "navidrome" | "plex";
+
+type PlexMusicLibrary = {
+  key: string;
+  title: string;
+};
+
+type PlexStatus = {
+  configured: boolean;
+  libraries: PlexMusicLibrary[];
+  message: string;
+  musicLibraryKey?: string;
+  musicLibraryTitle?: string;
+  serverUrl: string;
+  state: "auth_failed" | "disabled" | "error" | "not_configured" | "ready";
+};
+
+type PublicPlexSettings = {
+  enabled: boolean;
+  libraries: PlexMusicLibrary[];
+  musicLibraryKey: string;
+  musicLibraryTitle?: string;
+  serverUrl: string;
+  status: PlexStatus;
+  tokenConfigured: boolean;
+};
+
+type PlexSettingsResponse = {
+  plex: PublicPlexSettings;
+};
 
 type TrackOrganizeDialogState = {
   match: LibraryMatch;
@@ -598,6 +632,8 @@ export default function Home() {
     useState(false);
   const [musicLibraryPlaylistSyncMode, setMusicLibraryPlaylistSyncMode] =
     useState<MusicLibraryPlaylistSyncMode>("replace");
+  const [musicLibraryPlaylistSyncTarget, setMusicLibraryPlaylistSyncTarget] =
+    useState<MusicLibraryPlaylistSyncTarget>("navidrome");
   const [isSearchingProvider, setIsSearchingProvider] = useState(false);
   const [isDownloadingProvider, setIsDownloadingProvider] = useState(false);
   const [isDownloadingBulkProvider, setIsDownloadingBulkProvider] =
@@ -606,6 +642,9 @@ export default function Home() {
     useState(false);
   const [musicLibraryStatus, setMusicLibraryStatus] =
     useState<MusicLibraryStatus | null>(null);
+  const [plexSettings, setPlexSettings] = useState<PublicPlexSettings | null>(
+    null
+  );
   const [requestError, setRequestError] = useState<string | null>(null);
   const [downloadTrackPosition, setDownloadTrackPosition] = useState("");
   const [downloadQuality, setDownloadQuality] = useState("320");
@@ -761,6 +800,29 @@ export default function Home() {
         },
         state: "error",
         writable: false
+      });
+    }
+  }, []);
+
+  const loadPlexSettingsStatus = useCallback(async () => {
+    try {
+      const response = await fetchJson<PlexSettingsResponse>("/api/plex/settings");
+
+      setPlexSettings(response.plex);
+    } catch {
+      setPlexSettings({
+        enabled: false,
+        libraries: [],
+        musicLibraryKey: "",
+        serverUrl: "",
+        status: {
+          configured: false,
+          libraries: [],
+          message: "SpotifyBU could not check Plex settings.",
+          serverUrl: "",
+          state: "error"
+        },
+        tokenConfigured: false
       });
     }
   }, []);
@@ -1185,10 +1247,14 @@ export default function Home() {
       const response = await postJson<MusicLibraryPlaylistSyncResponse>(
         `/api/spotify/playlists/${selectedPlaylistId}/music-library`,
         {
-          mode: musicLibraryPlaylistSyncMode
+          mode: musicLibraryPlaylistSyncMode,
+          target: musicLibraryPlaylistSyncTarget
         }
       );
       const result = response.musicLibraryPlaylist;
+      const targetName =
+        result.targetName ??
+        playlistSyncTargetLabel(musicLibraryPlaylistSyncTarget);
       const action =
         result.mode === "append" && result.updated
           ? `Appended ${numberFormatter.format(result.appendedCount ?? 0)} tracks to`
@@ -1215,7 +1281,7 @@ export default function Home() {
         : "";
 
       setMusicLibraryPlaylistMessage(
-        `${action} Navidrome playlist "${result.name}" with ${numberFormatter.format(
+        `${action} ${targetName} playlist "${result.name}" with ${numberFormatter.format(
           result.songCount
         )} tracks.${fullSyncDetails ? ` ${fullSyncDetails}.` : ""}${skipped}`
       );
@@ -1225,7 +1291,11 @@ export default function Home() {
     } finally {
       setIsCreatingMusicLibraryPlaylist(false);
     }
-  }, [musicLibraryPlaylistSyncMode, selectedPlaylistId]);
+  }, [
+    musicLibraryPlaylistSyncMode,
+    musicLibraryPlaylistSyncTarget,
+    selectedPlaylistId
+  ]);
 
   const searchProviderTrack = useCallback(async (track: BackupTrack) => {
     setDownloadTrackPosition(String(track.position));
@@ -1573,6 +1643,7 @@ export default function Home() {
       void loadLibraryIndex();
       void loadSession();
       void loadMusicLibraryStatus();
+      void loadPlexSettingsStatus();
     }
 
     void loadAuthenticatedStartupData();
@@ -1584,6 +1655,7 @@ export default function Home() {
     loadAppInfo,
     loadLibraryIndex,
     loadMusicLibraryStatus,
+    loadPlexSettingsStatus,
     loadSession,
     loadSpotifyAuthConfig
   ]);
@@ -1791,6 +1863,16 @@ export default function Home() {
   const musicServerApiReady =
     musicLibraryStatus?.server.state === "ready" ||
     musicLibraryStatus?.server.state === "scan_requested";
+  const plexPlaylistSyncReady = plexSettings?.status.state === "ready";
+  const selectedPlaylistSyncTargetReady =
+    musicLibraryPlaylistSyncTarget === "plex"
+      ? plexPlaylistSyncReady
+      : musicServerApiReady;
+  const selectedPlaylistSyncTargetStatus =
+    musicLibraryPlaylistSyncTarget === "plex"
+      ? plexSettings?.status.message ?? "Check Plex settings"
+      : musicLibraryStatus?.server.message ??
+        "Connect Navidrome API credentials to create playlists";
   const musicLibraryStatusLabel = musicLibraryStatus
     ? musicLibraryStatusMessage(musicLibraryStatus)
     : "Checking library target";
@@ -1905,7 +1987,7 @@ export default function Home() {
     sourceKind === "playlist" &&
     Boolean(selectedPlaylistId) &&
     tracks.length > 0 &&
-    musicServerApiReady &&
+    selectedPlaylistSyncTargetReady &&
     !isLoadingTracks &&
     !isCreatingMusicLibraryPlaylist;
   const selectedDownloadTrack =
@@ -2735,7 +2817,27 @@ export default function Home() {
                 {sourceKind === "playlist" ? (
                   <>
                     <label className="sync-mode-control">
-                      <span className="stat-label">Navidrome</span>
+                      <span className="stat-label">Target</span>
+                      <select
+                        disabled={isCreatingMusicLibraryPlaylist}
+                        onChange={(event) =>
+                          setMusicLibraryPlaylistSyncTarget(
+                            parseMusicLibraryPlaylistSyncTarget(event.target.value)
+                          )
+                        }
+                        value={musicLibraryPlaylistSyncTarget}
+                      >
+                        <option value="navidrome">Navidrome</option>
+                        <option
+                          disabled={!plexSettings?.enabled}
+                          value="plex"
+                        >
+                          {plexSettings?.enabled ? "Plex" : "Plex off"}
+                        </option>
+                      </select>
+                    </label>
+                    <label className="sync-mode-control">
+                      <span className="stat-label">Mode</span>
                       <select
                         disabled={isCreatingMusicLibraryPlaylist}
                         onChange={(event) =>
@@ -2757,9 +2859,11 @@ export default function Home() {
                       disabled={!canCreateMusicLibraryPlaylist}
                       onClick={() => void createMusicLibraryPlaylist()}
                       title={
-                        musicServerApiReady
-                          ? "Sync this playlist in Navidrome"
-                          : "Connect Navidrome API credentials to create playlists"
+                        selectedPlaylistSyncTargetReady
+                          ? `Sync this playlist in ${playlistSyncTargetLabel(
+                              musicLibraryPlaylistSyncTarget
+                            )}`
+                          : selectedPlaylistSyncTargetStatus
                       }
                       type="button"
                     >
@@ -3664,6 +3768,25 @@ export default function Home() {
                   </span>
                 </div>
               ) : null}
+              {plexSettings?.enabled ? (
+                <div className="provider-row">
+                  <span
+                    className={`provider-icon ${
+                      plexSettings.status.state === "ready" ? "green" : "amber"
+                    }`}
+                  >
+                    {plexSettings.status.state === "ready" ? (
+                      <CheckCircle2 size={18} />
+                    ) : (
+                      <Server size={18} />
+                    )}
+                  </span>
+                  <span>
+                    <h3>Plex API</h3>
+                    <p>{plexSettings.status.message}</p>
+                  </span>
+                </div>
+              ) : null}
               <div className="provider-row with-action index-row">
                 <span
                   className={`provider-icon ${
@@ -4354,6 +4477,16 @@ function parseMusicLibraryPlaylistSyncMode(
   }
 
   return "replace";
+}
+
+function parseMusicLibraryPlaylistSyncTarget(
+  value: string
+): MusicLibraryPlaylistSyncTarget {
+  return value === "plex" ? "plex" : "navidrome";
+}
+
+function playlistSyncTargetLabel(target: MusicLibraryPlaylistSyncTarget) {
+  return target === "plex" ? "Plex" : "Navidrome";
 }
 
 function formatDuration(durationMs: number) {
