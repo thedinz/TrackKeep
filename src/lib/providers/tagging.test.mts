@@ -6,7 +6,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { spotifyAudioMetadataArgs, tagDownloadedFile } from "./tagging.ts";
+import {
+  spotifyAudioMetadataArgs,
+  spotifyBackfillMetadataArgs,
+  tagAudioFileWithSpotifyBackfillMetadata,
+  tagDownloadedFile
+} from "./tagging.ts";
 import {
   spotifyBuIdentityTags,
   spotifyBuIdentityVersion
@@ -49,6 +54,66 @@ test("tagDownloadedFile metadata arguments include SpotifyBU identity tags", () 
   );
 });
 
+test("tagDownloadedFile metadata arguments include Navidrome-facing release tags", () => {
+  const metadataValues = metadataArgumentValues(
+    spotifyAudioMetadataArgs({
+      ...exampleTrack,
+      albumReleaseDate: "2012-08-07",
+      albumType: "compilation"
+    })
+  );
+
+  assert.ok(metadataValues.includes("date=2012-08-07"));
+  assert.ok(metadataValues.includes("releasedate=2012-08-07"));
+  assert.ok(metadataValues.includes("compilation=1"));
+});
+
+test("tagDownloadedFile metadata arguments skip invalid release dates and non-compilations", () => {
+  const metadataValues = metadataArgumentValues(
+    spotifyAudioMetadataArgs({
+      ...exampleTrack,
+      albumReleaseDate: "soon",
+      albumType: "album"
+    })
+  );
+
+  assert.equal(
+    metadataValues.some((value) => value.startsWith("date=")),
+    false
+  );
+  assert.equal(
+    metadataValues.some((value) => value.startsWith("releasedate=")),
+    false
+  );
+  assert.equal(metadataValues.includes("compilation=1"), false);
+});
+
+test("backfill metadata arguments only include identity and Navidrome-facing tags", () => {
+  const metadataValues = metadataArgumentValues(
+    spotifyBackfillMetadataArgs({
+      ...exampleTrack,
+      albumReleaseDate: "2012-08-07",
+      albumType: "compilation"
+    })
+  );
+
+  assert.ok(metadataValues.includes("date=2012-08-07"));
+  assert.ok(metadataValues.includes("releasedate=2012-08-07"));
+  assert.ok(metadataValues.includes("compilation=1"));
+  assert.equal(
+    metadataValues.some((value) => value.startsWith("title=")),
+    false
+  );
+  assert.equal(
+    metadataValues.some((value) => value.startsWith("artist=")),
+    false
+  );
+  assert.equal(
+    metadataValues.some((value) => value.startsWith("album=")),
+    false
+  );
+});
+
 test("tagDownloadedFile metadata arguments skip unresolved Spotify local identities", () => {
   const metadataValues = metadataArgumentValues(
     spotifyAudioMetadataArgs({
@@ -83,6 +148,62 @@ test("tagDownloadedFile metadata arguments skip unresolved Spotify local identit
       `${spotifyBuIdentityTags.identityVersion}=${spotifyBuIdentityVersion}`
     )
   );
+});
+
+test("backfill tagging preserves existing descriptive metadata", async (t) => {
+  if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
+    t.skip("ffmpeg and ffprobe are required for tagging regression coverage.");
+    return;
+  }
+
+  const directory = await mkdtemp(path.join(tmpdir(), "spotifybu-backfill-"));
+  t.after(async () => {
+    await rm(directory, {
+      force: true,
+      recursive: true
+    });
+  });
+
+  const filePath = path.join(directory, "existing-backup.mp3");
+
+  await execFileAsync(
+    "ffmpeg",
+    [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "anullsrc=r=44100:cl=mono",
+      "-t",
+      "0.1",
+      "-q:a",
+      "9",
+      "-metadata",
+      "title=Existing Local Title",
+      "-metadata",
+      "artist=Existing Local Artist",
+      "-metadata",
+      "album=Existing Local Album",
+      filePath
+    ],
+    {
+      timeout: 60000
+    }
+  );
+
+  await tagAudioFileWithSpotifyBackfillMetadata(filePath, {
+    ...exampleTrack,
+    albumReleaseDate: "2012-08-07",
+    albumType: "compilation"
+  });
+
+  const tags = await readAudioTags(filePath);
+
+  assert.equal(tags.title, "Existing Local Title");
+  assert.equal(tags.artist, "Existing Local Artist");
+  assert.equal(tags.album, "Existing Local Album");
+  assert.equal(tags.date, "2012-08-07");
+  assert.equal(tags.compilation, "1");
 });
 
 test("rewrites provider audio tags with Spotify metadata", async (t) => {
@@ -130,6 +251,7 @@ test("rewrites provider audio tags with Spotify metadata", async (t) => {
     album: "Late Nights With Jeremih",
     albumArtist: "Jeremih",
     albumArtistIds: [],
+    albumReleaseDate: "2012-08-07",
     artists: ["Jeremih"],
     artistIds: [],
     discNumber: 1,
@@ -148,6 +270,7 @@ test("rewrites provider audio tags with Spotify metadata", async (t) => {
   assert.equal(tags.album_artist, "Jeremih");
   assert.equal(tags.track, "7");
   assert.equal(tags.disc, "1");
+  assert.equal(tags.date, "2012-08-07");
 });
 
 test("fails instead of silently skipping expected Spotify artwork", async (t) => {
@@ -204,6 +327,7 @@ const exampleTrack = {
   album: "Late Nights With Jeremih",
   albumArtist: "Jeremih",
   albumArtistIds: [],
+  albumReleaseDate: "2012",
   artists: ["Jeremih"],
   artistIds: [],
   discNumber: 1,

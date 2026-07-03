@@ -1,10 +1,10 @@
 # SpotifyBU
 
-SpotifyBU is a Docker-first web app for turning a Spotify library into a Navidrome-ready local backup. It connects to a user's Spotify account, reads playlists, resolves Spotify song/album metadata, checks which songs are already backed up in the mounted Navidrome music folder, stages missing tracks into clean album folders, and exports backup metadata.
+SpotifyBU is a Docker-first web app for turning a Spotify library into a Navidrome-ready local backup with optional Navidrome or Plex playlist sync. It connects to a user's Spotify account, reads playlists, resolves Spotify song/album metadata, checks which songs are already backed up in the mounted Navidrome music folder, stages missing tracks into clean album folders, and exports backup metadata.
 
 The point is not to replace Navidrome search. Navidrome already tells you what files exist locally. SpotifyBU uses Spotify as the source-of-truth list, uses local library matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
 
-Current stable release: `1.6.2`. It includes the web UI, local or external-proxy app auth, Spotify OAuth diagnostics, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, Navidrome folder checks, SpotifyBU organize naming, library indexing, durable Spotify identity tags for downloaded files, matched-file organization, Navidrome playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
+Current stable release: `1.7.0`. It includes the web UI, local or external-proxy app auth, Spotify OAuth diagnostics, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, Navidrome folder checks, SpotifyBU organize naming, library indexing, durable Spotify identity tags for downloaded files, matched-file organization, Navidrome and Plex playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
 Download the latest stable release from GitHub: https://github.com/thedinz/SpotifyBU/releases/latest
 
@@ -22,15 +22,15 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - SQLite-backed playlist metadata backup snapshots saved under the SpotifyBU config directory
 - Song, album, and pasted track-list metadata lookup from Spotify URLs, URIs, or IDs
 - Playlist track preview
-- Optional Navidrome playlist creation from matched Spotify playlist tracks
+- Optional Navidrome or Plex playlist creation from matched Spotify playlist tracks
 - Navidrome folder status checks
 - Navidrome music folder indexing for local backup coverage checks
 - Navidrome folder planning using clean artist, album, and track paths
 - Backup coverage counts for backed-up and missing Spotify tracks
 - Track backup table with one-click provider search for missing tracks
 - Matched-file organization into clean Navidrome album folders
-- Replace, append, or full-sync matching Navidrome playlists from backed-up Spotify playlist tracks
-- Skipped-track review after Navidrome playlist sync
+- Replace, append, or full-sync matching Navidrome or Plex playlists from backed-up Spotify playlist tracks
+- Skipped-track review after playlist sync
 - Stable album-folder logging for staged download jobs
 - Spotify title, artist, album, album-cover, and durable Spotify identity tagging for staged provider downloads
 - Source-provider catalog with active YouTube and JioSaavn sourcing plus planned future providers
@@ -57,14 +57,14 @@ The test image built from the `dev` branch is:
 ghcr.io/thedinz/spotifybu:dev
 ```
 
-Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.6.2-dev.1`; stable releases use normal version tags such as `1.6.2`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
+Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.7.0-dev.1`; stable releases use normal version tags such as `1.7.0`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
 
-For the exact v1.6.2 release, pin one of these tags:
+For the exact v1.7.0 release, pin one of these tags:
 
 ```text
-ghcr.io/thedinz/spotifybu:v1.6.2
-ghcr.io/thedinz/spotifybu:1.6.2
-ghcr.io/thedinz/spotifybu:1.6
+ghcr.io/thedinz/spotifybu:v1.7.0
+ghcr.io/thedinz/spotifybu:1.7.0
+ghcr.io/thedinz/spotifybu:1.7
 ```
 
 Create a folder for SpotifyBU and save this Compose template as `docker-compose.yml`:
@@ -156,6 +156,9 @@ Set these values before starting the app:
 | `NAVIDROME_URL` | No | Navidrome URL as seen by the SpotifyBU container. Defaults to `http://host.docker.internal:4533`. |
 | `NAVIDROME_USERNAME` | No | Navidrome username. Optional, but required if SpotifyBU should ping Navidrome and request a server-side scan after staging files. |
 | `NAVIDROME_PASSWORD` | No | Navidrome password for `NAVIDROME_USERNAME`. Optional, but required with `NAVIDROME_USERNAME` for Navidrome scan and playlist sync requests. |
+| `PLEX_SERVER_URL` | No | Optional Plex Media Server URL for playlist sync, such as `http://host.docker.internal:32400`. Can also be saved from Settings. |
+| `PLEX_TOKEN` | No | Optional Plex `X-Plex-Token` for playlist sync. Can also be saved from Settings. |
+| `PLEX_MUSIC_LIBRARY_KEY` | No | Optional Plex music library key. If blank, SpotifyBU auto-selects the first Plex music library it can see. |
 | `MUSIC_LIBRARY_URL` | No | Generic equivalent for `NAVIDROME_URL`. |
 | `MUSIC_LIBRARY_USERNAME` | No | Generic equivalent for `NAVIDROME_USERNAME`. |
 | `MUSIC_LIBRARY_PASSWORD` | No | Generic equivalent for `NAVIDROME_PASSWORD`. |
@@ -371,13 +374,28 @@ the Subsonic token/salt request parameters at request time; it does not need a
 separate API key.
 
 When Navidrome API credentials are configured, Spotify playlist views include a
-Sync library action. The action creates or updates a same-named Navidrome
-playlist using Spotify tracks that are already matched to songs in the Navidrome
-API. Replace rebuilds the playlist from matched Spotify tracks, append only adds
-new matches, and full sync removes stale Navidrome playlist entries before adding
-the current matched Spotify order. Tracks that are not backed up or not visible
-to Navidrome are skipped and reported in the UI, so scan/index the folder before
-syncing a playlist.
+Sync library action. Choose Navidrome as the target to create or update a
+same-named Navidrome playlist using Spotify tracks that are already matched to
+songs in the Navidrome API. Replace rebuilds the playlist from matched Spotify
+tracks, append only adds new matches, and full sync removes stale Navidrome
+playlist entries before adding the current matched Spotify order. Tracks that
+are not backed up or not visible to Navidrome are skipped and reported in the UI,
+so scan/index the folder before syncing a playlist.
+
+### Plex Playlist Sync
+
+Plex playlist sync uses the same backed-up Spotify track matching as Navidrome.
+Open Settings, check `Sync playlists to Plex`, then enter the Plex server URL
+and an `X-Plex-Token`. SpotifyBU does not store a Plex username or password; it
+stores the token in the SpotifyBU config directory so it can call the Plex Media
+Server API. After saving, SpotifyBU lists Plex music libraries and selects the
+first one unless you choose another.
+
+On the playlist page, use the target dropdown to switch between Navidrome and
+Plex. Replace, append, and full sync have the same meaning for both targets.
+Tracks that are not backed up locally or cannot be found in Plex are skipped and
+reported in the UI. Scan Plex's music library after adding or organizing files
+before syncing playlists.
 
 If Library Index fails, check the mounted folder first:
 
@@ -460,6 +478,7 @@ docker run --rm -p 3000:3000 \
 - `src/lib/backup-store.ts` persists deduplicated playlist metadata backup snapshots.
 - `src/lib/spotify.ts` owns Spotify API calls and export shaping.
 - `src/lib/music-library.ts` owns Navidrome music path checks, safe target directory creation, folder planning, library indexing, local matching, matched-file organization, album-folder logging, and Navidrome playlist replace, append, and full-sync modes.
+- `src/lib/plex.ts` owns saved Plex settings, Plex status checks, music-library discovery, track resolution, and Plex playlist replace, append, and full-sync modes.
 - `src/lib/providers/types.ts` defines the source-provider contract and provider catalog for matching, downloading, tagging, and provenance.
 - `src/lib/providers/download.ts` searches provider candidates, validates selected provider URLs, calls `yt-dlp`, retries alternate provider candidates for source-side failures, stages files on the Navidrome volume, tags downloads with Spotify metadata, records provenance, and cleans abandoned staging files after idle.
 - `src/app/api/providers/route.ts` exposes the provider catalog and provider risk/status metadata.
@@ -471,7 +490,8 @@ docker run --rm -p 3000:3000 \
 - `src/app/api/providers/download/bulk/route.ts` starts persisted background bulk provider jobs.
 - `src/app/api/providers/download/bulk/[jobId]/route.ts` reports, cancels, and retries bulk provider jobs.
 - `src/app/api/music-library/organize/route.ts` moves or renames matched local files into their planned Navidrome album paths in small batches.
-- `src/app/api/spotify/playlists/[playlistId]/music-library/route.ts` replaces, appends, or full-syncs a matching Navidrome playlist from backed-up Spotify tracks.
+- `src/app/api/plex/settings/route.ts` reads and saves Plex playlist sync settings.
+- `src/app/api/spotify/playlists/[playlistId]/music-library/route.ts` replaces, appends, or full-syncs a matching Navidrome or Plex playlist from backed-up Spotify tracks.
 - `src/lib/session.ts` and `src/lib/server-session.ts` own PKCE cookie and Spotify token-session handling.
 - `.github/workflows/docker-image.yml` publishes GHCR images for `dev`, `main`, and `v*` tags. The `dev` branch publishes `dev`; `main` and version tags publish stable tags such as `latest`. The workflow runs `npm run check:yt-dlp` so image builds record the current yt-dlp release channel before publishing.
 

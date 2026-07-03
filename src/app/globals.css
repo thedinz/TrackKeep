@@ -1142,6 +1142,86 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   color: #ffe0e0;
 }
 
+.dialog-backdrop {
+  align-items: center;
+  background: rgba(5, 8, 6, 0.72);
+  display: grid;
+  inset: 0;
+  justify-items: center;
+  padding: 18px;
+  position: fixed;
+  z-index: 40;
+}
+
+.track-organize-dialog {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 14px;
+  max-width: 540px;
+  padding: 16px;
+  width: min(540px, 100%);
+}
+
+.dialog-header {
+  align-items: start;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 42px minmax(0, 1fr) 40px;
+}
+
+.dialog-header h2,
+.dialog-header p {
+  margin: 0;
+}
+
+.dialog-header h2 {
+  font-size: 1.05rem;
+  line-height: 1.2;
+}
+
+.dialog-header p:not(.eyebrow) {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+
+.dialog-close {
+  min-height: 38px;
+  padding: 0;
+}
+
+.organize-choice-summary {
+  background: rgba(5, 8, 6, 0.45);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.organize-choice-summary > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.organize-choice-summary span span:last-child {
+  color: var(--ink);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.organize-choice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .track-status.delete {
   background: rgba(255, 255, 255, 0.04);
   color: var(--muted);
@@ -1734,7 +1814,7 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   width: 42%;
 }
 
-.provider-download .download-progress-note {
+.download-progress-note {
   color: #b9ffd0;
   font-size: 0.78rem;
   overflow-wrap: anywhere;
