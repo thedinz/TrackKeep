@@ -17,7 +17,11 @@ import {
   type BackupTrack,
   type PlaylistSummary
 } from "./spotify";
-import { tagAudioFileWithSpotifyIdentity } from "./providers/tagging";
+import {
+  isSpotifyCompilationAlbum,
+  spotifyReleaseDateTag,
+  tagAudioFileWithSpotifyBackfillMetadata
+} from "./providers/tagging";
 import {
   spotifyBuIdentityKeyForTrack,
   spotifyBuIdentityMetadataForTrack,
@@ -118,11 +122,13 @@ export type MusicLibraryIndexedTrack = {
   albumArtist?: string;
   artist?: string;
   artists: string[];
+  compilation?: boolean;
   discNumber?: number;
   durationMs?: number;
   fileName: string;
   isrc?: string;
   mtimeMs: number;
+  releaseDate?: string;
   relativeDirectory: string;
   relativePath: string;
   sizeBytes: number;
@@ -161,6 +167,18 @@ export type MusicLibraryIndex = {
   version: 1;
 };
 
+type MusicLibraryOrganizeIgnore = {
+  ignoredAt: string;
+  recommendedRelativePath?: string;
+  relativePath: string;
+};
+
+type MusicLibraryOrganizeIgnoreStore = {
+  ignores: Record<string, MusicLibraryOrganizeIgnore>;
+  updatedAt: string;
+  version: 1;
+};
+
 export type MusicLibraryIndexSummary = {
   generatedAt?: string;
   libraryPath?: string;
@@ -194,6 +212,7 @@ export type MusicLibraryTrackMatch = {
   matchedBy?: MusicLibraryTrackMatchMethod;
   matchedTrack?: MusicLibraryIndexedTrack;
   needsMove: boolean;
+  organizeIgnored?: boolean;
   recommendedRelativePath?: string;
   trackId?: string;
   trackPosition: number;
@@ -203,6 +222,7 @@ export type MusicLibraryTrackMatchMethod =
   | "duration"
   | "isrc"
   | "metadata"
+  | "path"
   | "spotify_identity";
 
 export type MusicLibraryTrackOrganizationResult = {
@@ -213,6 +233,13 @@ export type MusicLibraryTrackOrganizationResult = {
   remainingMoveCount: number;
   skippedCount: number;
   summary: MusicLibraryIndexSummary;
+};
+
+export type MusicLibraryTrackOrganizationIgnoreResult = {
+  ignored: boolean;
+  index: MusicLibraryIndexSummary;
+  libraryMatches: MusicLibraryTrackMatch[];
+  relativePath?: string;
 };
 
 export type MusicLibraryTrackMoveFailure = {
@@ -229,6 +256,8 @@ export type MusicLibraryTrackMoveFailure = {
 export type MusicLibraryPlaylistSyncResult = {
   addedCount?: number;
   appendedCount?: number;
+  artworkError?: string;
+  artworkUpdated?: boolean;
   matchedCount: number;
   mode: MusicLibraryPlaylistSyncMode;
   name: string;
@@ -263,8 +292,59 @@ export type MusicLibraryIdentityTagBackfillResult = {
   trackCount: number;
 };
 
+export type MusicLibraryIdentityTagBackfillJobStatus =
+  | "completed"
+  | "failed"
+  | "queued"
+  | "running";
+
+export type MusicLibraryIdentityTagBackfillJobSnapshot = {
+  alreadyTaggedCount: number;
+  attemptedCount: number;
+  completedAt?: string;
+  createdAt: string;
+  currentTrackName?: string;
+  currentTrackPosition?: number;
+  error?: string;
+  failedCount: number;
+  id: string;
+  matchedCount: number;
+  processedCount: number;
+  result?: MusicLibraryIdentityTagBackfillResult;
+  skippedCount: number;
+  snapshotCount: number;
+  status: MusicLibraryIdentityTagBackfillJobStatus;
+  taggedCount: number;
+  totalCount: number;
+  trackCount: number;
+  updatedAt: string;
+};
+
+type MusicLibraryIdentityTagBackfillProgress = {
+  alreadyTaggedCount: number;
+  attemptedCount: number;
+  currentTrackName?: string;
+  currentTrackPosition?: number;
+  failedCount: number;
+  matchedCount: number;
+  processedCount: number;
+  skippedCount: number;
+  snapshotCount: number;
+  taggedCount: number;
+  totalCount: number;
+  trackCount: number;
+};
+
+type MusicLibraryIdentityTagBackfillOptions = {
+  onProgress?: (progress: MusicLibraryIdentityTagBackfillProgress) => void;
+};
+
+type MusicLibraryIdentityTagBackfillJobRecord =
+  MusicLibraryIdentityTagBackfillJobSnapshot;
+
 const albumFolderLogSegments = [".spotifybu", "album-folders.json"];
 const libraryIndexSegments = [".spotifybu", "library-index.json"];
+const organizeIgnoresSegments = [".spotifybu", "organize-ignores.json"];
 const defaultOrganizeMoveLimit = 15;
 const organizeMoveFailureLimit = 10;
 const indexValidationConcurrency = 64;
@@ -276,6 +356,12 @@ const controlCharacters = /[\u0000-\u001f]/g;
 const combiningMarks = /[\u0300-\u036f]/g;
 const reservedWindowsNames = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 const unsafePathCharacters = ["\\", "/", "<", ">", "?", "*", "|", "\""];
+const identityTagBackfillJobs = new Map<
+  string,
+  MusicLibraryIdentityTagBackfillJobRecord
+>();
+const activeIdentityTagBackfillJobs = new Set<string>();
+const maxIdentityTagBackfillJobs = 10;
 const pathReplacementCharacters = ["+", "+", "", "", "!", "-", "", ""];
 const audioFileExtensions = new Set([
   ".aac",
@@ -746,6 +832,55 @@ export async function readMusicLibraryIndex() {
   }
 }
 
+async function readMusicLibraryOrganizeIgnores(libraryPath: string) {
+  try {
+    const contents = await readFile(
+      path.join(/* turbopackIgnore: true */ libraryPath, ...organizeIgnoresSegments),
+      "utf8"
+    );
+    const parsed = JSON.parse(contents) as Partial<MusicLibraryOrganizeIgnoreStore>;
+
+    if (parsed.version !== 1 || !parsed.ignores) {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(parsed.ignores).filter(
+        (entry): entry is [string, MusicLibraryOrganizeIgnore] =>
+          Boolean(
+            entry[0] &&
+              entry[1] &&
+              typeof entry[1].ignoredAt === "string" &&
+              typeof entry[1].relativePath === "string"
+          )
+      )
+    );
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return {};
+    }
+
+    throw error;
+  }
+}
+
+async function writeMusicLibraryOrganizeIgnores(
+  ignores: Record<string, MusicLibraryOrganizeIgnore>
+) {
+  const storeDirectory = await ensureMusicLibraryTargetDirectory([".spotifybu"]);
+  const store = {
+    ignores,
+    updatedAt: new Date().toISOString(),
+    version: 1
+  } satisfies MusicLibraryOrganizeIgnoreStore;
+
+  await writeFile(
+    path.join(/* turbopackIgnore: true */ storeDirectory, "organize-ignores.json"),
+    `${JSON.stringify(store, null, 2)}\n`,
+    "utf8"
+  );
+}
+
 export async function readCurrentMusicLibraryIndex() {
   const libraryPath = getMusicLibraryPath();
   const index = await readMusicLibraryIndex();
@@ -999,7 +1134,285 @@ export async function deleteMusicLibraryTrack(relativePath: string) {
   };
 }
 
-export async function backfillMusicLibrarySpotifyIdentityTags() {
+export async function ignoreMusicLibraryTrackOrganization(
+  track: BackupTrack,
+  tracks: BackupTrack[] = [track]
+): Promise<MusicLibraryTrackOrganizationIgnoreResult> {
+  const context = await musicLibraryOrganizationIgnoreContext();
+  const identityKey = musicLibraryTrackOrganizationIgnoreKey(track);
+  const [rawMatch] = matchMusicLibraryTracksWithIndexUsingSettings(
+    [track],
+    context.index,
+    context.naming,
+    {}
+  );
+
+  if (!rawMatch?.matchedTrack) {
+    throw new Error("SpotifyBU could not find the matched Navidrome file to ignore.");
+  }
+
+  if (!rawMatch.needsMove || !rawMatch.recommendedRelativePath) {
+    throw new Error("That matched file is already in the active organize layout.");
+  }
+
+  const nextIgnores = {
+    ...context.ignores,
+    [identityKey]: {
+      ignoredAt: new Date().toISOString(),
+      recommendedRelativePath: rawMatch.recommendedRelativePath,
+      relativePath: rawMatch.matchedTrack.relativePath
+    }
+  } satisfies Record<string, MusicLibraryOrganizeIgnore>;
+
+  await writeMusicLibraryOrganizeIgnores(nextIgnores);
+
+  return musicLibraryOrganizationIgnoreResult({
+    ignored: true,
+    ignores: nextIgnores,
+    index: context.index,
+    libraryPath: context.libraryPath,
+    naming: context.naming,
+    relativePath: rawMatch.matchedTrack.relativePath,
+    tracks
+  });
+}
+
+export async function clearMusicLibraryTrackOrganizationIgnore(
+  track: BackupTrack,
+  tracks: BackupTrack[] = [track]
+): Promise<MusicLibraryTrackOrganizationIgnoreResult> {
+  const context = await musicLibraryOrganizationIgnoreContext();
+  const identityKey = musicLibraryTrackOrganizationIgnoreKey(track);
+  const relativePath = context.ignores[identityKey]?.relativePath;
+  const nextIgnores = { ...context.ignores };
+
+  delete nextIgnores[identityKey];
+
+  await writeMusicLibraryOrganizeIgnores(nextIgnores);
+
+  return musicLibraryOrganizationIgnoreResult({
+    ignored: false,
+    ignores: nextIgnores,
+    index: context.index,
+    libraryPath: context.libraryPath,
+    naming: context.naming,
+    relativePath,
+    tracks
+  });
+}
+
+async function musicLibraryOrganizationIgnoreContext() {
+  const libraryPath = getMusicLibraryPath();
+
+  if (!libraryPath) {
+    throw new Error("Navidrome music path is not configured.");
+  }
+
+  const index = await readCurrentMusicLibraryIndex();
+  const naming = await loadOrganizeNamingSettings();
+
+  if (!index || index.libraryPath !== libraryPath) {
+    throw new Error("Scan the current Navidrome folder before changing organize ignores.");
+  }
+
+  return {
+    ignores: await readMusicLibraryOrganizeIgnores(libraryPath),
+    index,
+    libraryPath,
+    naming
+  };
+}
+
+function musicLibraryOrganizationIgnoreResult({
+  ignored,
+  ignores,
+  index,
+  libraryPath,
+  naming,
+  relativePath,
+  tracks
+}: {
+  ignored: boolean;
+  ignores: Record<string, MusicLibraryOrganizeIgnore>;
+  index: MusicLibraryIndex;
+  libraryPath: string;
+  naming: OrganizeNamingSettings;
+  relativePath?: string;
+  tracks: BackupTrack[];
+}) {
+  const namingSchemeKey = organizeNamingSettingsKey(naming);
+  const summary = summarizeMusicLibraryIndex(index, libraryPath, namingSchemeKey);
+
+  lastLibraryIndexSummary = summary;
+
+  return {
+    ignored,
+    index: summary,
+    libraryMatches: matchMusicLibraryTracksWithIndexUsingSettings(
+      tracks,
+      index,
+      naming,
+      ignores
+    ),
+    relativePath
+  } satisfies MusicLibraryTrackOrganizationIgnoreResult;
+}
+
+function musicLibraryTrackOrganizationIgnoreKey(track: BackupTrack) {
+  const identityKey = spotifyBuIdentityKeyForTrack(track);
+
+  if (!identityKey) {
+    throw new Error("SpotifyBU cannot ignore organization for an unresolved Spotify local track.");
+  }
+
+  return identityKey;
+}
+
+export function startMusicLibrarySpotifyIdentityTagBackfillJob() {
+  const now = new Date().toISOString();
+  const job = {
+    alreadyTaggedCount: 0,
+    attemptedCount: 0,
+    createdAt: now,
+    failedCount: 0,
+    id: randomBytes(8).toString("hex"),
+    matchedCount: 0,
+    processedCount: 0,
+    skippedCount: 0,
+    snapshotCount: 0,
+    status: "queued",
+    taggedCount: 0,
+    totalCount: 0,
+    trackCount: 0,
+    updatedAt: now
+  } satisfies MusicLibraryIdentityTagBackfillJobRecord;
+
+  identityTagBackfillJobs.set(job.id, job);
+  pruneIdentityTagBackfillJobs();
+  scheduleMusicLibrarySpotifyIdentityTagBackfillJob(job.id);
+
+  return snapshotMusicLibraryIdentityTagBackfillJob(job);
+}
+
+export function getMusicLibrarySpotifyIdentityTagBackfillJobSnapshot(
+  jobId: string
+) {
+  const job = identityTagBackfillJobs.get(jobId);
+
+  return job ? snapshotMusicLibraryIdentityTagBackfillJob(job) : null;
+}
+
+function scheduleMusicLibrarySpotifyIdentityTagBackfillJob(jobId: string) {
+  setTimeout(() => {
+    void runMusicLibrarySpotifyIdentityTagBackfillJob(jobId);
+  }, 0);
+}
+
+async function runMusicLibrarySpotifyIdentityTagBackfillJob(jobId: string) {
+  const job = identityTagBackfillJobs.get(jobId);
+
+  if (!job || activeIdentityTagBackfillJobs.has(jobId)) {
+    return;
+  }
+
+  activeIdentityTagBackfillJobs.add(jobId);
+  job.status = "running";
+  job.updatedAt = new Date().toISOString();
+
+  try {
+    job.result = await backfillMusicLibrarySpotifyIdentityTags({
+      onProgress(progress) {
+        updateMusicLibraryIdentityTagBackfillJob(job, progress);
+      }
+    });
+    updateMusicLibraryIdentityTagBackfillJob(job, {
+      ...job.result,
+      processedCount: job.result.trackCount,
+      totalCount: job.result.trackCount
+    });
+    job.status = "completed";
+    job.completedAt = new Date().toISOString();
+    job.currentTrackName = undefined;
+    job.currentTrackPosition = undefined;
+    job.updatedAt = job.completedAt;
+  } catch (error) {
+    job.error = errorMessage(error);
+    job.status = "failed";
+    job.completedAt = new Date().toISOString();
+    job.currentTrackName = undefined;
+    job.currentTrackPosition = undefined;
+    job.updatedAt = job.completedAt;
+  } finally {
+    activeIdentityTagBackfillJobs.delete(jobId);
+  }
+}
+
+function updateMusicLibraryIdentityTagBackfillJob(
+  job: MusicLibraryIdentityTagBackfillJobRecord,
+  progress: MusicLibraryIdentityTagBackfillProgress
+) {
+  job.alreadyTaggedCount = progress.alreadyTaggedCount;
+  job.attemptedCount = progress.attemptedCount;
+  job.currentTrackName = progress.currentTrackName;
+  job.currentTrackPosition = progress.currentTrackPosition;
+  job.failedCount = progress.failedCount;
+  job.matchedCount = progress.matchedCount;
+  job.processedCount = progress.processedCount;
+  job.skippedCount = progress.skippedCount;
+  job.snapshotCount = progress.snapshotCount;
+  job.taggedCount = progress.taggedCount;
+  job.totalCount = progress.totalCount;
+  job.trackCount = progress.trackCount;
+  job.updatedAt = new Date().toISOString();
+}
+
+function snapshotMusicLibraryIdentityTagBackfillJob(
+  job: MusicLibraryIdentityTagBackfillJobRecord
+): MusicLibraryIdentityTagBackfillJobSnapshot {
+  return {
+    alreadyTaggedCount: job.alreadyTaggedCount,
+    attemptedCount: job.attemptedCount,
+    completedAt: job.completedAt,
+    createdAt: job.createdAt,
+    currentTrackName: job.currentTrackName,
+    currentTrackPosition: job.currentTrackPosition,
+    error: job.error,
+    failedCount: job.failedCount,
+    id: job.id,
+    matchedCount: job.matchedCount,
+    processedCount: job.processedCount,
+    result: job.result,
+    skippedCount: job.skippedCount,
+    snapshotCount: job.snapshotCount,
+    status: job.status,
+    taggedCount: job.taggedCount,
+    totalCount: job.totalCount,
+    trackCount: job.trackCount,
+    updatedAt: job.updatedAt
+  };
+}
+
+function pruneIdentityTagBackfillJobs() {
+  if (identityTagBackfillJobs.size <= maxIdentityTagBackfillJobs) {
+    return;
+  }
+
+  const removableJobs = [...identityTagBackfillJobs.values()]
+    .filter((job) => job.status === "completed" || job.status === "failed")
+    .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
+
+  for (const job of removableJobs) {
+    if (identityTagBackfillJobs.size <= maxIdentityTagBackfillJobs) {
+      break;
+    }
+
+    identityTagBackfillJobs.delete(job.id);
+  }
+}
+
+export async function backfillMusicLibrarySpotifyIdentityTags(
+  options: MusicLibraryIdentityTagBackfillOptions = {}
+) {
   const libraryPath = getMusicLibraryPath();
 
   if (!libraryPath) {
@@ -1012,7 +1425,7 @@ export async function backfillMusicLibrarySpotifyIdentityTags() {
 
   if (!index || index.libraryPath !== libraryPath) {
     throw new Error(
-      "Scan the current Navidrome folder before backfilling Spotify identity tags."
+      "Scan the current Navidrome folder before backfilling Spotify metadata tags."
     );
   }
 
@@ -1033,15 +1446,39 @@ export async function backfillMusicLibrarySpotifyIdentityTags() {
   let alreadyTaggedCount = 0;
   let attemptedCount = 0;
   let matchedCount = 0;
+  let processedCount = 0;
   let skippedCount = 0;
   let taggedCount = 0;
+  const totalCount = tracks.length;
+  const reportProgress = (track?: BackupTrack) => {
+    options.onProgress?.({
+      alreadyTaggedCount,
+      attemptedCount,
+      currentTrackName: track?.name,
+      currentTrackPosition: track?.position,
+      failedCount: failures.length,
+      matchedCount,
+      processedCount,
+      skippedCount,
+      snapshotCount: snapshots.length,
+      taggedCount,
+      totalCount,
+      trackCount: tracks.length
+    });
+  };
+
+  reportProgress();
 
   for (const [trackIndex, track] of tracks.entries()) {
     const match = matches[trackIndex];
     const matchedTrack = match?.matchedTrack;
 
+    reportProgress(track);
+
     if (!match?.exists || !matchedTrack) {
       skippedCount += 1;
+      processedCount += 1;
+      reportProgress(track);
       continue;
     }
 
@@ -1049,6 +1486,8 @@ export async function backfillMusicLibrarySpotifyIdentityTags() {
 
     if (processedRelativePathKeys.has(relativePathKey)) {
       skippedCount += 1;
+      processedCount += 1;
+      reportProgress(track);
       continue;
     }
 
@@ -1061,11 +1500,15 @@ export async function backfillMusicLibrarySpotifyIdentityTags() {
 
     if (!spotifyBuIdentityMetadataHasTrackIdentity(identityMetadata)) {
       skippedCount += 1;
+      processedCount += 1;
+      reportProgress(track);
       continue;
     }
 
-    if (indexedTrackHasSpotifyIdentity(indexedTrack, identityMetadata)) {
+    if (!indexedTrackNeedsSpotifyBackfill(indexedTrack, track, identityMetadata)) {
       alreadyTaggedCount += 1;
+      processedCount += 1;
+      reportProgress(track);
       continue;
     }
 
@@ -1074,7 +1517,7 @@ export async function backfillMusicLibrarySpotifyIdentityTags() {
     try {
       const filePath = absoluteLibraryPath(libraryPath, indexedTrack.relativePath);
 
-      await tagAudioFileWithSpotifyIdentity(filePath, track);
+      await tagAudioFileWithSpotifyBackfillMetadata(filePath, track);
       updatedTracksByRelativePath.set(
         relativePathKey,
         await indexAudioFile(libraryPath, filePath)
@@ -1087,6 +1530,9 @@ export async function backfillMusicLibrarySpotifyIdentityTags() {
         trackName: track.name
       });
     }
+
+    processedCount += 1;
+    reportProgress(track);
   }
 
   const updatedIndex =
@@ -1131,11 +1577,15 @@ export async function matchMusicLibraryTracks(tracks: BackupTrack[]) {
   const libraryPath = getMusicLibraryPath();
   const index = await readCurrentMusicLibraryIndex();
   const naming = await loadOrganizeNamingSettings();
+  const organizeIgnores = libraryPath
+    ? await readMusicLibraryOrganizeIgnores(libraryPath)
+    : {};
 
   return matchMusicLibraryTracksWithIndexUsingSettings(
     tracks,
     libraryPath && index?.libraryPath === libraryPath ? index : null,
-    naming
+    naming,
+    organizeIgnores
   );
 }
 
@@ -1157,6 +1607,7 @@ export async function organizeMusicLibraryMatchedTracks(
     ? await pruneMissingMusicLibraryIndexTracks(index, libraryPath)
     : null;
   const naming = await loadOrganizeNamingSettings();
+  const organizeIgnores = await readMusicLibraryOrganizeIgnores(libraryPath);
 
   if (!currentIndex) {
     throw new Error("Scan the Navidrome folder before organizing matched files.");
@@ -1169,7 +1620,8 @@ export async function organizeMusicLibraryMatchedTracks(
   const matches = matchMusicLibraryTracksWithIndexUsingSettings(
     tracks,
     currentIndex,
-    naming
+    naming,
+    organizeIgnores
   );
   const trackPositionFilter = normalizeTrackPositionFilter(options.trackPositions);
   const maxMoves = normalizeOrganizeMoveLimit(options.maxMoves);
@@ -1271,7 +1723,8 @@ export async function organizeMusicLibraryMatchedTracks(
   const libraryMatches = matchMusicLibraryTracksWithIndexUsingSettings(
     tracks,
     updatedIndex,
-    naming
+    naming,
+    organizeIgnores
   );
 
   return {
@@ -2686,6 +3139,12 @@ async function indexAudioFile(libraryPath: string, filePath: string) {
   const tagTrackNumber = parsePositiveInteger(
     tagValue(probe?.tags, ["track", "tracknumber"])
   );
+  const releaseDate = normalizeMusicLibraryReleaseDate(
+    tagValue(probe?.tags, ["releasedate", "release_date", "date", "year"])
+  );
+  const compilation = parseCompilationTag(
+    tagValue(probe?.tags, ["compilation", "tcmp", "cpil", "iscompilation"])
+  );
   const identityMetadata = parseMusicLibraryIndexedTrackIdentityTags(probe?.tags);
   const artists = tagArtists.length ? tagArtists : artist ? [artist] : [];
   const usedTags = Boolean(tagTitle || tagArtist || tagAlbumArtist || tagAlbum);
@@ -2701,11 +3160,13 @@ async function indexAudioFile(libraryPath: string, filePath: string) {
     albumArtist,
     artist,
     artists,
+    compilation,
     discNumber: tagDiscNumber ?? inferred.discNumber,
     durationMs: probe?.durationMs,
     fileName: path.posix.basename(relativePath),
     isrc: normalizeIsrc(tagValue(probe?.tags, ["isrc"])),
     mtimeMs: fileStats.mtimeMs,
+    releaseDate,
     relativeDirectory: relativeDirectoryName(relativePath),
     relativePath,
     sizeBytes: fileStats.size,
@@ -2890,6 +3351,36 @@ function tagValue(
   return undefined;
 }
 
+function normalizeMusicLibraryReleaseDate(value?: string) {
+  const trimmed = value?.trim();
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const match = trimmed.match(/^\d{4}(?:-\d{2}(?:-\d{2})?)?/);
+
+  return match?.[0];
+}
+
+function parseCompilationTag(value?: string) {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+
+  if (["1", "true", "yes", "y"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "n"].includes(normalized)) {
+    return false;
+  }
+
+  return undefined;
+}
+
 function secondsToMilliseconds(value?: string) {
   if (!value) {
     return undefined;
@@ -2929,23 +3420,18 @@ export async function matchMusicLibraryTracksWithIndex(
 function matchMusicLibraryTracksWithIndexUsingSettings(
   tracks: BackupTrack[],
   index: MusicLibraryIndex | null,
-  naming: OrganizeNamingSettings
+  naming: OrganizeNamingSettings,
+  organizeIgnores: Record<string, MusicLibraryOrganizeIgnore> = {}
 ) {
   const indexedTracks = index?.tracks ?? [];
   const lookup = buildMusicLibraryTrackLookup(indexedTracks);
 
-  return tracks.map((track) => {
+  const matches = tracks.map((track) => {
     const expectedFolder = buildNamingAlbumFolderPlan(track, naming).relativePath;
     const match = findIndexedTrackMatch(track, lookup, naming);
 
     if (!match) {
-      return {
-        exists: false,
-        expectedFolder,
-        needsMove: false,
-        trackId: track.id,
-        trackPosition: track.position
-      } satisfies MusicLibraryTrackMatch;
+      return unmatchedMusicLibraryTrackMatch(track, expectedFolder);
     }
 
     const organizationPlan = buildTrackOrganizationPlan(
@@ -2953,20 +3439,152 @@ function matchMusicLibraryTracksWithIndexUsingSettings(
       match.track,
       naming
     );
+    const organizeIgnore = matchingOrganizeIgnore(
+      track,
+      match.track,
+      organizationPlan,
+      organizeIgnores
+    );
+    const needsMove = organizationPlan.needsMove && !organizeIgnore;
 
     return {
       exists: true,
       expectedFolder: organizationPlan.expectedFolder,
       matchedBy: match.matchedBy,
       matchedTrack: match.track,
-      needsMove: organizationPlan.needsMove,
-      recommendedRelativePath: organizationPlan.needsMove
+      needsMove,
+      organizeIgnored: Boolean(organizeIgnore),
+      recommendedRelativePath: needsMove
         ? organizationPlan.recommendedRelativePath
         : undefined,
       trackId: track.id,
       trackPosition: track.position
     } satisfies MusicLibraryTrackMatch;
   });
+
+  return resolveSharedMusicLibraryTrackMatches(tracks, matches, naming);
+}
+
+function unmatchedMusicLibraryTrackMatch(
+  track: BackupTrack,
+  expectedFolder: string
+) {
+  return {
+    exists: false,
+    expectedFolder,
+    needsMove: false,
+    trackId: track.id,
+    trackPosition: track.position
+  } satisfies MusicLibraryTrackMatch;
+}
+
+function resolveSharedMusicLibraryTrackMatches(
+  tracks: BackupTrack[],
+  matches: MusicLibraryTrackMatch[],
+  naming: OrganizeNamingSettings
+) {
+  const claimedIndexesByPath = new Map<string, number[]>();
+
+  for (const [index, match] of matches.entries()) {
+    if (!match.matchedTrack) {
+      continue;
+    }
+
+    const pathKey = normalizeRelativePathKey(match.matchedTrack.relativePath);
+    const claimedIndexes = claimedIndexesByPath.get(pathKey);
+
+    if (claimedIndexes) {
+      claimedIndexes.push(index);
+    } else {
+      claimedIndexesByPath.set(pathKey, [index]);
+    }
+  }
+
+  const resolvedMatches = matches.map((match) => ({ ...match }));
+
+  for (const claimedIndexes of claimedIndexesByPath.values()) {
+    if (claimedIndexes.length < 2) {
+      continue;
+    }
+
+    const claimKeys = new Set(
+      claimedIndexes.map((index) => musicLibraryTrackClaimKey(tracks[index]))
+    );
+
+    if (claimKeys.size < 2) {
+      continue;
+    }
+
+    const rankedClaims = claimedIndexes
+      .map((index) => ({
+        index,
+        score: musicLibraryTrackClaimScore(tracks[index], matches[index], naming)
+      }))
+      .sort(
+        (left, right) =>
+          right.score - left.score ||
+          tracks[left.index].position - tracks[right.index].position
+      );
+    const winner = rankedClaims[0];
+    const runnerUp = rankedClaims[1];
+    const winnerIndex =
+      winner && (!runnerUp || winner.score > runnerUp.score)
+        ? winner.index
+        : null;
+
+    for (const claimedIndex of claimedIndexes) {
+      if (claimedIndex === winnerIndex) {
+        continue;
+      }
+
+      resolvedMatches[claimedIndex] = unmatchedMusicLibraryTrackMatch(
+        tracks[claimedIndex],
+        matches[claimedIndex].expectedFolder
+      );
+    }
+  }
+
+  return resolvedMatches;
+}
+
+function musicLibraryTrackClaimKey(track: BackupTrack) {
+  const identityKey = spotifyBuIdentityKeyForTrack(track);
+
+  if (identityKey) {
+    return identityKey;
+  }
+
+  return [
+    normalizeText(track.name),
+    normalizeText(track.album),
+    Array.from(normalizedSpotifyArtists(track)).sort().join("|"),
+    track.discNumber ?? "",
+    track.trackNumber ?? "",
+    track.durationMs
+  ].join("\u0000");
+}
+
+function musicLibraryTrackClaimScore(
+  track: BackupTrack,
+  match: MusicLibraryTrackMatch,
+  naming: OrganizeNamingSettings
+) {
+  if (!match.matchedTrack || !match.matchedBy) {
+    return 0;
+  }
+
+  const methodPriorities: Record<MusicLibraryTrackMatchMethod, number> = {
+    duration: 1,
+    isrc: 3,
+    metadata: 2,
+    path: 5,
+    spotify_identity: 4
+  };
+
+  return (
+    methodPriorities[match.matchedBy] * 10_000 +
+    indexedTrackMatchScore(track, match.matchedTrack, naming)
+  );
 }
 
 function buildTrackOrganizationPlan(
@@ -2991,6 +3609,30 @@ function buildTrackOrganizationPlan(
   };
 }
 
+function matchingOrganizeIgnore(
+  track: BackupTrack,
+  matchedTrack: MusicLibraryIndexedTrack,
+  organizationPlan: ReturnType<typeof buildTrackOrganizationPlan>,
+  organizeIgnores: Record<string, MusicLibraryOrganizeIgnore>
+) {
+  if (!organizationPlan.needsMove) {
+    return null;
+  }
+
+  const identityKey = spotifyBuIdentityKeyForTrack(track);
+  const ignore = identityKey ? organizeIgnores[identityKey] : undefined;
+
+  if (
+    ignore &&
+    normalizeRelativePathKey(ignore.relativePath) ===
+      normalizeRelativePathKey(matchedTrack.relativePath)
+  ) {
+    return ignore;
+  }
+
+  return null;
+}
+
 function findIndexedTrackMatch(
   track: BackupTrack,
   lookup: MusicLibraryTrackLookup,
@@ -3001,6 +3643,19 @@ function findIndexedTrackMatch(
   const title = normalizeText(track.name);
   const album = normalizeText(track.album);
   const artists = normalizedSpotifyArtists(track);
+
+  const pathMatch = bestIndexedTrackMatch(
+    track,
+    lookup.organizedPathBaseMatches.get(
+      organizedTrackPathBaseLookupKey(track, naming)
+    ),
+    "path",
+    naming
+  );
+
+  if (pathMatch) {
+    return pathMatch;
+  }
 
   if (identityMetadata.spotifyTrackId) {
     const match = bestIndexedTrackMatch(
@@ -3362,6 +4017,7 @@ type MusicLibraryTrackLookup = {
   artistMatches: Map<string, MusicLibraryTrackLookupEntry[]>;
   isrcMatches: Map<string, MusicLibraryTrackLookupEntry[]>;
   metadataMatches: Map<string, MusicLibraryTrackLookupEntry[]>;
+  organizedPathBaseMatches: Map<string, MusicLibraryTrackLookupEntry[]>;
   spotifyTrackIdMatches: Map<string, MusicLibraryTrackLookupEntry[]>;
   spotifyTrackUriMatches: Map<string, MusicLibraryTrackLookupEntry[]>;
   titleMatches: Map<string, MusicLibraryTrackLookupEntry[]>;
@@ -3385,6 +4041,7 @@ function buildMusicLibraryTrackLookup(
     artistMatches: new Map<string, MusicLibraryTrackLookupEntry[]>(),
     isrcMatches: new Map<string, MusicLibraryTrackLookupEntry[]>(),
     metadataMatches: new Map<string, MusicLibraryTrackLookupEntry[]>(),
+    organizedPathBaseMatches: new Map<string, MusicLibraryTrackLookupEntry[]>(),
     spotifyTrackIdMatches: new Map<string, MusicLibraryTrackLookupEntry[]>(),
     spotifyTrackUriMatches: new Map<string, MusicLibraryTrackLookupEntry[]>(),
     titleMatches: new Map<string, MusicLibraryTrackLookupEntry[]>()
@@ -3438,6 +4095,11 @@ function buildMusicLibraryTrackLookup(
       musicLibraryMatchLookupKey(entry.titleKey, entry.albumKey),
       entry
     );
+    appendMusicLibraryLookupEntry(
+      lookup.organizedPathBaseMatches,
+      indexedTrackPathBaseLookupKey(track),
+      entry
+    );
 
     for (const titleKey of titleMatchKeys(track.title, [track.album])) {
       appendMusicLibraryLookupEntry(lookup.titleMatches, titleKey, entry);
@@ -3464,6 +4126,21 @@ function appendMusicLibraryLookupEntry(
 
 function musicLibraryMatchLookupKey(title: string, album: string) {
   return `${title}\u0000${album}`;
+}
+
+function indexedTrackPathBaseLookupKey(track: MusicLibraryIndexedTrack) {
+  const parsed = path.posix.parse(track.relativePath);
+
+  return normalizeRelativePathKey(path.posix.join(parsed.dir, parsed.name));
+}
+
+function organizedTrackPathBaseLookupKey(
+  track: BackupTrack,
+  naming: OrganizeNamingSettings
+) {
+  return normalizeRelativePathKey(
+    buildMusicLibraryTrackRelativePathWithSettings(track, naming, "")
+  );
 }
 
 function normalizeOrganizeMoveLimit(value?: number) {
@@ -3545,6 +4222,24 @@ function indexedTrackHasSpotifyIdentity(
   return true;
 }
 
+function indexedTrackNeedsSpotifyBackfill(
+  indexedTrack: MusicLibraryIndexedTrack,
+  track: BackupTrack,
+  identityMetadata: SpotifyBuIdentityMetadata
+) {
+  if (!indexedTrackHasSpotifyIdentity(indexedTrack, identityMetadata)) {
+    return true;
+  }
+
+  const releaseDate = spotifyReleaseDateTag(track.albumReleaseDate);
+
+  if (releaseDate && indexedTrack.releaseDate !== releaseDate) {
+    return true;
+  }
+
+  return isSpotifyCompilationAlbum(track) && indexedTrack.compilation !== true;
+}
+
 function normalizedSpotifyArtists(track: BackupTrack) {
   return new Set(
     [track.albumArtist, ...track.artists]
@@ -3608,8 +4303,12 @@ function indexedTrackHasSpotifyContext(
   track: BackupTrack,
   indexedTrack: MusicLibraryIndexedTrack
 ) {
+  if (indexedTrackHasSpotifyArtistContext(track, indexedTrack)) {
+    return true;
+  }
+
   return (
-    indexedTrackHasSpotifyArtistContext(track, indexedTrack) ||
+    spotifyAlbumProvidesMatchContext(track) &&
     indexedTrackHasSpotifyAlbumContext(track, indexedTrack)
   );
 }
@@ -3635,7 +4334,10 @@ function indexedTrackHasSpotifyAlbumContext(
 ) {
   const album = normalizeText(track.album);
 
-  return Boolean(album) && normalizedTextContainsKey(indexedTrackContextText(indexedTrack), album);
+  return (
+    Boolean(album) &&
+    normalizedTextContainsKey(indexedTrackAlbumContextText(indexedTrack), album)
+  );
 }
 
 function indexedTrackContextText(indexedTrack: MusicLibraryIndexedTrack) {
@@ -3650,6 +4352,19 @@ function indexedTrackContextText(indexedTrack: MusicLibraryIndexedTrack) {
       ...indexedTrack.artists
     ].filter(Boolean).join(" ")
   );
+}
+
+function indexedTrackAlbumContextText(indexedTrack: MusicLibraryIndexedTrack) {
+  return normalizeText(
+    [indexedTrack.relativeDirectory, indexedTrack.album].filter(Boolean).join(" ")
+  );
+}
+
+function spotifyAlbumProvidesMatchContext(track: BackupTrack) {
+  const album = normalizeText(track.album);
+  const title = normalizeText(track.name);
+
+  return Boolean(album && album !== title);
 }
 
 function normalizedTextContainsKey(text: string, key: string) {

@@ -1,14 +1,22 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import http from "node:http";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
+import { promisify } from "node:util";
+import { persistPlaylistBackup } from "./backup-store.ts";
 import {
+  backfillMusicLibrarySpotifyIdentityTags,
+  clearMusicLibraryTrackOrganizationIgnore,
   deleteMusicLibraryTrack,
   getMusicLibraryStatus,
   getMusicServerStatus,
+  ignoreMusicLibraryTrackOrganization,
+  matchMusicLibraryTracks,
   matchMusicLibraryTracksWithIndex,
+  organizeMusicLibraryMatchedTracks,
   parseMusicLibraryIndexedTrackIdentityTags,
   planMusicLibraryAlbumFolders,
   prepareMusicLibraryTrackFileDestination,
@@ -17,11 +25,14 @@ import {
   scanMusicLibraryIndex,
   type MusicLibraryIndex
 } from "./music-library.ts";
+import { tagAudioFileWithSpotifyIdentity } from "./providers/tagging.ts";
 import {
   spotifyBuIdentityTags,
   spotifyBuIdentityVersion
 } from "./spotify-identity-tags.ts";
 import type { BackupTrack } from "./spotify.ts";
+
+const execFileAsync = promisify(execFile);
 
 test("standard album folder uses artist album year layout", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
@@ -361,6 +372,190 @@ test("matching still falls back for old indexed files without identity tags", as
     assert.equal(matches[0].exists, true);
     assert.equal(matches[0].matchedBy, "isrc");
     assert.equal(matches[0].matchedTrack?.relativePath, "Old/Old File.mp3");
+  });
+});
+
+test("matching does not use a same-title single as cross-artist context", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const jaidenTrack = {
+      ...exampleTrack,
+      album: "Dead 2 Me",
+      albumArtist: "Jaiden",
+      albumId: "album-jaiden-dead-2-me",
+      albumReleaseDate: "2017-01-01",
+      artists: ["Jaiden"],
+      id: "track-jaiden-dead-2-me",
+      isrc: undefined,
+      name: "Dead 2 Me",
+      trackNumber: 1
+    } satisfies BackupTrack;
+    const tomMacDonaldPath =
+      "Tom MacDonald/Tom MacDonald - Infidelity in the Throne Room (2012)/Tom MacDonald - Infidelity in the Throne Room (2012) - 22 - Dead 2 Me.mp3";
+    const matches = await matchMusicLibraryTracksWithIndex([jaidenTrack], {
+      generatedAt: new Date(0).toISOString(),
+      libraryPath: "/music",
+      tracks: [
+        {
+          album: "Infidelity in the Throne Room",
+          albumArtist: "Tom MacDonald",
+          artist: "Tom MacDonald",
+          artists: ["Tom MacDonald"],
+          durationMs: jaidenTrack.durationMs,
+          fileName: path.posix.basename(tomMacDonaldPath),
+          mtimeMs: 0,
+          relativeDirectory: path.posix.dirname(tomMacDonaldPath),
+          relativePath: tomMacDonaldPath,
+          sizeBytes: 1,
+          source: "path",
+          title: "Dead 2 Me",
+          trackNumber: 22
+        }
+      ],
+      version: 1
+    } satisfies MusicLibraryIndex);
+
+    assert.equal(matches[0].exists, false);
+  });
+});
+
+test("matching uses exact organized paths before stale identity tags", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const hurtMeTrack = {
+      ...exampleTrack,
+      album: "Spirit",
+      albumArtist: "Amos Lee",
+      albumId: "album-amos-spirit",
+      albumReleaseDate: "2016-01-01",
+      artists: ["Amos Lee"],
+      id: "track-amos-hurt-me",
+      isrc: undefined,
+      name: "Hurt Me",
+      spotifyUri: "spotify:track:track-amos-hurt-me",
+      trackNumber: 10
+    } satisfies BackupTrack;
+    const vaporizeTrack = {
+      ...hurtMeTrack,
+      id: "track-amos-vaporize",
+      name: "Vaporize",
+      spotifyUri: "spotify:track:track-amos-vaporize",
+      trackNumber: 11
+    } satisfies BackupTrack;
+    const folder = "Amos Lee/Amos Lee - Spirit (2016)";
+    const hurtMePath = `${folder}/Amos Lee - Spirit (2016) - 10 - Hurt Me.flac`;
+    const vaporizePath = `${folder}/Amos Lee - Spirit (2016) - 11 - Vaporize.flac`;
+    const matches = await matchMusicLibraryTracksWithIndex(
+      [hurtMeTrack, vaporizeTrack],
+      {
+        generatedAt: new Date(0).toISOString(),
+        libraryPath: "/music",
+        tracks: [
+          {
+            album: "Spirit",
+            albumArtist: "Amos Lee",
+            artist: "Amos Lee",
+            artists: ["Amos Lee"],
+            durationMs: hurtMeTrack.durationMs,
+            fileName: path.posix.basename(hurtMePath),
+            mtimeMs: 0,
+            relativeDirectory: path.posix.dirname(hurtMePath),
+            relativePath: hurtMePath,
+            sizeBytes: 1,
+            source: "tags",
+            spotifyTrackId: vaporizeTrack.id,
+            spotifyTrackUri: vaporizeTrack.spotifyUri,
+            spotifybuIdentityVersion: spotifyBuIdentityVersion,
+            title: "Vaporize",
+            trackNumber: 11
+          },
+          {
+            album: "Spirit",
+            albumArtist: "Amos Lee",
+            artist: "Amos Lee",
+            artists: ["Amos Lee"],
+            durationMs: vaporizeTrack.durationMs,
+            fileName: path.posix.basename(vaporizePath),
+            mtimeMs: 0,
+            relativeDirectory: path.posix.dirname(vaporizePath),
+            relativePath: vaporizePath,
+            sizeBytes: 1,
+            source: "path",
+            title: "Vaporize",
+            trackNumber: 11
+          }
+        ],
+        version: 1
+      } satisfies MusicLibraryIndex
+    );
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].matchedBy, "path");
+    assert.equal(matches[0].needsMove, false);
+    assert.equal(matches[0].matchedTrack?.relativePath, hurtMePath);
+    assert.equal(matches[1].exists, true);
+    assert.equal(matches[1].matchedBy, "path");
+    assert.equal(matches[1].needsMove, false);
+    assert.equal(matches[1].matchedTrack?.relativePath, vaporizePath);
+  });
+});
+
+test("matching does not let different Spotify tracks share one indexed file", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const hurtMeTrack = {
+      ...exampleTrack,
+      album: "Spirit",
+      albumArtist: "Amos Lee",
+      albumId: "album-amos-spirit",
+      albumReleaseDate: "2016-01-01",
+      artists: ["Amos Lee"],
+      id: "track-amos-hurt-me",
+      isrc: undefined,
+      name: "Hurt Me",
+      spotifyUri: "spotify:track:track-amos-hurt-me",
+      trackNumber: 10
+    } satisfies BackupTrack;
+    const vaporizeTrack = {
+      ...hurtMeTrack,
+      id: "track-amos-vaporize",
+      name: "Vaporize",
+      spotifyUri: "spotify:track:track-amos-vaporize",
+      trackNumber: 11
+    } satisfies BackupTrack;
+    const hurtMePath =
+      "Amos Lee/Amos Lee - Spirit (2016)/Amos Lee - Spirit (2016) - 10 - Hurt Me.flac";
+    const matches = await matchMusicLibraryTracksWithIndex(
+      [hurtMeTrack, vaporizeTrack],
+      {
+        generatedAt: new Date(0).toISOString(),
+        libraryPath: "/music",
+        tracks: [
+          {
+            album: "Spirit",
+            albumArtist: "Amos Lee",
+            artist: "Amos Lee",
+            artists: ["Amos Lee"],
+            durationMs: hurtMeTrack.durationMs,
+            fileName: path.posix.basename(hurtMePath),
+            mtimeMs: 0,
+            relativeDirectory: path.posix.dirname(hurtMePath),
+            relativePath: hurtMePath,
+            sizeBytes: 1,
+            source: "tags",
+            spotifyTrackId: vaporizeTrack.id,
+            spotifyTrackUri: vaporizeTrack.spotifyUri,
+            spotifybuIdentityVersion: spotifyBuIdentityVersion,
+            title: "Vaporize",
+            trackNumber: 11
+          }
+        ],
+        version: 1
+      } satisfies MusicLibraryIndex
+    );
+
+    assert.equal(matches[0].exists, true);
+    assert.equal(matches[0].matchedBy, "path");
+    assert.equal(matches[0].matchedTrack?.relativePath, hurtMePath);
+    assert.equal(matches[1].exists, false);
+    assert.equal(matches[1].needsMove, false);
   });
 });
 
@@ -828,6 +1023,150 @@ test("library index parses standard folders when parent artist stripped trailing
   });
 });
 
+test("organization ignores are reversible and skipped by organize", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const libraryPath = await mkdtemp(
+      path.join(tmpdir(), "spotifybu-library-")
+    );
+    const spotifyTrack = {
+      ...exampleTrack,
+      id: "trackabc123",
+      spotifyUri: "spotify:track:trackabc123"
+    } satisfies BackupTrack;
+    const looseRelativePath = "Loose/Example Artist - Opening.mp3";
+    const loosePath = path.join(libraryPath, ...looseRelativePath.split("/"));
+
+    t.after(async () => {
+      await rm(libraryPath, {
+        force: true,
+        recursive: true
+      });
+    });
+
+    await withEnvironment(t, { MUSIC_LIBRARY_PATH: libraryPath }, async () => {
+      await mkdir(path.dirname(loosePath), {
+        recursive: true
+      });
+      await writeFile(loosePath, "not real audio", "utf8");
+
+      await scanMusicLibraryIndex();
+
+      const initialMatches = await matchMusicLibraryTracks([spotifyTrack]);
+
+      assert.equal(initialMatches[0].exists, true);
+      assert.equal(initialMatches[0].needsMove, true);
+
+      const ignored = await ignoreMusicLibraryTrackOrganization(spotifyTrack, [
+        spotifyTrack
+      ]);
+
+      assert.equal(ignored.libraryMatches[0].exists, true);
+      assert.equal(ignored.libraryMatches[0].needsMove, false);
+      assert.equal(ignored.libraryMatches[0].organizeIgnored, true);
+      assert.equal(
+        ignored.libraryMatches[0].matchedTrack?.relativePath,
+        looseRelativePath
+      );
+
+      const organizeResult = await organizeMusicLibraryMatchedTracks([
+        spotifyTrack
+      ]);
+
+      assert.equal(organizeResult.attemptedCount, 0);
+      assert.equal(organizeResult.movedCount, 0);
+      await stat(loosePath);
+
+      const cleared = await clearMusicLibraryTrackOrganizationIgnore(
+        spotifyTrack,
+        [spotifyTrack]
+      );
+
+      assert.equal(Boolean(cleared.libraryMatches[0].organizeIgnored), false);
+      assert.equal(cleared.libraryMatches[0].needsMove, true);
+    });
+  });
+});
+
+test("metadata backfill upgrades existing identity-tagged backups with release tags", async (t) => {
+  if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
+    t.skip("ffmpeg and ffprobe are required for metadata backfill coverage.");
+    return;
+  }
+
+  await withDefaultOrganizeSettings(t, async () => {
+    const libraryPath = await mkdtemp(
+      path.join(tmpdir(), "spotifybu-library-")
+    );
+    const spotifyTrack = {
+      ...exampleTrack,
+      albumReleaseDate: "2026-02-03",
+      albumType: "compilation",
+      id: "4uLU6hMCjMI75M1A2tKUQC",
+      isrc: "USABC1234567",
+      spotifyUri: "spotify:track:4uLU6hMCjMI75M1A2tKUQC"
+    } satisfies BackupTrack;
+    const relativePath =
+      "Example Artist/Example Artist - Example Record (2026)/Example Artist - Example Record (2026) - 01 - Opening.mp3";
+    const filePath = path.join(libraryPath, ...relativePath.split("/"));
+
+    t.after(async () => {
+      await rm(libraryPath, {
+        force: true,
+        recursive: true
+      });
+    });
+
+    await withEnvironment(t, { MUSIC_LIBRARY_PATH: libraryPath }, async () => {
+      await mkdir(path.dirname(filePath), {
+        recursive: true
+      });
+      await writeSilentMp3(filePath, [
+        "title=Opening",
+        "artist=Example Artist",
+        "album=Example Record"
+      ]);
+      await tagAudioFileWithSpotifyIdentity(filePath, spotifyTrack);
+      await scanMusicLibraryIndex();
+
+      persistPlaylistBackup({
+        playlist: {
+          collaborative: false,
+          description: "",
+          id: "playlist-backfill",
+          name: "Backfill",
+          owner: "SpotifyBU",
+          public: false,
+          tracksTotal: 1
+        },
+        source: "playlist-load",
+        tracks: [spotifyTrack]
+      });
+
+      const beforeBackfillTags = await readAudioTags(filePath);
+
+      assert.equal(beforeBackfillTags.date, undefined);
+      assert.equal(beforeBackfillTags.compilation, undefined);
+
+      const result = await backfillMusicLibrarySpotifyIdentityTags();
+
+      assert.equal(result.matchedCount, 1);
+      assert.equal(result.taggedCount, 1);
+      assert.equal(result.alreadyTaggedCount, 0);
+
+      const tags = await readAudioTags(filePath);
+      const index = await readCurrentMusicLibraryIndex();
+      const indexedTrack = index?.tracks.find(
+        (track) => track.relativePath === relativePath
+      );
+
+      assert.equal(tags.date, "2026-02-03");
+      assert.equal(tags.compilation, "1");
+      assert.equal(indexedTrack?.releaseDate, "2026-02-03");
+      assert.equal(indexedTrack?.compilation, true);
+    });
+  });
+});
+
 test("music library status accepts Navidrome library path env var", async (t) => {
   const libraryPath = await mkdtemp(path.join(tmpdir(), "spotifybu-library-"));
 
@@ -1070,4 +1409,66 @@ async function withOrganizeSettings(
   });
 
   await run();
+}
+
+async function hasCommand(command: string) {
+  try {
+    await execFileAsync(command, ["-version"], {
+      timeout: 10000
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function writeSilentMp3(filePath: string, metadata: string[]) {
+  await execFileAsync(
+    "ffmpeg",
+    [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "anullsrc=r=44100:cl=mono",
+      "-t",
+      "0.1",
+      "-q:a",
+      "9",
+      ...metadata.flatMap((value) => ["-metadata", value]),
+      filePath
+    ],
+    {
+      timeout: 60000
+    }
+  );
+}
+
+async function readAudioTags(filePath: string) {
+  const { stdout } = await execFileAsync(
+    "ffprobe",
+    [
+      "-v",
+      "quiet",
+      "-print_format",
+      "json",
+      "-show_format",
+      filePath
+    ],
+    {
+      timeout: 60000
+    }
+  );
+  const body = JSON.parse(stdout.toString()) as {
+    format?: {
+      tags?: Record<string, string>;
+    };
+  };
+
+  return Object.fromEntries(
+    Object.entries(body.format?.tags ?? {}).map(([key, value]) => [
+      key.toLowerCase(),
+      value
+    ])
+  );
 }

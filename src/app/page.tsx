@@ -18,6 +18,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  Server,
   Settings,
   ShieldCheck,
   Trash2,
@@ -160,9 +161,10 @@ type IndexedTrack = {
 type LibraryMatch = {
   exists: boolean;
   expectedFolder: string;
-  matchedBy?: "duration" | "isrc" | "metadata" | "spotify_identity";
+  matchedBy?: "duration" | "isrc" | "metadata" | "path" | "spotify_identity";
   matchedTrack?: IndexedTrack;
   needsMove: boolean;
+  organizeIgnored?: boolean;
   recommendedRelativePath?: string;
   trackId?: string;
   trackPosition: number;
@@ -296,6 +298,13 @@ type LibraryOrganizeResponse = LibraryIndexResponse & LibraryMatchesResponse & {
   skippedCount: number;
 };
 
+type LibraryOrganizeIgnoreResponse =
+  LibraryIndexResponse &
+    LibraryMatchesResponse & {
+      ignored: boolean;
+      relativePath?: string;
+    };
+
 type LibraryTrackDeleteResponse = LibraryIndexResponse & {
   deleted: boolean;
   libraryMatches?: LibraryMatch[];
@@ -311,6 +320,8 @@ type MusicLibraryPlaylistSyncResponse = {
   musicLibraryPlaylist: {
     addedCount?: number;
     appendedCount?: number;
+    artworkError?: string;
+    artworkUpdated?: boolean;
     matchedCount: number;
     mode: MusicLibraryPlaylistSyncMode;
     name: string;
@@ -323,11 +334,49 @@ type MusicLibraryPlaylistSyncResponse = {
     }>;
     skippedCount: number;
     songCount: number;
+    target: MusicLibraryPlaylistSyncTarget;
+    targetName: string;
     updated: boolean;
   };
 };
 
 type MusicLibraryPlaylistSyncMode = "append" | "fullsync" | "replace";
+
+type MusicLibraryPlaylistSyncTarget = "navidrome" | "plex";
+
+type PlexMusicLibrary = {
+  key: string;
+  title: string;
+};
+
+type PlexStatus = {
+  configured: boolean;
+  libraries: PlexMusicLibrary[];
+  message: string;
+  musicLibraryKey?: string;
+  musicLibraryTitle?: string;
+  serverUrl: string;
+  state: "auth_failed" | "disabled" | "error" | "not_configured" | "ready";
+};
+
+type PublicPlexSettings = {
+  enabled: boolean;
+  libraries: PlexMusicLibrary[];
+  musicLibraryKey: string;
+  musicLibraryTitle?: string;
+  serverUrl: string;
+  status: PlexStatus;
+  tokenConfigured: boolean;
+};
+
+type PlexSettingsResponse = {
+  plex: PublicPlexSettings;
+};
+
+type TrackOrganizeDialogState = {
+  match: LibraryMatch;
+  track: BackupTrack;
+};
 
 type ProviderDownloadPayload = {
   bytesWritten?: number;
@@ -572,6 +621,10 @@ export default function Home() {
   const [organizingTrackPositions, setOrganizingTrackPositions] = useState<
     number[]
   >([]);
+  const [organizeIgnoreTrackPositions, setOrganizeIgnoreTrackPositions] =
+    useState<number[]>([]);
+  const [trackOrganizeDialog, setTrackOrganizeDialog] =
+    useState<TrackOrganizeDialogState | null>(null);
   const [deletingLibraryTrackPath, setDeletingLibraryTrackPath] = useState<
     string | null
   >(null);
@@ -581,6 +634,8 @@ export default function Home() {
     useState(false);
   const [musicLibraryPlaylistSyncMode, setMusicLibraryPlaylistSyncMode] =
     useState<MusicLibraryPlaylistSyncMode>("replace");
+  const [musicLibraryPlaylistSyncTarget, setMusicLibraryPlaylistSyncTarget] =
+    useState<MusicLibraryPlaylistSyncTarget>("navidrome");
   const [isSearchingProvider, setIsSearchingProvider] = useState(false);
   const [isDownloadingProvider, setIsDownloadingProvider] = useState(false);
   const [isDownloadingBulkProvider, setIsDownloadingBulkProvider] =
@@ -589,6 +644,9 @@ export default function Home() {
     useState(false);
   const [musicLibraryStatus, setMusicLibraryStatus] =
     useState<MusicLibraryStatus | null>(null);
+  const [plexSettings, setPlexSettings] = useState<PublicPlexSettings | null>(
+    null
+  );
   const [requestError, setRequestError] = useState<string | null>(null);
   const [downloadTrackPosition, setDownloadTrackPosition] = useState("");
   const [downloadQuality, setDownloadQuality] = useState("320");
@@ -748,6 +806,29 @@ export default function Home() {
     }
   }, []);
 
+  const loadPlexSettingsStatus = useCallback(async () => {
+    try {
+      const response = await fetchJson<PlexSettingsResponse>("/api/plex/settings");
+
+      setPlexSettings(response.plex);
+    } catch {
+      setPlexSettings({
+        enabled: false,
+        libraries: [],
+        musicLibraryKey: "",
+        serverUrl: "",
+        status: {
+          configured: false,
+          libraries: [],
+          message: "SpotifyBU could not check Plex settings.",
+          serverUrl: "",
+          state: "error"
+        },
+        tokenConfigured: false
+      });
+    }
+  }, []);
+
   const applyLibraryIndexResponse = useCallback(
     (response: LibraryIndexResponse) => {
       setLibraryIndex((current) =>
@@ -861,6 +942,67 @@ export default function Home() {
       refreshLibraryMatches,
       tracks
     ]
+  );
+
+  const closeTrackOrganizeDialog = useCallback(() => {
+    setTrackOrganizeDialog(null);
+  }, []);
+
+  const openTrackOrganizeDialog = useCallback(
+    (track: BackupTrack, match: LibraryMatch) => {
+      setTrackOrganizeDialog({
+        match,
+        track
+      });
+    },
+    []
+  );
+
+  const updateTrackOrganizeIgnore = useCallback(
+    async (track: BackupTrack, action: "clear" | "ignore") => {
+      setOrganizeIgnoreTrackPositions((current) =>
+        current.includes(track.position) ? current : [...current, track.position]
+      );
+      setRequestError(null);
+      setLibraryOrganizeMessage(null);
+
+      try {
+        const response =
+          action === "ignore"
+            ? await postJson<LibraryOrganizeIgnoreResponse>(
+                "/api/music-library/organize-ignore",
+                {
+                  track,
+                  tracks
+                }
+              )
+            : await deleteJson<LibraryOrganizeIgnoreResponse>(
+                "/api/music-library/organize-ignore",
+                {
+                  track,
+                  tracks
+                }
+              );
+
+        setLibraryIndex(response.index);
+        applyLibraryMatches(tracks, response.libraryMatches);
+        setLibraryOrganizeMessage(
+          action === "ignore"
+            ? `Manually organized ${track.name} at ${
+                response.relativePath ?? "the current location"
+              }.`
+            : `Removed manual organization for ${track.name}.`
+        );
+        closeTrackOrganizeDialog();
+      } catch (error) {
+        setRequestError(errorMessage(error));
+      } finally {
+        setOrganizeIgnoreTrackPositions((current) =>
+          current.filter((position) => position !== track.position)
+        );
+      }
+    },
+    [applyLibraryMatches, closeTrackOrganizeDialog, tracks]
   );
 
   const markDownloadedTrackInLibrary = useCallback(
@@ -1082,6 +1224,17 @@ export default function Home() {
     }
   }, [applyLibraryMatches, libraryMatches, refreshLibraryMatches, tracks]);
 
+  const autoOrganizeDialogTrack = useCallback(async () => {
+    const dialog = trackOrganizeDialog;
+
+    if (!dialog) {
+      return;
+    }
+
+    closeTrackOrganizeDialog();
+    await organizeLibraryMatches([dialog.track.position]);
+  }, [closeTrackOrganizeDialog, organizeLibraryMatches, trackOrganizeDialog]);
+
   const createMusicLibraryPlaylist = useCallback(async () => {
     if (!selectedPlaylistId) {
       return;
@@ -1096,10 +1249,14 @@ export default function Home() {
       const response = await postJson<MusicLibraryPlaylistSyncResponse>(
         `/api/spotify/playlists/${selectedPlaylistId}/music-library`,
         {
-          mode: musicLibraryPlaylistSyncMode
+          mode: musicLibraryPlaylistSyncMode,
+          target: musicLibraryPlaylistSyncTarget
         }
       );
       const result = response.musicLibraryPlaylist;
+      const targetName =
+        result.targetName ??
+        playlistSyncTargetLabel(musicLibraryPlaylistSyncTarget);
       const action =
         result.mode === "append" && result.updated
           ? `Appended ${numberFormatter.format(result.appendedCount ?? 0)} tracks to`
@@ -1124,11 +1281,17 @@ export default function Home() {
       const skipped = result.skippedCount
         ? ` ${numberFormatter.format(result.skippedCount)} unmatched tracks were skipped.`
         : "";
+      const artworkDetails =
+        result.artworkUpdated === true
+          ? " Artwork synced."
+          : result.artworkError
+            ? ` Artwork could not be synced: ${result.artworkError}`
+            : "";
 
       setMusicLibraryPlaylistMessage(
-        `${action} Navidrome playlist "${result.name}" with ${numberFormatter.format(
+        `${action} ${targetName} playlist "${result.name}" with ${numberFormatter.format(
           result.songCount
-        )} tracks.${fullSyncDetails ? ` ${fullSyncDetails}.` : ""}${skipped}`
+        )} tracks.${fullSyncDetails ? ` ${fullSyncDetails}.` : ""}${skipped}${artworkDetails}`
       );
       setMusicLibraryPlaylistSkipped(result.skipped);
     } catch (error) {
@@ -1136,7 +1299,11 @@ export default function Home() {
     } finally {
       setIsCreatingMusicLibraryPlaylist(false);
     }
-  }, [musicLibraryPlaylistSyncMode, selectedPlaylistId]);
+  }, [
+    musicLibraryPlaylistSyncMode,
+    musicLibraryPlaylistSyncTarget,
+    selectedPlaylistId
+  ]);
 
   const searchProviderTrack = useCallback(async (track: BackupTrack) => {
     setDownloadTrackPosition(String(track.position));
@@ -1484,6 +1651,7 @@ export default function Home() {
       void loadLibraryIndex();
       void loadSession();
       void loadMusicLibraryStatus();
+      void loadPlexSettingsStatus();
     }
 
     void loadAuthenticatedStartupData();
@@ -1495,6 +1663,7 @@ export default function Home() {
     loadAppInfo,
     loadLibraryIndex,
     loadMusicLibraryStatus,
+    loadPlexSettingsStatus,
     loadSession,
     loadSpotifyAuthConfig
   ]);
@@ -1702,6 +1871,16 @@ export default function Home() {
   const musicServerApiReady =
     musicLibraryStatus?.server.state === "ready" ||
     musicLibraryStatus?.server.state === "scan_requested";
+  const plexPlaylistSyncReady = plexSettings?.status.state === "ready";
+  const selectedPlaylistSyncTargetReady =
+    musicLibraryPlaylistSyncTarget === "plex"
+      ? plexPlaylistSyncReady
+      : musicServerApiReady;
+  const selectedPlaylistSyncTargetStatus =
+    musicLibraryPlaylistSyncTarget === "plex"
+      ? plexSettings?.status.message ?? "Check Plex settings"
+      : musicLibraryStatus?.server.message ??
+        "Connect Navidrome API credentials to create playlists";
   const musicLibraryStatusLabel = musicLibraryStatus
     ? musicLibraryStatusMessage(musicLibraryStatus)
     : "Checking library target";
@@ -1807,13 +1986,16 @@ export default function Home() {
   const canOrganizeLibrary =
     musicLibraryReady && tracks.length > 0 && hasUsableLibraryIndex;
   const organizingTrackPositionSet = new Set(organizingTrackPositions);
+  const organizeIgnoreTrackPositionSet = new Set(organizeIgnoreTrackPositions);
   const isAnyOrganizationRunning =
-    isOrganizingLibrary || organizingTrackPositions.length > 0;
+    isOrganizingLibrary ||
+    organizingTrackPositions.length > 0 ||
+    organizeIgnoreTrackPositions.length > 0;
   const canCreateMusicLibraryPlaylist =
     sourceKind === "playlist" &&
     Boolean(selectedPlaylistId) &&
     tracks.length > 0 &&
-    musicServerApiReady &&
+    selectedPlaylistSyncTargetReady &&
     !isLoadingTracks &&
     !isCreatingMusicLibraryPlaylist;
   const selectedDownloadTrack =
@@ -2643,7 +2825,27 @@ export default function Home() {
                 {sourceKind === "playlist" ? (
                   <>
                     <label className="sync-mode-control">
-                      <span className="stat-label">Navidrome</span>
+                      <span className="stat-label">Target</span>
+                      <select
+                        disabled={isCreatingMusicLibraryPlaylist}
+                        onChange={(event) =>
+                          setMusicLibraryPlaylistSyncTarget(
+                            parseMusicLibraryPlaylistSyncTarget(event.target.value)
+                          )
+                        }
+                        value={musicLibraryPlaylistSyncTarget}
+                      >
+                        <option value="navidrome">Navidrome</option>
+                        <option
+                          disabled={!plexSettings?.enabled}
+                          value="plex"
+                        >
+                          {plexSettings?.enabled ? "Plex" : "Plex off"}
+                        </option>
+                      </select>
+                    </label>
+                    <label className="sync-mode-control">
+                      <span className="stat-label">Mode</span>
                       <select
                         disabled={isCreatingMusicLibraryPlaylist}
                         onChange={(event) =>
@@ -2665,9 +2867,11 @@ export default function Home() {
                       disabled={!canCreateMusicLibraryPlaylist}
                       onClick={() => void createMusicLibraryPlaylist()}
                       title={
-                        musicServerApiReady
-                          ? "Sync this playlist in Navidrome"
-                          : "Connect Navidrome API credentials to create playlists"
+                        selectedPlaylistSyncTargetReady
+                          ? `Sync this playlist in ${playlistSyncTargetLabel(
+                              musicLibraryPlaylistSyncTarget
+                            )}`
+                          : selectedPlaylistSyncTargetStatus
                       }
                       type="button"
                     >
@@ -3453,8 +3657,18 @@ export default function Home() {
                               {
                                 isOrganizing:
                                   organizingTrackPositionSet.has(track.position),
+                                isUpdatingOrganizeIgnore:
+                                  organizeIgnoreTrackPositionSet.has(
+                                    track.position
+                                  ),
+                                onClearOrganizeIgnore: () =>
+                                  void updateTrackOrganizeIgnore(track, "clear"),
                                 onOrganize: () =>
-                                  void organizeLibraryMatches([track.position]),
+                                  libraryMatch
+                                    ? openTrackOrganizeDialog(track, libraryMatch)
+                                    : void organizeLibraryMatches([
+                                        track.position
+                                      ]),
                                 onDelete: libraryMatch?.matchedTrack
                                   ?.relativePath
                                   ? () =>
@@ -3559,6 +3773,25 @@ export default function Home() {
                   <span>
                     <h3>Navidrome API</h3>
                     <p>{musicServerStatusLabel}</p>
+                  </span>
+                </div>
+              ) : null}
+              {plexSettings?.enabled ? (
+                <div className="provider-row">
+                  <span
+                    className={`provider-icon ${
+                      plexSettings.status.state === "ready" ? "green" : "amber"
+                    }`}
+                  >
+                    {plexSettings.status.state === "ready" ? (
+                      <CheckCircle2 size={18} />
+                    ) : (
+                      <Server size={18} />
+                    )}
+                  </span>
+                  <span>
+                    <h3>Plex API</h3>
+                    <p>{plexSettings.status.message}</p>
                   </span>
                 </div>
               ) : null}
@@ -3737,6 +3970,92 @@ export default function Home() {
           </div>
         </section>
       )}
+      {trackOrganizeDialog ? (
+        <div className="dialog-backdrop" onClick={closeTrackOrganizeDialog}>
+          <section
+            aria-labelledby="track-organize-title"
+            aria-modal="true"
+            className="track-organize-dialog"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="dialog-header">
+              <span className="provider-icon amber">
+                <HardDrive size={18} />
+              </span>
+              <div>
+                <p className="eyebrow">Track organize</p>
+                <h2 id="track-organize-title">
+                  {trackOrganizeDialog.track.name}
+                </h2>
+                <p>
+                  {trackOrganizeDialog.match.matchedTrack?.relativePath ??
+                    "Matched Navidrome file"}
+                </p>
+              </div>
+              <button
+                className="icon-command dialog-close"
+                onClick={closeTrackOrganizeDialog}
+                title="Close"
+                type="button"
+              >
+                <XCircle size={18} />
+              </button>
+            </div>
+            <div className="organize-choice-summary">
+              <span>
+                <span className="stat-label">Current</span>
+                <span>
+                  {trackOrganizeDialog.match.matchedTrack?.relativePath ??
+                    "Indexed match"}
+                </span>
+              </span>
+              <span>
+                <span className="stat-label">Auto target</span>
+                <span>
+                  {trackOrganizeDialog.match.recommendedRelativePath ??
+                    trackOrganizeDialog.match.expectedFolder}
+                </span>
+              </span>
+            </div>
+            <div className="organize-choice-actions">
+              <button
+                className="command"
+                disabled={isAnyOrganizationRunning}
+                onClick={() => void autoOrganizeDialogTrack()}
+                title="Move this file into the SpotifyBU organize scheme"
+                type="button"
+              >
+                {isAnyOrganizationRunning ? (
+                  <Loader2 className="spin" size={18} />
+                ) : (
+                  <RotateCcw size={18} />
+                )}
+                Auto Organize
+              </button>
+              <button
+                className="command secondary"
+                disabled={isAnyOrganizationRunning}
+                onClick={() =>
+                  void updateTrackOrganizeIgnore(
+                    trackOrganizeDialog.track,
+                    "ignore"
+                  )
+                }
+                title="Keep this file where SpotifyBU found it"
+                type="button"
+              >
+                {isAnyOrganizationRunning ? (
+                  <Loader2 className="spin" size={18} />
+                ) : (
+                  <CheckCircle2 size={18} />
+                )}
+                Ignore current location
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
       <footer className="app-footer">
         <span>SpotifyBU</span>
         <span>v{appInfo?.version ?? "..."}</span>
@@ -4168,6 +4487,16 @@ function parseMusicLibraryPlaylistSyncMode(
   return "replace";
 }
 
+function parseMusicLibraryPlaylistSyncTarget(
+  value: string
+): MusicLibraryPlaylistSyncTarget {
+  return value === "plex" ? "plex" : "navidrome";
+}
+
+function playlistSyncTargetLabel(target: MusicLibraryPlaylistSyncTarget) {
+  return target === "plex" ? "Plex" : "Navidrome";
+}
+
 function formatDuration(durationMs: number) {
   const totalSeconds = Math.round(durationMs / 1000);
   const minutes = Math.floor(totalSeconds / 60);
@@ -4255,8 +4584,10 @@ function renderLibraryMatch(
   libraryIndex: MusicLibraryIndexSummary | null,
   options: {
     deleteDisabled?: boolean;
+    isUpdatingOrganizeIgnore?: boolean;
     isOrganizing?: boolean;
     isDeleting?: boolean;
+    onClearOrganizeIgnore?: () => void;
     onDelete?: () => void;
     onOrganize?: () => void;
     onSearchMissing?: () => void;
@@ -4312,6 +4643,35 @@ function renderLibraryMatch(
     }
 
     return <span className="track-status missing">Not backed up</span>;
+  }
+
+  if (match.organizeIgnored) {
+    return (
+      <span className="track-status-stack">
+        <span className="track-status-actions">
+          <button
+            className="track-status exists actionable"
+            disabled={options.organizeDisabled || options.isUpdatingOrganizeIgnore}
+            onClick={options.onClearOrganizeIgnore}
+            title="Undo manual organization and let SpotifyBU organize this file again"
+            type="button"
+          >
+            {options.isUpdatingOrganizeIgnore ? (
+              <Loader2 className="spin" size={13} />
+            ) : (
+              <CheckCircle2 size={13} />
+            )}
+            {options.isUpdatingOrganizeIgnore
+              ? "Updating"
+              : "Manually organized"}
+          </button>
+          {renderDeleteLibraryTrackButton(match, options)}
+        </span>
+        <span className="track-note">
+          Kept at {match.matchedTrack?.relativePath ?? "indexed location"}
+        </span>
+      </span>
+    );
   }
 
   if (match.needsMove) {

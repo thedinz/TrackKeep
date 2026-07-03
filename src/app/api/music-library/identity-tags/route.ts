@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { backfillMusicLibrarySpotifyIdentityTags } from "@/lib/music-library";
+import { startMusicLibrarySpotifyIdentityTagBackfillJob } from "@/lib/music-library";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -9,9 +9,10 @@ export async function POST() {
   try {
     return NextResponse.json(
       {
-        backfill: await backfillMusicLibrarySpotifyIdentityTags()
+        job: startMusicLibrarySpotifyIdentityTagBackfillJob()
       },
       {
+        status: 202,
         headers: {
           "Cache-Control": "no-store"
         }
@@ -23,7 +24,7 @@ export async function POST() {
         error:
           error instanceof Error
             ? error.message
-            : "SpotifyBU could not backfill Spotify identity tags."
+            : "SpotifyBU could not backfill Spotify metadata tags."
       },
       {
         status: 400
