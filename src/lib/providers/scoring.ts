@@ -5,10 +5,13 @@ export type ProviderCandidateMetadata = {
   artists: string[];
   durationMs?: number;
   title: string;
+  uploadedAt?: string;
+  verified?: boolean;
 };
 
 export type ProviderTrackMetadata = {
   album?: string;
+  albumReleaseDate?: string;
   artists: string[];
   durationMs: number;
   name: string;
@@ -57,7 +60,7 @@ export function scoreProviderCandidate(
   const albumScore = track.album
     ? albumSimilarity(track.album, candidate.album, candidate.title)
     : 0;
-  const overall = Math.min(
+  const baseOverall = Math.min(
     100,
     Math.round(
       titleScore * 0.48 +
@@ -66,14 +69,124 @@ export function scoreProviderCandidate(
         albumScore * 0.08
     )
   );
+  const uploadDatePenalty = uploadDatePenaltyFor(track, candidate);
+  const overall = Math.max(0, baseOverall - uploadDatePenalty);
 
   return {
     albumScore,
     artistScore,
     durationDeltaMs,
     overall,
-    titleScore
+    titleScore,
+    ...(uploadDatePenalty ? { uploadDatePenalty } : {})
   } satisfies CandidateScore;
+}
+
+function uploadDatePenaltyFor(
+  track: ProviderTrackMetadata,
+  candidate: ProviderCandidateMetadata
+) {
+  const uploadedAt = parseProviderDate(candidate.uploadedAt);
+
+  if (!uploadedAt) {
+    return 0;
+  }
+
+  const officialSource = isOfficialProviderSource(track, candidate);
+  const agePenalty = uploadAgePenalty(uploadedAt, officialSource);
+  const preReleasePenalty = uploadPreReleasePenalty(
+    track.albumReleaseDate,
+    uploadedAt,
+    officialSource
+  );
+
+  return Math.min(
+    officialSource ? 3 : 12,
+    agePenalty + preReleasePenalty
+  );
+}
+
+function uploadAgePenalty(uploadedAt: Date, officialSource: boolean) {
+  const yearsOld =
+    (Date.now() - uploadedAt.getTime()) / (365.25 * 24 * 60 * 60 * 1000);
+  const graceYears = officialSource ? 15 : 8;
+
+  if (yearsOld <= graceYears) {
+    return 0;
+  }
+
+  return officialSource
+    ? Math.min(2, Math.ceil((yearsOld - graceYears) / 4))
+    : Math.min(6, Math.ceil((yearsOld - graceYears) / 2));
+}
+
+function uploadPreReleasePenalty(
+  releaseDateValue: string | undefined,
+  uploadedAt: Date,
+  officialSource: boolean
+) {
+  const releaseDate = parseSpotifyReleaseDate(releaseDateValue);
+
+  if (!releaseDate) {
+    return 0;
+  }
+
+  const daysBeforeRelease =
+    (releaseDate.getTime() - uploadedAt.getTime()) / (24 * 60 * 60 * 1000);
+
+  if (daysBeforeRelease <= 180) {
+    return 0;
+  }
+
+  return officialSource
+    ? Math.min(2, Math.ceil(daysBeforeRelease / 730))
+    : Math.min(8, 2 + Math.ceil(daysBeforeRelease / 365));
+}
+
+function isOfficialProviderSource(
+  track: ProviderTrackMetadata,
+  candidate: ProviderCandidateMetadata
+) {
+  if (candidate.verified) {
+    return true;
+  }
+
+  const sourceText = candidate.artists.join(" ");
+
+  if (/vevo\b/i.test(sourceText)) {
+    return true;
+  }
+
+  if (/\s-\s*topic\b/i.test(sourceText)) {
+    return true;
+  }
+
+  return (
+    /\bofficial\b/i.test(sourceText) &&
+    sourceMatchesTrackArtist(track, sourceText)
+  );
+}
+
+function sourceMatchesTrackArtist(
+  track: ProviderTrackMetadata,
+  sourceText: string
+) {
+  const ignoredSourceTokens = new Set([
+    "channel",
+    "music",
+    "official",
+    "topic"
+  ]);
+  const sourceTokens = tokenSet(sourceText, ignoredSourceTokens);
+
+  return track.artists.some((artist) => {
+    const artistTokens = tokenSet(artist);
+
+    return (
+      directionalSimilarity(artistTokens, sourceTokens) >= 80 ||
+      directionalSimilarity(sourceTokens, artistTokens) >= 80
+    );
+  });
 }
 
 function titleSimilarity(
@@ -284,6 +397,66 @@ function albumQualifiedTitleTokenSets(
   );
 
   return hasNonEditionToken ? [retainedTokens] : [];
+}
+
+function parseProviderDate(value: string | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const compactDate = value.match(/^(\d{4})(\d{2})(\d{2})$/);
+
+  if (compactDate) {
+    return utcDate(
+      Number(compactDate[1]),
+      Number(compactDate[2]),
+      Number(compactDate[3])
+    );
+  }
+
+  const calendarDate = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (calendarDate) {
+    return utcDate(
+      Number(calendarDate[1]),
+      Number(calendarDate[2]),
+      Number(calendarDate[3])
+    );
+  }
+
+  return null;
+}
+
+function parseSpotifyReleaseDate(value: string | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const releaseDate = value.match(/^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/);
+
+  if (!releaseDate) {
+    return null;
+  }
+
+  return utcDate(
+    Number(releaseDate[1]),
+    releaseDate[2] ? Number(releaseDate[2]) : 1,
+    releaseDate[3] ? Number(releaseDate[3]) : 1
+  );
+}
+
+function utcDate(year: number, month: number, day: number) {
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return date;
 }
 
 function isAlbumEquivalentSegment(segment: string, albumTokens: Set<string>) {

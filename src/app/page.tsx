@@ -456,9 +456,11 @@ type ProviderSearchCandidate = {
     isrcMatch?: boolean;
     overall: number;
     titleScore: number;
+    uploadDatePenalty?: number;
   };
   title: string;
   url?: string;
+  uploadedAt?: string;
   verified: boolean;
 };
 
