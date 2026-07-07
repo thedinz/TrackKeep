@@ -24,6 +24,7 @@ export type CandidateScore = {
   isrcMatch?: boolean;
   overall: number;
   titleScore: number;
+  uploadDatePenalty?: number;
 };
 
 export type SourceCandidate = {
@@ -36,6 +37,7 @@ export type SourceCandidate = {
   score: CandidateScore;
   title: string;
   url?: string;
+  uploadedAt?: string;
   verified: boolean;
 };
 

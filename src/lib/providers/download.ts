@@ -318,8 +318,11 @@ type YtDlpSearchEntry = {
   channel?: string;
   duration?: number;
   id?: string;
+  release_timestamp?: number;
+  timestamp?: number;
   title?: string;
   uploader?: string;
+  upload_date?: string;
   url?: string;
   webpage_url?: string;
 };
@@ -452,7 +455,7 @@ export async function searchProviderCandidates(
       providerOrder.indexOf(left.providerId as DownloadProviderId) -
       providerOrder.indexOf(right.providerId as DownloadProviderId);
 
-    return providerDelta || right.score.overall - left.score.overall;
+    return providerDelta || compareSourceCandidatesByScore(left, right);
   });
 
   return {
@@ -1572,7 +1575,7 @@ function bestProviderCandidate(candidates: SourceCandidate[]) {
   return candidates
     .filter((candidate) => candidate.url)
     .sort((left, right) => {
-      const scoreDelta = right.score.overall - left.score.overall;
+      const scoreDelta = compareSourceCandidatesByScore(left, right);
 
       if (scoreDelta) {
         return scoreDelta;
@@ -1583,6 +1586,25 @@ function bestProviderCandidate(candidates: SourceCandidate[]) {
         defaultProviderSearchOrder.indexOf(right.providerId as DownloadProviderId)
       );
     })[0];
+}
+
+function compareSourceCandidatesByScore(
+  left: SourceCandidate,
+  right: SourceCandidate
+) {
+  return (
+    right.score.overall - left.score.overall ||
+    (left.providerId === right.providerId
+      ? sourceCandidateUploadedAtTime(right) -
+        sourceCandidateUploadedAtTime(left)
+      : 0)
+  );
+}
+
+function sourceCandidateUploadedAtTime(candidate: SourceCandidate) {
+  const timestamp = Date.parse(candidate.uploadedAt ?? "");
+
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function summarizeProviderDownloadJobRequest(
@@ -1694,7 +1716,7 @@ async function searchYoutubeCandidates(
   }
 
   return [...candidatesById.values()].sort(
-    (left, right) => right.score.overall - left.score.overall
+    compareSourceCandidatesByScore
   );
 }
 
@@ -1786,10 +1808,12 @@ function youtubeCandidateFromEntry(
     typeof entry.duration === "number"
       ? Math.round(entry.duration * 1000)
       : undefined;
+  const uploadedAt = youtubeEntryUploadedAt(entry);
   const score = scoreProviderCandidate(track, {
     artists,
     durationMs,
-    title
+    title,
+    uploadedAt
   });
 
   return {
@@ -1803,8 +1827,67 @@ function youtubeCandidateFromEntry(
     },
     title,
     url: `https://www.youtube.com/watch?v=${videoId}`,
+    ...(uploadedAt ? { uploadedAt } : {}),
     verified: false
   } satisfies SourceCandidate;
+}
+
+function youtubeEntryUploadedAt(entry: YtDlpSearchEntry) {
+  const uploadDate = normalizedYtDlpDate(entry.upload_date);
+
+  if (uploadDate) {
+    return uploadDate;
+  }
+
+  const timestamp = entry.timestamp ?? entry.release_timestamp;
+
+  if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) {
+    return undefined;
+  }
+
+  return new Date(timestamp * 1000).toISOString().slice(0, 10);
+}
+
+function normalizedYtDlpDate(value: string | undefined) {
+  if (!value) {
+    return undefined;
+  }
+
+  const compactDate = value.match(/^(\d{4})(\d{2})(\d{2})$/);
+
+  if (compactDate) {
+    return validYtDlpDate(
+      Number(compactDate[1]),
+      Number(compactDate[2]),
+      Number(compactDate[3])
+    );
+  }
+
+  const calendarDate = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (calendarDate) {
+    return validYtDlpDate(
+      Number(calendarDate[1]),
+      Number(calendarDate[2]),
+      Number(calendarDate[3])
+    );
+  }
+
+  return undefined;
+}
+
+function validYtDlpDate(year: number, month: number, day: number) {
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return undefined;
+  }
+
+  return date.toISOString().slice(0, 10);
 }
 
 function jioSaavnCandidateFromEntry(
@@ -1868,7 +1951,7 @@ function rememberBestYoutubeCandidate(
 
   if (
     !existingCandidate ||
-    candidate.score.overall > existingCandidate.score.overall
+    compareSourceCandidatesByScore(candidate, existingCandidate) < 0
   ) {
     candidatesById.set(candidate.id, candidate);
   }

@@ -178,3 +178,81 @@ test("treats an album suffix in the Spotify title as secondary context", () => {
   assert.equal(officialLyricScore.titleScore, 100);
   assert.equal(officialLyricScore.overall, 100);
 });
+
+test("nudges old unofficial uploads below newer equivalent candidates", () => {
+  const track = {
+    album: "Example Album",
+    albumReleaseDate: "2008-04-01",
+    artists: ["Example Artist"],
+    durationMs: 240_000,
+    name: "Example Song"
+  };
+  const oldUnofficialScore = scoreProviderCandidate(track, {
+    artists: ["Random Uploads"],
+    durationMs: 240_000,
+    title: "Example Song - Example Artist",
+    uploadedAt: "2008-04-02"
+  });
+  const newerUnofficialScore = scoreProviderCandidate(track, {
+    artists: ["Random Uploads"],
+    durationMs: 240_000,
+    title: "Example Song - Example Artist",
+    uploadedAt: "2022-04-02"
+  });
+
+  assert.ok((oldUnofficialScore.uploadDatePenalty ?? 0) > 0);
+  assert.ok(newerUnofficialScore.overall > oldUnofficialScore.overall);
+});
+
+test("keeps old official uploads from taking the full age penalty", () => {
+  const track = {
+    album: "Example Album",
+    albumReleaseDate: "2008-04-01",
+    artists: ["Example Artist"],
+    durationMs: 240_000,
+    name: "Example Song"
+  };
+  const oldUnofficialScore = scoreProviderCandidate(track, {
+    artists: ["Random Uploads"],
+    durationMs: 240_000,
+    title: "Example Song - Example Artist",
+    uploadedAt: "2008-04-02"
+  });
+  const oldOfficialScore = scoreProviderCandidate(track, {
+    artists: ["Example Artist - Topic"],
+    durationMs: 240_000,
+    title: "Example Song - Example Artist",
+    uploadedAt: "2008-04-02"
+  });
+
+  assert.ok(
+    (oldUnofficialScore.uploadDatePenalty ?? 0) >
+      (oldOfficialScore.uploadDatePenalty ?? 0)
+  );
+  assert.ok(oldOfficialScore.overall > oldUnofficialScore.overall);
+});
+
+test("penalizes uploads that substantially predate the Spotify release", () => {
+  const track = {
+    album: "Example Album",
+    albumReleaseDate: "2020-05-01",
+    artists: ["Example Artist"],
+    durationMs: 240_000,
+    name: "Example Song"
+  };
+  const preReleaseScore = scoreProviderCandidate(track, {
+    artists: ["Random Uploads"],
+    durationMs: 240_000,
+    title: "Example Song - Example Artist",
+    uploadedAt: "2012-01-01"
+  });
+  const releaseWindowScore = scoreProviderCandidate(track, {
+    artists: ["Random Uploads"],
+    durationMs: 240_000,
+    title: "Example Song - Example Artist",
+    uploadedAt: "2020-05-02"
+  });
+
+  assert.ok((preReleaseScore.uploadDatePenalty ?? 0) >= 8);
+  assert.ok(releaseWindowScore.overall > preReleaseScore.overall);
+});
