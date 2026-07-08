@@ -1,6 +1,7 @@
 import type { BackupTrack } from "./spotify";
 
 export const spotifyBuIdentityVersion = "1";
+export const spotifyBuIdentityCommentPrefix = "SpotifyBU identity ";
 
 export const spotifyBuIdentityTags = {
   albumId: "spotifybu:album_id",
@@ -73,24 +74,34 @@ export function spotifyBuIdentityMetadataEntries(
 export function spotifyBuIdentityMetadataFromTagLookup(
   tagLookup: (keys: readonly string[]) => string | undefined
 ): SpotifyBuIdentityMetadata {
+  const commentMetadata = spotifyBuIdentityMetadataFromComment(
+    tagLookup(["comment"])
+  );
   const spotifyTrackUri = normalizeSpotifyTrackUri(
-    tagLookup(spotifyBuIdentityTagAliases.trackUri)
+    tagLookup(spotifyBuIdentityTagAliases.trackUri) ??
+      commentMetadata[spotifyBuIdentityTags.trackUri]
   );
   const spotifyTrackId =
-    normalizeSpotifyId(tagLookup(spotifyBuIdentityTagAliases.trackId)) ??
+    normalizeSpotifyId(
+      tagLookup(spotifyBuIdentityTagAliases.trackId) ??
+        commentMetadata[spotifyBuIdentityTags.trackId]
+    ) ??
     spotifyTrackIdFromUri(spotifyTrackUri);
 
   return {
     spotifyAlbumId: normalizeSpotifyId(
-      tagLookup(spotifyBuIdentityTagAliases.albumId)
+      tagLookup(spotifyBuIdentityTagAliases.albumId) ??
+        commentMetadata[spotifyBuIdentityTags.albumId]
     ),
     spotifyIsrc: normalizeIdentityValue(
-      tagLookup(spotifyBuIdentityTagAliases.isrc)
+      tagLookup(spotifyBuIdentityTagAliases.isrc) ??
+        commentMetadata[spotifyBuIdentityTags.isrc]
     ),
     spotifyTrackId,
     spotifyTrackUri,
     spotifybuIdentityVersion: normalizeIdentityValue(
-      tagLookup(spotifyBuIdentityTagAliases.identityVersion)
+      tagLookup(spotifyBuIdentityTagAliases.identityVersion) ??
+        commentMetadata[spotifyBuIdentityTags.identityVersion]
     )
   };
 }
@@ -158,4 +169,30 @@ function tagAliases(tagName: string) {
     tagName.replace(/:/g, "_"),
     `----:com.apple.itunes:${tagName}`
   ];
+}
+
+function spotifyBuIdentityMetadataFromComment(value?: string) {
+  const trimmedValue = value?.trim();
+
+  if (!trimmedValue?.startsWith(spotifyBuIdentityCommentPrefix)) {
+    return {} as Record<string, string>;
+  }
+
+  try {
+    const parsed = JSON.parse(
+      trimmedValue.slice(spotifyBuIdentityCommentPrefix.length)
+    ) as unknown;
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {} as Record<string, string>;
+    }
+
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string"
+      )
+    );
+  } catch {
+    return {} as Record<string, string>;
+  }
 }

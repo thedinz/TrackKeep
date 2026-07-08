@@ -61,7 +61,9 @@ Useful references:
 - External providers must show a rights confirmation and a bulk-download warning before the first download job.
 - Bulk jobs should use conservative rate limits and should make cancellation available at track and playlist scope.
 - The current implemented external download path searches YouTube first, then JioSaavn, for one selected Spotify track or for every missing track in a playlist-scale queue. The user still reviews the candidate and confirms download rights before a single-track download starts. If a provider source fails with a source-side error such as a YouTube 403, SpotifyBU can retry alternate reviewed or previewed candidates before marking the track as failed.
-- Downloads support MP3 or FLAC output and 128 kbps or 320 kbps quality targets.
+- Downloads use M4A/AAC at 256 kbps by default, with MP3 kept as an explicit legacy compatibility format.
+- M4A downloads with embedded artwork should keep SpotifyBU identity readable through the standard comment fallback when MP4 artwork muxing prevents arbitrary custom keys.
+- Existing MP3 backups remain supported for scanning and matching, but SpotifyBU should not transcode them as a quality upgrade. Redownload from an authorized source to improve lossy output quality.
 - Bulk queues run sequentially with configurable wait between tracks, chunk size, and chunk pause to reduce provider blocking risk. Defaults are intentionally conservative and can still be overridden by request settings.
 - Provider work stages temporary files under `.spotifybu/tmp/provider-downloads` inside the mounted Navidrome music folder, then moves completed files into final album folders.
 - If a download, conversion, or move fails, stale staging files are cleaned after 10 minutes of provider-download idleness so unfinished media does not accumulate in the container filesystem.

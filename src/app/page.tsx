@@ -155,6 +155,11 @@ type IndexedTrack = {
   isrc?: string;
   relativeDirectory: string;
   relativePath: string;
+  spotifyAlbumId?: string;
+  spotifyIsrc?: string;
+  spotifyTrackId?: string;
+  spotifyTrackUri?: string;
+  spotifybuIdentityVersion?: string;
   title: string;
 };
 
@@ -315,6 +320,21 @@ type LibraryTrackDeleteResponse = LibraryIndexResponse & {
   relativePath: string;
   removedFromIndex: boolean;
 };
+
+type LibraryTrackBulkDeleteResponse = LibraryIndexResponse &
+  LibraryMatchesResponse & {
+    deletedCount: number;
+    deletedTracks: Array<{
+      deleted: boolean;
+      providerLogCleanup: {
+        attemptsRemoved: number;
+        downloadsRemoved: number;
+      };
+      relativePath: string;
+      removedFromIndex: boolean;
+    }>;
+    removedFromIndexCount: number;
+  };
 
 type MusicLibraryPlaylistSyncResponse = {
   musicLibraryPlaylist: {
@@ -573,10 +593,58 @@ const singleTrackProviderSearchLimit = 8;
 const providerDownloadPollIntervalMs = 2500;
 const maxProviderDownloadPollAttempts = 720;
 const bulkProviderJobStorageKey = "spotifybu.bulkProviderJobId";
+const providerDownloadFormatOptions = [
+  {
+    label: "M4A/AAC",
+    value: "m4a"
+  },
+  {
+    label: "MP3 legacy",
+    value: "mp3"
+  }
+] as const;
+const providerDownloadQualityOptions = {
+  m4a: [
+    {
+      label: "256 kbps",
+      value: "256"
+    },
+    {
+      label: "128 kbps",
+      value: "128"
+    }
+  ],
+  mp3: [
+    {
+      label: "320 kbps",
+      value: "320"
+    },
+    {
+      label: "128 kbps",
+      value: "128"
+    }
+  ]
+} as const;
 const mediaSourceProviders: readonly SourceProviderCatalogEntry[] =
   SOURCE_PROVIDER_CATALOG.filter(
     (provider) => downloadEnabledProviderIds.has(provider.id)
   );
+
+function defaultProviderDownloadQuality(format: string) {
+  return format === "mp3" ? "320" : "256";
+}
+
+function providerDownloadQualityChoices(format: string) {
+  return format === "mp3"
+    ? providerDownloadQualityOptions.mp3
+    : providerDownloadQualityOptions.m4a;
+}
+
+function providerDownloadProfileLabel(format: string, quality: string) {
+  return format === "mp3"
+    ? `MP3 legacy ${quality} kbps`
+    : `M4A/AAC ${quality} kbps`;
+}
 
 export default function Home() {
   const missingBackupActionsRef = useRef<HTMLDivElement | null>(null);
@@ -630,6 +698,8 @@ export default function Home() {
   const [deletingLibraryTrackPath, setDeletingLibraryTrackPath] = useState<
     string | null
   >(null);
+  const [isDeletingSpotifyBuTaggedTracks, setIsDeletingSpotifyBuTaggedTracks] =
+    useState(false);
   const [libraryOrganizeProgress, setLibraryOrganizeProgress] =
     useState<string | null>(null);
   const [isCreatingMusicLibraryPlaylist, setIsCreatingMusicLibraryPlaylist] =
@@ -651,7 +721,8 @@ export default function Home() {
   );
   const [requestError, setRequestError] = useState<string | null>(null);
   const [downloadTrackPosition, setDownloadTrackPosition] = useState("");
-  const [downloadQuality, setDownloadQuality] = useState("320");
+  const [downloadFormat, setDownloadFormat] = useState("m4a");
+  const [downloadQuality, setDownloadQuality] = useState("256");
   const [providerCandidates, setProviderCandidates] = useState<
     ProviderSearchCandidate[]
   >([]);
@@ -945,6 +1016,66 @@ export default function Home() {
       tracks
     ]
   );
+
+  const deleteSpotifyBuTaggedLibraryTracks = useCallback(async () => {
+    const deleteCount = spotifyBuTaggedLibraryMatchCount(libraryMatches);
+
+    if (!deleteCount || isDeletingSpotifyBuTaggedTracks) {
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Delete ${numberFormatter.format(
+          deleteCount
+        )} SpotifyBU-tagged file${
+          deleteCount === 1 ? "" : "s"
+        } from the Navidrome music folder?\n\nThese tracks will become missing so you can redownload them as M4A/AAC.`
+      )
+    ) {
+      return;
+    }
+
+    setIsDeletingSpotifyBuTaggedTracks(true);
+    setLibraryOrganizeMessage(null);
+    setProviderDownloadMessage(null);
+    setProviderDownloadError(null);
+    setRequestError(null);
+
+    try {
+      const response = await deleteJson<LibraryTrackBulkDeleteResponse>(
+        "/api/music-library/tracks",
+        {
+          deleteSpotifyBuTagged: true,
+          tracks
+        }
+      );
+
+      applyLibraryIndexResponse({
+        index: response.index
+      });
+      applyLibraryMatches(tracks, response.libraryMatches);
+      setLibraryOrganizeMessage(
+        response.deletedCount
+          ? `Deleted ${numberFormatter.format(
+              response.deletedCount
+            )} SpotifyBU-tagged file${
+              response.deletedCount === 1 ? "" : "s"
+            }. Redownload the missing tracks to get M4A/AAC files.`
+          : "No SpotifyBU-tagged files needed deletion."
+      );
+    } catch (error) {
+      setRequestError(errorMessage(error));
+    } finally {
+      setIsDeletingSpotifyBuTaggedTracks(false);
+    }
+  }, [
+    applyLibraryIndexResponse,
+    applyLibraryMatches,
+    isDeletingSpotifyBuTaggedTracks,
+    libraryMatches,
+    tracks
+  ]);
 
   const closeTrackOrganizeDialog = useCallback(() => {
     setTrackOrganizeDialog(null);
@@ -1479,6 +1610,7 @@ export default function Home() {
                 providerCandidates,
                 downloadSource.sourceUrl
               ),
+          format: downloadFormat,
           providerId: downloadSource.providerId,
           quality: downloadQuality,
           rightsConfirmed: downloadRightsConfirmed,
@@ -1534,6 +1666,7 @@ export default function Home() {
     }
   }, [
     downloadBulkRiskAccepted,
+    downloadFormat,
     downloadQuality,
     downloadRightsConfirmed,
     downloadTrackPosition,
@@ -1894,6 +2027,10 @@ export default function Home() {
       ),
     [libraryMatches]
   );
+  const spotifyBuTaggedDeleteCount = useMemo(
+    () => spotifyBuTaggedLibraryMatchCount(libraryMatches),
+    [libraryMatches]
+  );
   const hasUsableLibraryIndex = Boolean(libraryIndex && !libraryIndex.stale);
   const indexedTrackCount = tracks.filter((track) => {
     const match = libraryMatchesByPosition.get(track.position);
@@ -1993,6 +2130,15 @@ export default function Home() {
     isOrganizingLibrary ||
     organizingTrackPositions.length > 0 ||
     organizeIgnoreTrackPositions.length > 0;
+  const canDeleteSpotifyBuTaggedTracks =
+    hasUsableLibraryIndex &&
+    spotifyBuTaggedDeleteCount > 0 &&
+    !deletingLibraryTrackPath &&
+    !isDeletingSpotifyBuTaggedTracks &&
+    !isAnyOrganizationRunning &&
+    !isSearchingProvider &&
+    !isDownloadingProvider &&
+    !isDownloadingBulkProvider;
   const canCreateMusicLibraryPlaylist =
     sourceKind === "playlist" &&
     Boolean(selectedPlaylistId) &&
@@ -2181,6 +2327,7 @@ export default function Home() {
         "/api/providers/download/bulk",
         {
           bulkRiskAccepted: downloadBulkRiskAccepted,
+          format: downloadFormat,
           items,
           quality: downloadQuality,
           rightsConfirmed: downloadRightsConfirmed
@@ -2206,6 +2353,7 @@ export default function Home() {
     applyBulkProviderJob,
     bulkCandidatePreview,
     downloadBulkRiskAccepted,
+    downloadFormat,
     downloadQuality,
     downloadRightsConfirmed
   ]);
@@ -3091,9 +3239,40 @@ export default function Home() {
                   ) : null}
                   <div className="provider-throttle-grid compact backup-workflow-settings">
                     <label className="provider-field">
+                      <span>Format</span>
+                      <select
+                        disabled={
+                          isDownloadingProvider || isDownloadingBulkProvider
+                        }
+                        onChange={(event) => {
+                          const nextFormat = event.target.value;
+
+                          setDownloadFormat(nextFormat);
+                          setDownloadQuality(
+                            defaultProviderDownloadQuality(nextFormat)
+                          );
+                          setDownloadRightsConfirmed(false);
+                          setDownloadBulkRiskAccepted(false);
+                          setProviderDownloadMessage(null);
+                          setProviderDownloadError(null);
+                          setBulkDownloadMessage(null);
+                          setBulkDownloadProgress(null);
+                        }}
+                        value={downloadFormat}
+                      >
+                        {providerDownloadFormatOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="provider-field">
                       <span>Quality</span>
                       <select
-                        disabled={isDownloadingProvider || isDownloadingBulkProvider}
+                        disabled={
+                          isDownloadingProvider || isDownloadingBulkProvider
+                        }
                         onChange={(event) => {
                           setDownloadQuality(event.target.value);
                           setDownloadRightsConfirmed(false);
@@ -3105,8 +3284,13 @@ export default function Home() {
                         }}
                         value={downloadQuality}
                       >
-                        <option value="128">128 kbps</option>
-                        <option value="320">320 kbps</option>
+                        {providerDownloadQualityChoices(downloadFormat).map(
+                          (option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          )
+                        )}
                       </select>
                     </label>
                   </div>
@@ -3358,7 +3542,12 @@ export default function Home() {
                         >
                           <div className="download-progress-meta">
                             <span>Downloading</span>
-                            <span>MP3 {downloadQuality} kbps</span>
+                            <span>
+                              {providerDownloadProfileLabel(
+                                downloadFormat,
+                                downloadQuality
+                              )}
+                            </span>
                           </div>
                           <div
                             aria-label="Provider download in progress"
@@ -3617,11 +3806,31 @@ export default function Home() {
               ) : activeSource ? (
                 <>
                   <div className="section-heading track-table-heading">
-                    <span className="stat-label">Track backup status</span>
-                    <p>
-                      Every Spotify track in the selected source, with its current
-                      Navidrome match status.
-                    </p>
+                    <div>
+                      <span className="stat-label">Track backup status</span>
+                      <p>
+                        Every Spotify track in the selected source, with its
+                        current Navidrome match status.
+                      </p>
+                    </div>
+                    {spotifyBuTaggedDeleteCount ? (
+                      <button
+                        className="command secondary danger compact"
+                        disabled={!canDeleteSpotifyBuTaggedTracks}
+                        onClick={() =>
+                          void deleteSpotifyBuTaggedLibraryTracks()
+                        }
+                        title="Delete SpotifyBU-tagged files from this source so they can be redownloaded"
+                        type="button"
+                      >
+                        {isDeletingSpotifyBuTaggedTracks ? (
+                          <Loader2 className="spin" size={16} />
+                        ) : (
+                          <Trash2 size={16} />
+                        )}
+                        Delete SpotifyBU Files
+                      </button>
+                    ) : null}
                   </div>
                   <div className="track-table">
                     <div className="track-row track-head">
@@ -4578,6 +4787,22 @@ function playlistMissingBackupTitle(missingTrackCount: number) {
   const trackLabel = missingTrackCount === 1 ? "track is" : "tracks are";
 
   return `${numberFormatter.format(missingTrackCount)} ${trackLabel} not backed up`;
+}
+
+function spotifyBuTaggedLibraryMatchCount(matches: LibraryMatch[]) {
+  const relativePaths = new Set<string>();
+
+  for (const match of matches) {
+    const relativePath = match.matchedTrack?.relativePath;
+
+    if (!relativePath || !match.matchedTrack?.spotifybuIdentityVersion) {
+      continue;
+    }
+
+    relativePaths.add(normalizeRelativePath(relativePath).toLowerCase());
+  }
+
+  return relativePaths.size;
 }
 
 function renderLibraryMatch(
