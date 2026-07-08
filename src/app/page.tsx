@@ -87,6 +87,10 @@ type MusicServerStatus = {
   musicLibraryUrl: string;
   requested?: boolean;
   scanCount?: number;
+  scanElapsedSeconds?: number;
+  scanFolderCount?: number;
+  scanLastScan?: string;
+  scanType?: string;
   scanning?: boolean;
   state:
     | "not_configured"
@@ -95,6 +99,21 @@ type MusicServerStatus = {
     | "auth_failed"
     | "error";
 };
+
+type MusicServerScanStatus = {
+  configured: boolean;
+  count: number;
+  elapsedSeconds: number | null;
+  error: string | null;
+  folderCount: number;
+  lastScan: string | null;
+  message: string;
+  musicLibraryUrl: string;
+  running: boolean;
+  scanType: string | null;
+};
+
+type MusicServerScanMode = "quick" | "full";
 
 type MusicLibraryIndexSkip = {
   kind: "directory" | "file";
@@ -679,6 +698,10 @@ export default function Home() {
     useState<MusicLibraryIndexSummary | null>(null);
   const [libraryIndexScan, setLibraryIndexScan] =
     useState<MusicLibraryIndexScanStatus | null>(null);
+  const [musicServerScan, setMusicServerScan] =
+    useState<MusicServerScanStatus | null>(null);
+  const [musicServerScanBusy, setMusicServerScanBusy] =
+    useState<MusicServerScanMode | null>(null);
   const [libraryMatches, setLibraryMatches] = useState<LibraryMatch[]>([]);
   const [query, setQuery] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
@@ -875,6 +898,29 @@ export default function Home() {
         },
         state: "error",
         writable: false
+      });
+    }
+  }, []);
+
+  const loadMusicServerScanStatus = useCallback(async () => {
+    try {
+      setMusicServerScan(
+        await fetchJson<MusicServerScanStatus>(
+          "/api/music-library/navidrome-scan"
+        )
+      );
+    } catch (error) {
+      setMusicServerScan({
+        configured: false,
+        count: 0,
+        elapsedSeconds: null,
+        error: errorMessage(error),
+        folderCount: 0,
+        lastScan: null,
+        message: "SpotifyBU could not check Navidrome scan status.",
+        musicLibraryUrl: "",
+        running: false,
+        scanType: null
       });
     }
   }, []);
@@ -1239,6 +1285,30 @@ export default function Home() {
     libraryIndex,
     refreshLibraryMatches
   ]);
+
+  const startMusicServerScanAction = useCallback(
+    async (mode: MusicServerScanMode) => {
+      setMusicServerScanBusy(mode);
+      setRequestError(null);
+
+      try {
+        const status = await postJson<MusicServerScanStatus>(
+          "/api/music-library/navidrome-scan",
+          {
+            fullScan: mode === "full"
+          }
+        );
+
+        setMusicServerScan(status);
+        void loadMusicLibraryStatus();
+      } catch (error) {
+        setRequestError(errorMessage(error));
+      } finally {
+        setMusicServerScanBusy(null);
+      }
+    },
+    [loadMusicLibraryStatus]
+  );
 
   const organizeLibraryMatches = useCallback(async (
     requestedTrackPositions?: number[]
@@ -1786,6 +1856,7 @@ export default function Home() {
       void loadLibraryIndex();
       void loadSession();
       void loadMusicLibraryStatus();
+      void loadMusicServerScanStatus();
       void loadPlexSettingsStatus();
     }
 
@@ -1798,6 +1869,7 @@ export default function Home() {
     loadAppInfo,
     loadLibraryIndex,
     loadMusicLibraryStatus,
+    loadMusicServerScanStatus,
     loadPlexSettingsStatus,
     loadSession,
     loadSpotifyAuthConfig
@@ -1859,6 +1931,57 @@ export default function Home() {
     libraryIndexScan?.state,
     refreshLibraryMatches
   ]);
+
+  useEffect(() => {
+    if (!musicServerScan?.running) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function pollMusicServerScan() {
+      try {
+        const status = await fetchJson<MusicServerScanStatus>(
+          "/api/music-library/navidrome-scan"
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        setMusicServerScan(status);
+
+        if (!status.running) {
+          void loadMusicLibraryStatus();
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setRequestError(errorMessage(error));
+          setMusicServerScan((current) =>
+            current
+              ? {
+                  ...current,
+                  error: errorMessage(error),
+                  message: "SpotifyBU could not refresh Navidrome scan status.",
+                  running: false
+                }
+              : current
+          );
+        }
+      }
+    }
+
+    const intervalId = window.setInterval(() => {
+      void pollMusicServerScan();
+    }, 3000);
+
+    void pollMusicServerScan();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [loadMusicLibraryStatus, musicServerScan?.running]);
 
   useEffect(() => {
     if (session?.authenticated && sourceKind === "playlist") {
@@ -2020,6 +2143,21 @@ export default function Home() {
     ? musicLibraryStatusMessage(musicLibraryStatus)
     : "Checking library target";
   const musicServerStatusLabel = musicLibraryStatus?.server.message;
+  const musicServerScanRunning = Boolean(musicServerScan?.running);
+  const musicServerScanControlsDisabled =
+    musicServerScanBusy !== null ||
+    musicServerScanRunning ||
+    !musicServerApiReady;
+  const musicServerScanLabel =
+    musicServerScan?.message ??
+    musicLibraryStatus?.server.message ??
+    "Checking Navidrome scan status";
+  const musicServerScanDetailLabel = musicServerScan
+    ? musicServerScanDetails(musicServerScan)
+    : "";
+  const musicServerScanProgressLabel = musicServerScan
+    ? navidromeScanTypeLabel(musicServerScan.scanType)
+    : "Scan";
   const libraryMatchesByPosition = useMemo(
     () =>
       new Map(
@@ -3987,6 +4125,93 @@ export default function Home() {
                   </span>
                 </div>
               ) : null}
+              <div className="provider-row with-action index-row navidrome-scan-row">
+                <span
+                  className={`provider-icon ${
+                    musicServerScanRunning
+                      ? "green"
+                      : musicServerApiReady
+                        ? "teal"
+                        : "amber"
+                  }`}
+                >
+                  {musicServerScanRunning ? (
+                    <RefreshCw className="spin" size={18} />
+                  ) : (
+                    <Server size={18} />
+                  )}
+                </span>
+                <span className="provider-content">
+                  <h3>Navidrome scan</h3>
+                  <p>{musicServerScanLabel}</p>
+                  {musicServerScanDetailLabel ? (
+                    <p>{musicServerScanDetailLabel}</p>
+                  ) : null}
+                  {musicServerScan?.error &&
+                  musicServerScan.error !== musicServerScan.message ? (
+                    <p>{musicServerScan.error}</p>
+                  ) : null}
+                  <div className="navidrome-scan-actions">
+                    <button
+                      className="icon-command index-command"
+                      disabled={musicServerScanControlsDisabled}
+                      onClick={() => void startMusicServerScanAction("quick")}
+                      title="Start quick Navidrome scan"
+                      type="button"
+                    >
+                      {musicServerScanBusy === "quick" ? (
+                        <Loader2 className="spin" size={18} />
+                      ) : (
+                        <RefreshCw size={18} />
+                      )}
+                      Quick
+                    </button>
+                    <button
+                      className="icon-command index-command"
+                      disabled={musicServerScanControlsDisabled}
+                      onClick={() => void startMusicServerScanAction("full")}
+                      title="Start full Navidrome scan"
+                      type="button"
+                    >
+                      {musicServerScanBusy === "full" ? (
+                        <Loader2 className="spin" size={18} />
+                      ) : (
+                        <Search size={18} />
+                      )}
+                      Full
+                    </button>
+                  </div>
+                  {musicServerScanRunning ? (
+                    <div
+                      aria-live="polite"
+                      className="download-progress navidrome-scan-progress"
+                      role="status"
+                    >
+                      <div className="download-progress-meta">
+                        <span>{musicServerScanProgressLabel}</span>
+                        <span>
+                          {numberFormatter.format(musicServerScan?.count ?? 0)}{" "}
+                          files
+                        </span>
+                      </div>
+                      <div
+                        aria-label="Navidrome scan in progress"
+                        className="download-progress-bar"
+                        role="progressbar"
+                      >
+                        <span className="download-progress-fill indeterminate" />
+                      </div>
+                      <p className="download-progress-note">
+                        {musicServerScan?.elapsedSeconds != null
+                          ? `${formatDurationSeconds(
+                              musicServerScan.elapsedSeconds
+                            )} elapsed`
+                          : "Waiting for Navidrome scan progress."}
+                      </p>
+                    </div>
+                  ) : null}
+                </span>
+              </div>
               {plexSettings?.enabled ? (
                 <div className="provider-row">
                   <span
@@ -4985,6 +5210,77 @@ function formatShortDate(value: string) {
     minute: "2-digit",
     month: "short"
   }).format(parsedDate);
+}
+
+function musicServerScanDetails(status: MusicServerScanStatus) {
+  const parts: string[] = [];
+
+  if (status.scanType) {
+    parts.push(navidromeScanTypeLabel(status.scanType));
+  }
+
+  if (status.running || status.count > 0) {
+    parts.push(`${numberFormatter.format(status.count)} files`);
+  }
+
+  if (status.folderCount > 0) {
+    parts.push(`${numberFormatter.format(status.folderCount)} folders`);
+  }
+
+  if (status.elapsedSeconds != null) {
+    parts.push(`${formatDurationSeconds(status.elapsedSeconds)} elapsed`);
+  }
+
+  if (status.lastScan && !status.running) {
+    parts.push(`Last ${formatShortDate(status.lastScan)}`);
+  }
+
+  return parts.join(" - ");
+}
+
+function navidromeScanTypeLabel(scanType: string | null) {
+  if (!scanType) {
+    return "Scan";
+  }
+
+  const normalized = scanType.toLowerCase();
+
+  if (normalized === "quick") {
+    return "Quick scan";
+  }
+
+  if (normalized === "full") {
+    return "Full scan";
+  }
+
+  if (normalized === "quick-selective") {
+    return "Quick selective scan";
+  }
+
+  if (normalized === "full-selective") {
+    return "Full selective scan";
+  }
+
+  return scanType;
+}
+
+function formatDurationSeconds(value: number) {
+  const seconds = Math.max(0, Math.floor(value));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+
+  if (hours > 0) {
+    return `${numberFormatter.format(hours)}h ${numberFormatter.format(minutes)}m`;
+  }
+
+  if (minutes > 0) {
+    return `${numberFormatter.format(minutes)}m ${numberFormatter.format(
+      remainingSeconds
+    )}s`;
+  }
+
+  return `${numberFormatter.format(remainingSeconds)}s`;
 }
 
 function musicLibraryStatusMessage(status: MusicLibraryStatus) {

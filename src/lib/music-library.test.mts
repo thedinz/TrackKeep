@@ -12,6 +12,7 @@ import {
   clearMusicLibraryTrackOrganizationIgnore,
   deleteMusicLibraryTrack,
   getMusicLibraryStatus,
+  getMusicServerScanStatus,
   getMusicServerStatus,
   ignoreMusicLibraryTrackOrganization,
   matchMusicLibraryTracks,
@@ -23,6 +24,7 @@ import {
   recordMusicLibraryAlbumFolders,
   readCurrentMusicLibraryIndex,
   scanMusicLibraryIndex,
+  startMusicServerScan,
   type MusicLibraryIndex
 } from "./music-library.ts";
 import { tagAudioFileWithSpotifyIdentity } from "./providers/tagging.ts";
@@ -1335,6 +1337,160 @@ test("Navidrome API status accepts Navidrome URL and credentials", async (t) => 
           requestPath.startsWith("/rest/getScanStatus.view?")
         )
       );
+    }
+  );
+});
+
+test("Navidrome scan status maps progress fields", async (t) => {
+  const requestedPaths: string[] = [];
+  const server = http.createServer((request, response) => {
+    requestedPaths.push(request.url ?? "");
+    response.writeHead(200, {
+      "Content-Type": "application/json"
+    });
+    response.end(
+      JSON.stringify({
+        "subsonic-response": {
+          scanStatus: {
+            count: "42",
+            elapsedTime: "90",
+            folderCount: "7",
+            lastScan: "2026-07-08T14:30:00.000Z",
+            scanning: true,
+            scanType: "full"
+          },
+          status: "ok"
+        }
+      })
+    );
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  t.after(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+  });
+
+  const address = server.address();
+
+  assert.equal(typeof address, "object");
+  assert.ok(address);
+
+  await withEnvironment(
+    t,
+    {
+      MUSIC_LIBRARY_PASSWORD: null,
+      MUSIC_LIBRARY_URL: null,
+      MUSIC_LIBRARY_USER: null,
+      MUSIC_LIBRARY_USERNAME: null,
+      NAVIDROME_PASSWORD: "navidrome-password",
+      NAVIDROME_URL: `http://127.0.0.1:${address.port}`,
+      NAVIDROME_USER: null,
+      NAVIDROME_USERNAME: "navidrome-user"
+    },
+    async () => {
+      const status = await getMusicServerScanStatus();
+
+      assert.equal(status.configured, true);
+      assert.equal(status.running, true);
+      assert.equal(status.count, 42);
+      assert.equal(status.elapsedSeconds, 90);
+      assert.equal(status.folderCount, 7);
+      assert.equal(status.lastScan, "2026-07-08T14:30:00.000Z");
+      assert.equal(status.scanType, "full");
+      assert.ok(
+        requestedPaths.some((requestPath) =>
+          requestPath.startsWith("/rest/getScanStatus.view?")
+        )
+      );
+    }
+  );
+});
+
+test("Navidrome scan requests send quick and full scan flags", async (t) => {
+  const requestedFullScanValues: Array<string | null> = [];
+  const server = http.createServer((request, response) => {
+    const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+    const fullScanValue = requestUrl.searchParams.get("fullScan");
+
+    requestedFullScanValues.push(fullScanValue);
+    response.writeHead(200, {
+      "Content-Type": "application/json"
+    });
+    response.end(
+      JSON.stringify({
+        "subsonic-response": {
+          scanStatus: {
+            count: fullScanValue === "true" ? 20 : 5,
+            elapsedTime: 1,
+            folderCount: fullScanValue === "true" ? 4 : 1,
+            scanning: true,
+            scanType: fullScanValue === "true" ? "full" : "quick"
+          },
+          status: "ok"
+        }
+      })
+    );
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  t.after(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+  });
+
+  const address = server.address();
+
+  assert.equal(typeof address, "object");
+  assert.ok(address);
+
+  await withEnvironment(
+    t,
+    {
+      MUSIC_LIBRARY_PASSWORD: null,
+      MUSIC_LIBRARY_URL: null,
+      MUSIC_LIBRARY_USER: null,
+      MUSIC_LIBRARY_USERNAME: null,
+      NAVIDROME_PASSWORD: "navidrome-password",
+      NAVIDROME_URL: `http://127.0.0.1:${address.port}`,
+      NAVIDROME_USER: null,
+      NAVIDROME_USERNAME: "navidrome-user"
+    },
+    async () => {
+      const quickStatus = await startMusicServerScan({
+        fullScan: false
+      });
+      const fullStatus = await startMusicServerScan({
+        fullScan: true
+      });
+
+      assert.deepEqual(requestedFullScanValues, ["false", "true"]);
+      assert.equal(quickStatus.message, "Requested a quick Navidrome scan.");
+      assert.equal(quickStatus.scanType, "quick");
+      assert.equal(quickStatus.count, 5);
+      assert.equal(fullStatus.message, "Requested a full Navidrome scan.");
+      assert.equal(fullStatus.scanType, "full");
+      assert.equal(fullStatus.count, 20);
     }
   );
 });

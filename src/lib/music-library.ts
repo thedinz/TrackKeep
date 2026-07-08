@@ -52,12 +52,29 @@ export type MusicServerStatus = {
   message: string;
   musicLibraryUrl: string;
   scanCount?: number;
+  scanElapsedSeconds?: number;
+  scanFolderCount?: number;
+  scanLastScan?: string;
+  scanType?: string;
   scanning?: boolean;
   state: MusicServerState;
 };
 
 export type MusicServerScanResult = MusicServerStatus & {
   requested: boolean;
+};
+
+export type MusicServerScanStatus = {
+  configured: boolean;
+  count: number;
+  elapsedSeconds: number | null;
+  error: string | null;
+  folderCount: number;
+  lastScan: string | null;
+  message: string;
+  musicLibraryUrl: string;
+  running: boolean;
+  scanType: string | null;
 };
 
 export type MusicLibraryStatus = {
@@ -563,6 +580,10 @@ export async function getMusicServerStatus(): Promise<MusicServerStatus> {
         : "Connected to Navidrome API.",
       musicLibraryUrl,
       scanCount: scanStatus?.count,
+      scanElapsedSeconds: scanStatus?.elapsedSeconds ?? undefined,
+      scanFolderCount: scanStatus?.folderCount,
+      scanLastScan: scanStatus?.lastScan ?? undefined,
+      scanType: scanStatus?.scanType ?? undefined,
       scanning: scanStatus?.scanning,
       state: "ready"
     };
@@ -591,7 +612,9 @@ async function requestMusicServerScan(): Promise<MusicServerScanResult> {
   }
 
   try {
-    await musicServerApiRequest("startScan");
+    await musicServerApiRequest("startScan", {
+      fullScan: "false"
+    });
     const scanStatusResponse = await musicServerApiRequest("getScanStatus").catch(
       () => null
     );
@@ -603,6 +626,10 @@ async function requestMusicServerScan(): Promise<MusicServerScanResult> {
       musicLibraryUrl,
       requested: true,
       scanCount: scanStatus?.count,
+      scanElapsedSeconds: scanStatus?.elapsedSeconds ?? undefined,
+      scanFolderCount: scanStatus?.folderCount,
+      scanLastScan: scanStatus?.lastScan ?? undefined,
+      scanType: scanStatus?.scanType ?? undefined,
       scanning: scanStatus?.scanning,
       state: "scan_requested"
     };
@@ -617,6 +644,73 @@ async function requestMusicServerScan(): Promise<MusicServerScanResult> {
       state: isMusicLibraryAuthError(error) ? "auth_failed" : "error"
     };
   }
+}
+
+export async function getMusicServerScanStatus(): Promise<MusicServerScanStatus> {
+  const musicLibraryUrl = getMusicLibraryUrl();
+
+  if (!getMusicServerApiCredentials()) {
+    return emptyMusicServerScanStatus({
+      configured: false,
+      message:
+        "Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD to trigger Navidrome scans from SpotifyBU.",
+      musicLibraryUrl
+    });
+  }
+
+  try {
+    const scanStatusResponse = await musicServerApiRequest("getScanStatus");
+    const scanStatus = readMusicLibraryScanStatus(scanStatusResponse);
+
+    return musicServerScanStatusFromScanStatus({
+      configured: true,
+      message: scanStatus?.scanning
+        ? "Navidrome scan is running."
+        : "Navidrome scan is idle.",
+      musicLibraryUrl,
+      scanStatus
+    });
+  } catch (error) {
+    return {
+      ...emptyMusicServerScanStatus({
+        configured: true,
+        message: errorMessage(error),
+        musicLibraryUrl
+      }),
+      error: errorMessage(error)
+    };
+  }
+}
+
+export async function startMusicServerScan({
+  fullScan
+}: {
+  fullScan: boolean;
+}): Promise<MusicServerScanStatus> {
+  const musicLibraryUrl = getMusicLibraryUrl();
+
+  if (!getMusicServerApiCredentials()) {
+    throw new Error(
+      "Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD, or MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD."
+    );
+  }
+
+  const scanRequestResponse = await musicServerApiRequest("startScan", {
+    fullScan: fullScan ? "true" : "false"
+  });
+  const scanStatus =
+    readMusicLibraryScanStatus(scanRequestResponse) ??
+    readMusicLibraryScanStatus(
+      await musicServerApiRequest("getScanStatus").catch(() => null)
+    );
+  const scanLabel = fullScan ? "full" : "quick";
+
+  return musicServerScanStatusFromScanStatus({
+    configured: true,
+    message: `Requested a ${scanLabel} Navidrome scan.`,
+    musicLibraryUrl,
+    scanStatus
+  });
 }
 
 export async function ensureMusicLibraryTargetDirectory(segments: string[]) {
@@ -2826,7 +2920,12 @@ type MusicLibrarySubsonicResponse = {
       playlist?: MusicServerApiPlaylist[] | MusicServerApiPlaylist;
     };
     scanStatus?: {
-      count?: number;
+      count?: number | string;
+      elapsedTime?: number | string;
+      error?: string;
+      folderCount?: number | string;
+      lastScan?: string;
+      scanType?: string;
       scanning?: boolean;
     };
     searchResult3?: {
@@ -2957,12 +3056,85 @@ function readMusicLibraryScanStatus(
   }
 
   return {
-    count:
-      typeof response.scanStatus.count === "number"
-        ? response.scanStatus.count
-        : undefined,
-    scanning: Boolean(response.scanStatus.scanning)
+    count: nonnegativeInteger(response.scanStatus.count),
+    elapsedSeconds: nonnegativeIntegerOrNull(response.scanStatus.elapsedTime),
+    error: stringValue(response.scanStatus.error),
+    folderCount: nonnegativeInteger(response.scanStatus.folderCount),
+    lastScan: navidromeLastScanValue(response.scanStatus.lastScan),
+    scanning: Boolean(response.scanStatus.scanning),
+    scanType: stringValue(response.scanStatus.scanType)
   };
+}
+
+function musicServerScanStatusFromScanStatus({
+  configured,
+  message,
+  musicLibraryUrl,
+  scanStatus
+}: {
+  configured: boolean;
+  message: string;
+  musicLibraryUrl: string;
+  scanStatus: ReturnType<typeof readMusicLibraryScanStatus>;
+}) {
+  return {
+    configured,
+    count: scanStatus?.count ?? 0,
+    elapsedSeconds: scanStatus?.elapsedSeconds ?? null,
+    error: scanStatus?.error || null,
+    folderCount: scanStatus?.folderCount ?? 0,
+    lastScan: scanStatus?.lastScan ?? null,
+    message,
+    musicLibraryUrl,
+    running: Boolean(scanStatus?.scanning),
+    scanType: scanStatus?.scanType || null
+  } satisfies MusicServerScanStatus;
+}
+
+function emptyMusicServerScanStatus({
+  configured,
+  message,
+  musicLibraryUrl
+}: {
+  configured: boolean;
+  message: string;
+  musicLibraryUrl: string;
+}) {
+  return {
+    configured,
+    count: 0,
+    elapsedSeconds: null,
+    error: null,
+    folderCount: 0,
+    lastScan: null,
+    message,
+    musicLibraryUrl,
+    running: false,
+    scanType: null
+  } satisfies MusicServerScanStatus;
+}
+
+function nonnegativeInteger(value: number | string | undefined) {
+  const parsed =
+    typeof value === "number" ? value : Number.parseInt(value ?? "", 10);
+
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : undefined;
+}
+
+function nonnegativeIntegerOrNull(value: number | string | undefined) {
+  return nonnegativeInteger(value) ?? null;
+}
+
+function stringValue(value?: string) {
+  const trimmedValue = value?.trim();
+
+  return trimmedValue || undefined;
+}
+
+function navidromeLastScanValue(value?: string) {
+  const lastScan = stringValue(value);
+
+  return lastScan && !lastScan.startsWith("0001-") ? lastScan : undefined;
 }
 
 function isMusicLibraryAuthError(error: unknown) {

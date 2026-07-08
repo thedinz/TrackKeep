@@ -24,6 +24,7 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - Playlist track preview
 - Optional Navidrome or Plex playlist creation from matched Spotify playlist tracks
 - Navidrome folder status checks
+- Right-sidebar quick and full Navidrome server scans with progress status
 - Navidrome music folder indexing for local backup coverage checks
 - Navidrome folder planning using clean artist, album, and track paths
 - Backup coverage counts for backed-up and missing Spotify tracks
@@ -374,9 +375,10 @@ Running Organize before backing up missing files is recommended, but not require
 
 SpotifyBU's Library Index scan reads the mounted music folder directly. It does
 not need a Navidrome username or password for that local index. If
-`NAVIDROME_USERNAME` and `NAVIDROME_PASSWORD` are set, SpotifyBU also uses
-Navidrome's Subsonic-compatible API to ping the server and request a server-side
-library scan after SpotifyBU indexes or stages files. Without those credentials,
+`NAVIDROME_USERNAME` and `NAVIDROME_PASSWORD` are set, the right sidebar also
+offers quick and full Navidrome server scans with progress status, using the
+same Subsonic-compatible API NaviClean uses. SpotifyBU can also request a
+server-side library scan after it indexes or stages files. Without those credentials,
 SpotifyBU can still write files into `/music`, but Navidrome will pick them up
 only through its own startup/watch/scheduled scan behavior. The generic
 `MUSIC_LIBRARY_USERNAME` and `MUSIC_LIBRARY_PASSWORD` names are accepted too.
