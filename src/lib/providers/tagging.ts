@@ -4,8 +4,10 @@ import { access, rename, rm, writeFile } from "fs/promises";
 import path from "path";
 import { promisify } from "util";
 import {
+  spotifyBuIdentityCommentPrefix,
   spotifyBuIdentityMetadataEntries,
-  spotifyBuIdentityMetadataForTrack
+  spotifyBuIdentityMetadataForTrack,
+  spotifyBuIdentityTags
 } from "@/lib/spotify-identity-tags";
 import type { BackupTrack } from "@/lib/spotify";
 
@@ -177,8 +179,7 @@ async function writeTaggedAudioFile(
       "copy",
       ...(coverPath
         ? [
-            "-c:v",
-            "mjpeg",
+            ...coverCodecArgs(tempPath, coverPath),
             "-disposition:v:0",
             "attached_pic",
             "-metadata:s:v",
@@ -187,9 +188,10 @@ async function writeTaggedAudioFile(
             "comment=Cover (front)"
           ]
         : []),
-      ...containerMetadataArgs(tempPath),
+      ...containerMetadataArgs(tempPath, coverPath),
       ...id3MetadataArgs(tempPath),
       ...metadataArgs,
+      ...mp4ArtworkIdentityFallbackArgs(tempPath, metadataArgs, coverPath),
       tempPath
     ],
     {
@@ -228,14 +230,90 @@ async function writeIdentityTaggedAudioFile(
   );
 }
 
-function containerMetadataArgs(filePath: string) {
+function containerMetadataArgs(filePath: string, coverPath?: string | null) {
   const extension = path.extname(filePath).toLowerCase();
 
   if (extension === ".m4a" || extension === ".m4b" || extension === ".mp4") {
-    return ["-movflags", "use_metadata_tags"];
+    // ffmpeg drops MP4 attached pictures when use_metadata_tags is enabled.
+    return coverPath ? [] : ["-movflags", "use_metadata_tags"];
   }
 
   return [];
+}
+
+function coverCodecArgs(filePath: string, coverPath: string) {
+  const audioExtension = path.extname(filePath).toLowerCase();
+  const coverExtension = path.extname(coverPath).toLowerCase();
+  const isMp4Family =
+    audioExtension === ".m4a" ||
+    audioExtension === ".m4b" ||
+    audioExtension === ".mp4";
+
+  if (
+    isMp4Family &&
+    coverExtension !== ".jpg" &&
+    coverExtension !== ".jpeg"
+  ) {
+    return ["-c:v", "png"];
+  }
+
+  return ["-c:v", "mjpeg"];
+}
+
+function mp4ArtworkIdentityFallbackArgs(
+  filePath: string,
+  metadataArgs: string[],
+  coverPath?: string | null
+) {
+  const extension = path.extname(filePath).toLowerCase();
+  const isMp4Family =
+    extension === ".m4a" || extension === ".m4b" || extension === ".mp4";
+
+  if (!coverPath || !isMp4Family) {
+    return [];
+  }
+
+  const metadata = metadataMapFromArgs(metadataArgs);
+  const identityMetadata: Record<string, string> = {};
+
+  for (const key of Object.values(spotifyBuIdentityTags)) {
+    const value = metadata.get(key);
+
+    if (value) {
+      identityMetadata[key] = value;
+    }
+  }
+
+  if (!Object.keys(identityMetadata).length) {
+    return [];
+  }
+
+  return [
+    "-metadata",
+    `comment=${spotifyBuIdentityCommentPrefix}${JSON.stringify(identityMetadata)}`
+  ];
+}
+
+function metadataMapFromArgs(metadataArgs: string[]) {
+  const metadata = new Map<string, string>();
+
+  for (let index = 0; index < metadataArgs.length - 1; index += 1) {
+    if (metadataArgs[index] !== "-metadata") {
+      continue;
+    }
+
+    const metadataValue = metadataArgs[index + 1];
+    const separator = metadataValue.indexOf("=");
+
+    if (separator > 0) {
+      metadata.set(
+        metadataValue.slice(0, separator).toLowerCase(),
+        metadataValue.slice(separator + 1)
+      );
+    }
+  }
+
+  return metadata;
 }
 
 function id3MetadataArgs(filePath: string) {

@@ -197,6 +197,22 @@ button {
   color: var(--ink);
 }
 
+.command.compact {
+  font-size: 0.78rem;
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.command.danger {
+  border-color: rgba(255, 92, 92, 0.48);
+  color: #ffb7b7;
+}
+
+.command.danger:hover:not(:disabled) {
+  background: rgba(255, 92, 92, 0.12);
+  border-color: rgba(255, 126, 126, 0.72);
+}
+
 .command.green {
   background: var(--spotify-bright);
   border-color: var(--spotify);
@@ -1007,7 +1023,14 @@ button.folder-plan-status.organize:hover:not(:disabled) {
 }
 
 .track-table-heading {
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr) auto;
   margin-top: 16px;
+}
+
+.track-table-heading .command {
+  justify-self: end;
+  white-space: nowrap;
 }
 
 .track-row {
@@ -1942,6 +1965,15 @@ button.folder-plan-status.organize:hover:not(:disabled) {
 
   .folder-plan-count {
     text-align: left;
+  }
+
+  .track-table-heading {
+    grid-template-columns: 1fr;
+  }
+
+  .track-table-heading .command {
+    justify-self: start;
+    white-space: normal;
   }
 
   .track-row {

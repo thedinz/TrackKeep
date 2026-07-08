@@ -39,8 +39,17 @@ import {
 import { tagDownloadedFile } from "./tagging";
 
 type DownloadProviderId = "jiosaavn" | "youtube";
-type DownloadFormat = "mp3";
-type DownloadQuality = "128" | "320";
+type DownloadFormat = "m4a" | "mp3";
+type DownloadQuality = "128" | "256" | "320";
+type DownloadFormatProfile = {
+  bitrate: number;
+  codec: "AAC" | "MP3";
+  container: "M4A" | "MPEG";
+  defaultQuality: DownloadQuality;
+  extension: DownloadFormat;
+  label: string;
+  modernLossyRank: number;
+};
 
 export type ProviderSearchRequest = {
   limit?: number;
@@ -398,6 +407,27 @@ const confidentYoutubeCandidateScore = 94;
 const stagingRootSegments = [".spotifybu", "tmp", "provider-downloads"];
 const idleCleanupDelayMs = 10 * 60 * 1000;
 const defaultYtDlpJsRuntime = "node";
+const defaultProviderDownloadFormat: DownloadFormat = "m4a";
+export const providerDownloadFormatProfiles = {
+  m4a: {
+    bitrate: 256000,
+    codec: "AAC",
+    container: "M4A",
+    defaultQuality: "256",
+    extension: "m4a",
+    label: "M4A/AAC 256 kbps",
+    modernLossyRank: 2
+  },
+  mp3: {
+    bitrate: 320000,
+    codec: "MP3",
+    container: "MPEG",
+    defaultQuality: "320",
+    extension: "mp3",
+    label: "MP3 320 kbps (legacy)",
+    modernLossyRank: 1
+  }
+} as const satisfies Record<DownloadFormat, DownloadFormatProfile>;
 const providerDownloadJobs = new Map<string, ProviderDownloadJobRecord>();
 const providerBulkDownloadJobs = new Map<string, ProviderBulkDownloadJobRecord>();
 const activeProviderBulkDownloadJobs = new Set<string>();
@@ -1015,7 +1045,7 @@ async function downloadAuthorizedProviderTrackInner(
 
     const source = resolveProviderSource(providerId, request.sourceUrl);
     const format = normalizeDownloadFormat(request.format);
-    const quality = normalizeDownloadQuality(request.quality);
+    const quality = normalizeDownloadQuality(request.quality, format);
 
     attemptBase = {
       diagnosticId,
@@ -1231,7 +1261,7 @@ function buildProviderBulkDownloadJob(
   }
 
   const format = normalizeDownloadFormat(request.format);
-  const quality = normalizeDownloadQuality(request.quality);
+  const quality = normalizeDownloadQuality(request.quality, format);
   const chunkSize = clampPositiveInteger(
     request.chunkSize,
     defaultProviderBulkChunkSize,
@@ -1658,11 +1688,26 @@ function pruneProviderDownloadJobs() {
 }
 
 function normalizeDownloadFormat(value?: string): DownloadFormat {
-  return "mp3";
+  return value?.trim().toLowerCase() === "mp3"
+    ? "mp3"
+    : defaultProviderDownloadFormat;
 }
 
-function normalizeDownloadQuality(value?: string): DownloadQuality {
-  return value === "128" ? "128" : "320";
+function normalizeDownloadQuality(
+  value?: string,
+  format: DownloadFormat = defaultProviderDownloadFormat
+): DownloadQuality {
+  const normalizedQuality = value?.trim();
+
+  if (
+    normalizedQuality === "128" ||
+    normalizedQuality === "256" ||
+    normalizedQuality === "320"
+  ) {
+    return normalizedQuality;
+  }
+
+  return providerDownloadFormatProfiles[format].defaultQuality;
 }
 
 function normalizeSearchProviderOrder(providerIds?: string[]) {
@@ -2063,6 +2108,7 @@ function scheduleIdleTempCleanup() {
   idleCleanupTimer = setTimeout(() => {
     void cleanupStaleProviderTempFiles().catch(() => undefined);
   }, idleCleanupDelayMs);
+  idleCleanupTimer.unref?.();
 }
 
 async function cleanupStaleProviderTempFiles() {

@@ -27,6 +27,7 @@ import {
 } from "./music-library.ts";
 import { tagAudioFileWithSpotifyIdentity } from "./providers/tagging.ts";
 import {
+  spotifyBuIdentityCommentPrefix,
   spotifyBuIdentityTags,
   spotifyBuIdentityVersion
 } from "./spotify-identity-tags.ts";
@@ -65,7 +66,7 @@ test("standard album folder uses Unknown Year when metadata is missing", async (
   });
 });
 
-test("download destinations use the same long folder path as organization", async (t) => {
+test("download destinations use M4A paths in the same long folder as organization", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
     const libraryPath = await mkdtemp(
       path.join(tmpdir(), "spotifybu-library-")
@@ -104,11 +105,13 @@ test("download destinations use the same long folder path as organization", asyn
     );
     const destination = await prepareMusicLibraryTrackFileDestination(
       spotifyTrack,
-      "mp3"
+      "m4a"
     );
 
     assert.ok(plan.relativePath.split("/").some((segment) => segment.length > 120));
     assert.equal(destination.relativeDirectory, plan.relativePath);
+    assert.ok(destination.fileName.endsWith(".m4a"));
+    assert.ok(destination.relativePath.endsWith(".m4a"));
     assert.ok((await stat(exactDirectory)).isDirectory());
 
     if (truncatedDirectory !== exactDirectory) {
@@ -236,6 +239,31 @@ test("library index parser reads SpotifyBU identity tags", () => {
       [spotifyBuIdentityTags.albumId, spotifyAlbumId],
       [spotifyBuIdentityTags.isrc, "usrc17607839"],
       [spotifyBuIdentityTags.identityVersion, spotifyBuIdentityVersion]
+    ])
+  );
+
+  assert.equal(identity.spotifyTrackId, spotifyTrackId);
+  assert.equal(identity.spotifyTrackUri, `spotify:track:${spotifyTrackId}`);
+  assert.equal(identity.spotifyAlbumId, spotifyAlbumId);
+  assert.equal(identity.spotifyIsrc, "USRC17607839");
+  assert.equal(identity.spotifybuIdentityVersion, spotifyBuIdentityVersion);
+});
+
+test("library index parser reads SpotifyBU identity from M4A artwork comment fallback", () => {
+  const spotifyTrackId = "6rqhFgbbKwnb9MLmUQDhG6";
+  const spotifyAlbumId = "0sNOF9WDwhWunNAHPD3Baj";
+  const identity = parseMusicLibraryIndexedTrackIdentityTags(
+    new Map([
+      [
+        "comment",
+        `${spotifyBuIdentityCommentPrefix}${JSON.stringify({
+          [spotifyBuIdentityTags.trackId]: spotifyTrackId,
+          [spotifyBuIdentityTags.trackUri]: `spotify:track:${spotifyTrackId}`,
+          [spotifyBuIdentityTags.albumId]: spotifyAlbumId,
+          [spotifyBuIdentityTags.isrc]: "usrc17607839",
+          [spotifyBuIdentityTags.identityVersion]: spotifyBuIdentityVersion
+        })}`
+      ]
     ])
   );
 
