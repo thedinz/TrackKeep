@@ -1343,6 +1343,23 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   white-space: nowrap;
 }
 
+.navidrome-scan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.navidrome-scan-actions .index-command {
+  flex: 1 1 92px;
+  margin-top: 0;
+  min-width: 0;
+}
+
+.navidrome-scan-progress {
+  margin-top: 10px;
+}
+
 .provider-content {
   min-width: 0;
 }
