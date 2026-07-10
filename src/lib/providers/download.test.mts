@@ -144,7 +144,7 @@ test("provider downloads request Opus/192K and write tagged .opus files by defau
   );
 });
 
-test("provider downloads fall back from Opus to comparable MP3 quality", async (t) => {
+test("provider downloads fall back from Opus to configured MP3 quality", async (t) => {
   if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
     t.skip("ffmpeg and ffprobe are required for download fallback coverage.");
     return;
@@ -178,7 +178,7 @@ test("provider downloads fall back from Opus to comparable MP3 quality", async (
       const result = await downloadAuthorizedProviderTrack({
         bulkRiskAccepted: true,
         fallbackFormat: "mp3",
-        fallbackQuality: "320",
+        fallbackQuality: "256",
         format: "opus",
         providerId: "youtube",
         quality: "160",
@@ -188,7 +188,7 @@ test("provider downloads fall back from Opus to comparable MP3 quality", async (
       });
 
       assert.equal(result.format, "mp3");
-      assert.equal(result.quality, "320");
+      assert.equal(result.quality, "256");
       assert.ok(result.destinationPath.endsWith(".mp3"));
       assert.ok(result.relativePath?.endsWith(".mp3"));
       await stat(result.destinationPath);
@@ -211,7 +211,7 @@ test("provider downloads fall back from Opus to comparable MP3 quality", async (
       );
       assert.equal(
         optionAfter(ytDlpInvocations[1].args, "--audio-quality"),
-        "320K"
+        "256K"
       );
 
       const probe = await readAudioProbe(result.destinationPath);

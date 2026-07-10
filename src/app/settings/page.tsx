@@ -88,7 +88,7 @@ type PlexSettingsResponse = {
 
 type ProviderDownloadOpusQuality = "160" | "192" | "256";
 type ProviderDownloadFallbackFormat = "mp3" | "none";
-type ProviderDownloadMp3FallbackQuality = "320";
+type ProviderDownloadMp3FallbackQuality = "192" | "256" | "320";
 
 type ProviderDownloadSettings = {
   fallbackFormat: ProviderDownloadFallbackFormat;
@@ -945,8 +945,6 @@ export default function SettingsPage() {
                         );
 
                         updateProviderDownloadSettingsState({
-                          mp3FallbackQuality:
-                            comparableMp3FallbackQuality(opusQuality),
                           opusQuality
                         });
                       }}
@@ -963,16 +961,17 @@ export default function SettingsPage() {
                     <select
                       disabled={isSavingProviderDownload}
                       onChange={(event) =>
-                        updateProviderDownloadSettingsState({
-                          fallbackFormat: fallbackFormatFromValue(
-                            event.target.value
-                          ),
-                          mp3FallbackQuality: "320"
-                        })
+                        updateProviderDownloadSettingsState(
+                          fallbackSettingsFromValue(event.target.value)
+                        )
                       }
-                      value={providerDownloadSettings.fallbackFormat}
+                      value={providerDownloadFallbackValue(
+                        providerDownloadSettings
+                      )}
                     >
-                      <option value="mp3">MP3 320 kbps</option>
+                      <option value="mp3:320">MP3 320 kbps</option>
+                      <option value="mp3:256">MP3 256 kbps</option>
+                      <option value="mp3:192">MP3 192 kbps</option>
                       <option value="none">Off</option>
                     </select>
                   </label>
@@ -982,8 +981,8 @@ export default function SettingsPage() {
                   <Download size={18} />
                   <span>
                     New provider downloads default to Opus. If Opus cannot be
-                    written, SpotifyBU can fall back to MP3 320 kbps; FLAC is not
-                    used as a fallback.
+                    written, SpotifyBU can fall back to the selected MP3 quality;
+                    FLAC is not used as a fallback.
                   </span>
                 </div>
 
@@ -1272,14 +1271,32 @@ function opusQualityFromValue(value: string): ProviderDownloadOpusQuality {
   return value === "160" || value === "256" ? value : "192";
 }
 
-function fallbackFormatFromValue(value: string): ProviderDownloadFallbackFormat {
-  return value === "none" ? "none" : "mp3";
+function fallbackSettingsFromValue(
+  value: string
+): Pick<ProviderDownloadSettings, "fallbackFormat" | "mp3FallbackQuality"> {
+  if (value === "none") {
+    return {
+      fallbackFormat: "none",
+      mp3FallbackQuality: "320"
+    };
+  }
+
+  return {
+    fallbackFormat: "mp3",
+    mp3FallbackQuality: mp3FallbackQualityFromValue(value.replace(/^mp3:/, ""))
+  };
 }
 
-function comparableMp3FallbackQuality(
-  _opusQuality: ProviderDownloadOpusQuality
+function mp3FallbackQualityFromValue(
+  value: string
 ): ProviderDownloadMp3FallbackQuality {
-  return "320";
+  return value === "192" || value === "256" ? value : "320";
+}
+
+function providerDownloadFallbackValue(settings: ProviderDownloadSettings) {
+  return settings.fallbackFormat === "mp3"
+    ? `mp3:${settings.mp3FallbackQuality}`
+    : "none";
 }
 
 function providerDownloadSettingsSavedMessage(

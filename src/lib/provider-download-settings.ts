@@ -3,7 +3,7 @@ import path from "path";
 
 export type ProviderDownloadOpusQuality = "160" | "192" | "256";
 export type ProviderDownloadFallbackFormat = "mp3" | "none";
-export type ProviderDownloadMp3FallbackQuality = "320";
+export type ProviderDownloadMp3FallbackQuality = "192" | "256" | "320";
 
 export type ProviderDownloadSettings = {
   fallbackFormat: ProviderDownloadFallbackFormat;
@@ -70,12 +70,6 @@ export function normalizeProviderDownloadSettings(
   } satisfies ProviderDownloadSettings;
 }
 
-export function comparableMp3FallbackQuality(
-  _opusQuality: ProviderDownloadOpusQuality
-): ProviderDownloadMp3FallbackQuality {
-  return "320";
-}
-
 function normalizeFallbackFormat(
   value: unknown,
   fallback: ProviderDownloadFallbackFormat
@@ -87,7 +81,9 @@ function normalizeMp3FallbackQuality(
   value: unknown,
   fallback: ProviderDownloadMp3FallbackQuality
 ) {
-  return value === "320" ? value : fallback;
+  return value === "192" || value === "256" || value === "320"
+    ? value
+    : fallback;
 }
 
 function normalizeOpusQuality(
