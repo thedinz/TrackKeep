@@ -27,12 +27,13 @@ test("saves selected Opus quality and fallback", async (t) => {
   await withStoredSettings(t, null, async () => {
     const settings = await updateProviderDownloadSettings({
       fallbackFormat: "none",
+      mp3FallbackQuality: "256",
       opusQuality: "256"
     });
 
     assert.deepEqual(settings, {
       fallbackFormat: "none",
-      mp3FallbackQuality: "320",
+      mp3FallbackQuality: "256",
       opusQuality: "256"
     });
     assert.deepEqual(await loadProviderDownloadSettings(), settings);

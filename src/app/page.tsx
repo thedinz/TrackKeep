@@ -414,7 +414,7 @@ type PlexSettingsResponse = {
 
 type ProviderDownloadOpusQuality = "160" | "192" | "256";
 type ProviderDownloadFallbackFormat = "mp3" | "none";
-type ProviderDownloadMp3FallbackQuality = "320";
+type ProviderDownloadMp3FallbackQuality = "192" | "256" | "320";
 
 type ProviderDownloadSettings = {
   fallbackFormat: ProviderDownloadFallbackFormat;

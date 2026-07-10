@@ -1844,7 +1844,13 @@ function normalizeMp3FallbackQuality(
   value: string | undefined,
   _primaryQuality: DownloadQuality
 ): DownloadQuality {
-  return value?.trim() === "320" ? "320" : "320";
+  const normalizedQuality = value?.trim();
+
+  return normalizedQuality === "192" ||
+    normalizedQuality === "256" ||
+    normalizedQuality === "320"
+    ? normalizedQuality
+    : "320";
 }
 
 function formatFallbackSelectedReason(
