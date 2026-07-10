@@ -999,8 +999,8 @@ export default function SettingsPage() {
             <div className="panel-title">
               <SlidersHorizontal size={20} />
               <div>
-                <h2>Organize Scheme</h2>
-                <p className="muted">Choose how SpotifyBU stages organized Navidrome files</p>
+                <h2>Organize Layout</h2>
+                <p className="muted">Informational view of the fixed Navidrome file layout</p>
               </div>
             </div>
           </div>
@@ -1011,7 +1011,7 @@ export default function SettingsPage() {
                 <div className="auth-note">
                   <CheckCircle2 size={18} />
                   <span>
-                    SpotifyBU uses one Spotify metadata layout for organized
+                    SpotifyBU uses this fixed Spotify metadata layout for organized
                     Navidrome files.
                   </span>
                 </div>
