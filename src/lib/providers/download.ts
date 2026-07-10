@@ -2602,7 +2602,6 @@ async function normalizeStagedAudioFile({
         audioEncoderForFormat(format),
         "-b:a",
         `${quality}k`,
-        ...opusBitrateModeArgs(format),
         ...id3ArgsForFormat(format),
         targetPath
       ],
@@ -2652,15 +2651,12 @@ async function shouldNormalizeStagedAudioFile({
   }
 
   if (!encoding.bitRate) {
-    return true;
+    return false;
   }
 
   const targetBitrate = Number(quality) * 1000;
 
-  return (
-    encoding.bitRate < targetBitrate * 0.9 ||
-    encoding.bitRate > targetBitrate * 1.25
-  );
+  return encoding.bitRate > targetBitrate * 1.25;
 }
 
 async function probeStagedAudioEncoding(filePath: string) {
@@ -2736,10 +2732,6 @@ function audioCodecNameForFormat(format: DownloadFormat) {
 
 function audioEncoderForFormat(format: DownloadFormat) {
   return format === "mp3" ? "libmp3lame" : "libopus";
-}
-
-function opusBitrateModeArgs(format: DownloadFormat) {
-  return format === "opus" ? ["-vbr", "off"] : [];
 }
 
 function id3ArgsForFormat(format: DownloadFormat) {

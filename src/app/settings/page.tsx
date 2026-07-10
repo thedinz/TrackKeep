@@ -923,7 +923,7 @@ export default function SettingsPage() {
               <Download size={20} />
               <div>
                 <h2>Provider Downloads</h2>
-                <p className="muted">Default Ogg Opus quality for new backups</p>
+                <p className="muted">Default Ogg Opus quality cap for new backups</p>
               </div>
             </div>
           </div>
@@ -936,7 +936,7 @@ export default function SettingsPage() {
               >
                 <div className="settings-inline-grid">
                   <label className="form-field">
-                    <span className="stat-label">Opus Quality</span>
+                    <span className="stat-label">Opus Quality Cap</span>
                     <select
                       disabled={isSavingProviderDownload}
                       onChange={(event) => {
@@ -980,9 +980,11 @@ export default function SettingsPage() {
                 <div className="auth-note">
                   <Download size={18} />
                   <span>
-                    New provider downloads default to Opus. If Opus cannot be
-                    written, SpotifyBU can fall back to the selected MP3 quality;
-                    FLAC is not used as a fallback.
+                    SpotifyBU requests up to the selected Opus quality and keeps
+                    lower-bitrate provider audio at source quality instead of
+                    upconverting it. If Opus cannot be written, SpotifyBU can
+                    fall back to the selected MP3 quality; FLAC is not used as a
+                    fallback.
                   </span>
                 </div>
 
@@ -1303,8 +1305,8 @@ function providerDownloadSettingsSavedMessage(
   settings: ProviderDownloadSettings
 ) {
   return settings.fallbackFormat === "mp3"
-    ? `Provider downloads will default to Opus ${settings.opusQuality} kbps with MP3 ${settings.mp3FallbackQuality} kbps fallback.`
-    : `Provider downloads will default to Opus ${settings.opusQuality} kbps without MP3 fallback.`;
+    ? `Provider downloads will request Opus up to ${settings.opusQuality} kbps with MP3 ${settings.mp3FallbackQuality} kbps fallback.`
+    : `Provider downloads will request Opus up to ${settings.opusQuality} kbps without MP3 fallback.`;
 }
 
 function autoScanScheduleLabel(autoScan: MusicLibraryAutoScanStatus) {
