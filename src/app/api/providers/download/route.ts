@@ -39,6 +39,8 @@ export async function POST(request: NextRequest) {
       fallbackSources: Array.isArray(body.fallbackSources)
         ? body.fallbackSources
         : [],
+      fallbackFormat: String(body.fallbackFormat ?? ""),
+      fallbackQuality: String(body.fallbackQuality ?? ""),
       format: String(body.format ?? ""),
       providerId: String(body.providerId ?? ""),
       quality: String(body.quality ?? ""),

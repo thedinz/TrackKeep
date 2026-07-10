@@ -273,6 +273,82 @@ test("rewrites provider audio tags with Spotify metadata", async (t) => {
   assert.equal(tags.date, "2012-08-07");
 });
 
+test("writes Opus audio tags and artwork with discrete SpotifyBU identity tags", async (t) => {
+  if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
+    t.skip("ffmpeg and ffprobe are required for Opus tagging coverage.");
+    return;
+  }
+
+  const directory = await mkdtemp(path.join(tmpdir(), "spotifybu-opus-tagging-"));
+  const coverServer = await startCoverServer();
+  t.after(async () => {
+    await closeServer(coverServer.server);
+    await rm(directory, {
+      force: true,
+      recursive: true
+    });
+  });
+
+  const filePath = path.join(directory, "provider-source.opus");
+  const spotifyTrackId = "4uLU6hMCjMI75M1A2tKUQC";
+  const spotifyAlbumId = "0ETFjACtuP2ADo6LFhL6HN";
+
+  await execFileAsync(
+    "ffmpeg",
+    [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "anullsrc=r=48000:cl=stereo",
+      "-t",
+      "0.1",
+      "-codec:a",
+      "libopus",
+      "-b:a",
+      "160k",
+      "-metadata",
+      "title=Provider Clip Title",
+      filePath
+    ],
+    {
+      timeout: 60000
+    }
+  );
+
+  await tagDownloadedFile(filePath, {
+    ...exampleTrack,
+    albumId: spotifyAlbumId,
+    albumImageUrl: coverServer.url,
+    albumReleaseDate: "2012-08-07",
+    albumType: "compilation",
+    id: spotifyTrackId,
+    isrc: "USRC17607839",
+    spotifyUri: `spotify:track:${spotifyTrackId}`
+  } satisfies BackupTrack);
+
+  const probe = await readAudioProbe(filePath);
+  const tags = probe.tags;
+
+  assert.equal(probe.audioCodec, "opus");
+  assert.equal(probe.hasAttachedPicture, true);
+  assert.equal(tags.title, "Fuck You All The Time - Shlohmo Remix");
+  assert.equal(tags.artist, "Jeremih");
+  assert.equal(tags.album, "Late Nights With Jeremih");
+  assert.equal(tags.album_artist, "Jeremih");
+  assert.equal(tags.track, "7");
+  assert.equal(tags.disc, "1");
+  assert.equal(tags.date, "2012-08-07");
+  assert.equal(tags.releasedate, "2012-08-07");
+  assert.equal(tags.isrc, "USRC17607839");
+  assert.equal(tags.compilation, "1");
+  assert.equal(tags[spotifyBuIdentityTags.trackId], spotifyTrackId);
+  assert.equal(tags[spotifyBuIdentityTags.trackUri], `spotify:track:${spotifyTrackId}`);
+  assert.equal(tags[spotifyBuIdentityTags.albumId], spotifyAlbumId);
+  assert.equal(tags[spotifyBuIdentityTags.isrc], "USRC17607839");
+  assert.equal(tags[spotifyBuIdentityTags.identityVersion], spotifyBuIdentityVersion);
+});
+
 test("fails instead of silently skipping expected Spotify artwork", async (t) => {
   const server = http.createServer((request, response) => {
     response.writeHead(404, {
@@ -338,7 +414,7 @@ const exampleTrack = {
   trackNumber: 7
 } satisfies BackupTrack;
 
-async function readAudioTags(filePath: string) {
+async function readAudioProbe(filePath: string) {
   const { stdout } = await execFileAsync(
     "ffprobe",
     [
@@ -347,6 +423,7 @@ async function readAudioTags(filePath: string) {
       "-print_format",
       "json",
       "-show_format",
+      "-show_streams",
       filePath
     ],
     {
@@ -357,14 +434,86 @@ async function readAudioTags(filePath: string) {
     format?: {
       tags?: Record<string, string>;
     };
+    streams?: Array<{
+      codec_name?: string;
+      codec_type?: string;
+      disposition?: {
+        attached_pic?: number;
+      };
+      tags?: Record<string, string>;
+    }>;
   };
-
-  return Object.fromEntries(
-    Object.entries(body.format?.tags ?? {}).map(([key, value]) => [
-      key.toLowerCase(),
-      value
-    ])
+  const audioStream = body.streams?.find(
+    (stream) => stream.codec_type === "audio"
   );
+
+  return {
+    audioCodec: audioStream?.codec_name,
+    hasAttachedPicture: Boolean(
+      body.streams?.some(
+        (stream) =>
+          stream.codec_type === "video" && stream.disposition?.attached_pic === 1
+      )
+    ),
+    tags: lowerCaseTags(body.format?.tags, audioStream?.tags)
+  };
+}
+
+async function readAudioTags(filePath: string) {
+  return (await readAudioProbe(filePath)).tags;
+}
+
+function lowerCaseTags(
+  ...tagRecords: Array<Record<string, string> | undefined>
+) {
+  return Object.fromEntries(
+    tagRecords.flatMap((tags) =>
+      Object.entries(tags ?? {}).map(([key, value]) => [
+        key.toLowerCase(),
+        value
+      ])
+    )
+  );
+}
+
+async function startCoverServer() {
+  const image = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+    "base64"
+  );
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, {
+      "Content-Type": "image/png"
+    });
+    response.end(image);
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const address = server.address();
+
+  assert.equal(typeof address, "object");
+  assert.ok(address);
+
+  return {
+    server,
+    url: `http://127.0.0.1:${address.port}/cover.png`
+  };
+}
+
+async function closeServer(server: http.Server) {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
 }
 
 function metadataArgumentValues(args: string[]) {

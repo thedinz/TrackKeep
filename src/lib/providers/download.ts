@@ -39,12 +39,13 @@ import {
 import { tagDownloadedFile } from "./tagging";
 
 type DownloadProviderId = "jiosaavn" | "youtube";
-type DownloadFormat = "m4a" | "mp3";
-type DownloadQuality = "128" | "256" | "320";
+type DownloadFormat = "opus" | "mp3";
+type DownloadQuality = "128" | "160" | "192" | "256" | "320";
+type DownloadFallbackFormat = "mp3" | "none";
 type DownloadFormatProfile = {
   bitrate: number;
-  codec: "AAC" | "MP3";
-  container: "M4A" | "MPEG";
+  codec: "Opus" | "MP3";
+  container: "Ogg Opus" | "MPEG";
   defaultQuality: DownloadQuality;
   extension: DownloadFormat;
   label: string;
@@ -141,6 +142,8 @@ type ProviderCandidateSearchOutcome =
 export type AuthorizedProviderDownloadRequest = {
   bulkRiskAccepted: boolean;
   diagnosticId?: string;
+  fallbackFormat?: string;
+  fallbackQuality?: string;
   fallbackSources?: AuthorizedProviderDownloadFallbackSource[];
   format?: string;
   providerId: string;
@@ -162,6 +165,8 @@ export type AuthorizedProviderDownloadFallbackSource = {
 export type AuthorizedProviderDownloadBatchItem = {
   candidateScore?: number;
   candidateTitle?: string;
+  fallbackFormat?: string;
+  fallbackQuality?: string;
   fallbackSources?: AuthorizedProviderDownloadFallbackSource[];
   format?: string;
   providerId: string;
@@ -176,6 +181,8 @@ export type AuthorizedProviderDownloadBatchRequest = {
   chunkPauseMs?: number;
   chunkSize?: number;
   delayMs?: number;
+  fallbackFormat?: string;
+  fallbackQuality?: string;
   format?: string;
   items: AuthorizedProviderDownloadBatchItem[];
   quality?: string;
@@ -187,6 +194,8 @@ export type AuthorizedProviderBulkDownloadRequest = {
   chunkPauseMs?: number;
   chunkSize?: number;
   delayMs?: number;
+  fallbackFormat?: string;
+  fallbackQuality?: string;
   format?: string;
   items: AuthorizedProviderDownloadBatchItem[];
   quality?: string;
@@ -254,6 +263,8 @@ export type ProviderBulkDownloadJobSnapshot = {
     chunkPauseMs: number;
     chunkSize: number;
     delayMs: number;
+    fallbackFormat: DownloadFallbackFormat;
+    fallbackQuality?: DownloadQuality;
     format: DownloadFormat;
     quality: DownloadQuality;
   };
@@ -407,15 +418,15 @@ const confidentYoutubeCandidateScore = 94;
 const stagingRootSegments = [".spotifybu", "tmp", "provider-downloads"];
 const idleCleanupDelayMs = 10 * 60 * 1000;
 const defaultYtDlpJsRuntime = "node";
-const defaultProviderDownloadFormat: DownloadFormat = "m4a";
+const defaultProviderDownloadFormat: DownloadFormat = "opus";
 export const providerDownloadFormatProfiles = {
-  m4a: {
-    bitrate: 256000,
-    codec: "AAC",
-    container: "M4A",
-    defaultQuality: "256",
-    extension: "m4a",
-    label: "M4A/AAC 256 kbps",
+  opus: {
+    bitrate: 192000,
+    codec: "Opus",
+    container: "Ogg Opus",
+    defaultQuality: "192",
+    extension: "opus",
+    label: "Opus 192 kbps",
     modernLossyRank: 2
   },
   mp3: {
@@ -729,6 +740,8 @@ export async function downloadAuthorizedProviderBatch(
     try {
       const result = await downloadAuthorizedProviderTrack({
         bulkRiskAccepted: true,
+        fallbackFormat: item.fallbackFormat ?? request.fallbackFormat,
+        fallbackQuality: item.fallbackQuality ?? request.fallbackQuality,
         fallbackSources: item.fallbackSources,
         format: item.format ?? request.format,
         providerId: item.providerId,
@@ -825,6 +838,14 @@ async function downloadAuthorizedProviderTrackWithFallback(
   request: AuthorizedProviderDownloadRequest
 ) {
   const diagnosticId = request.diagnosticId ?? providerDownloadDiagnosticId();
+  const primaryFormat = normalizeDownloadFormat(request.format);
+  const primaryQuality = normalizeDownloadQuality(request.quality, primaryFormat);
+  const formatFallback = normalizeDownloadFallback({
+    fallbackFormat: request.fallbackFormat,
+    fallbackQuality: request.fallbackQuality,
+    primaryFormat,
+    primaryQuality
+  });
   const attempts = providerDownloadAttemptSources({
     ...request,
     diagnosticId
@@ -839,17 +860,63 @@ async function downloadAuthorizedProviderTrackWithFallback(
       return await downloadAuthorizedProviderTrackInner({
         ...request,
         diagnosticId,
+        format: primaryFormat,
         providerId: attempt.providerId,
+        quality: primaryQuality,
         selectedReason: attempt.selectedReason,
         sourceUrl: attempt.sourceUrl
       });
     } catch (error) {
       lastError = error;
-      failures.push(providerAttemptFailureLabel(attempt, error));
+      failures.push(
+        providerAttemptFailureLabel(attempt, error, {
+          format: primaryFormat,
+          quality: primaryQuality
+        })
+      );
+
+      let fallbackGateError = error;
+
+      if (formatFallback && isFormatFallbackError(error)) {
+        try {
+          console.warn("[spotifybu.provider-download] retrying fallback format", {
+            diagnosticId,
+            fallbackFormat: formatFallback.format,
+            fallbackQuality: formatFallback.quality,
+            failedFormat: primaryFormat,
+            failedQuality: primaryQuality,
+            providerId: attempt.providerId,
+            sourceHost: safeHostname(attempt.sourceUrl),
+            sourceUrl: attempt.sourceUrl,
+            trackName: request.track?.name,
+            trackPosition: request.track?.position
+          });
+
+          return await downloadAuthorizedProviderTrackInner({
+            ...request,
+            diagnosticId,
+            format: formatFallback.format,
+            providerId: attempt.providerId,
+            quality: formatFallback.quality,
+            selectedReason: formatFallbackSelectedReason(
+              attempt.selectedReason,
+              primaryFormat,
+              formatFallback
+            ),
+            sourceUrl: attempt.sourceUrl
+          });
+        } catch (fallbackError) {
+          lastError = fallbackError;
+          fallbackGateError = fallbackError;
+          failures.push(
+            providerAttemptFailureLabel(attempt, fallbackError, formatFallback)
+          );
+        }
+      }
 
       const nextAttempt = attempts[index + 1];
 
-      if (!nextAttempt || !isProviderFallbackError(error)) {
+      if (!nextAttempt || !isProviderFallbackError(fallbackGateError)) {
         break;
       }
 
@@ -887,6 +954,11 @@ type ProviderDownloadAttemptSource = {
   providerId: DownloadProviderId;
   selectedReason?: string;
   sourceUrl: string;
+};
+
+type ProviderDownloadFormatProfile = {
+  format: DownloadFormat;
+  quality: DownloadQuality;
 };
 
 function providerDownloadAttemptSources(
@@ -969,11 +1041,14 @@ function fallbackSelectedReason(
 
 function providerAttemptFailureLabel(
   attempt: ProviderDownloadAttemptSource,
-  error: unknown
+  error: unknown,
+  profile?: ProviderDownloadFormatProfile
 ) {
+  const profileLabel = profile ? ` ${profile.format}/${profile.quality}K` : "";
+
   return `${providerDisplayName(attempt.providerId)} ${safeHostname(
     attempt.sourceUrl
-  )}: ${errorMessage(error)}`;
+  )}${profileLabel}: ${errorMessage(error)}`;
 }
 
 function providerDisplayName(providerId: DownloadProviderId) {
@@ -1001,6 +1076,22 @@ function isProviderFallbackError(error: unknown) {
     "this video is unavailable",
     "not available",
     "timed out"
+  ].some((needle) => message.includes(needle));
+}
+
+function isFormatFallbackError(error: unknown) {
+  const message = errorMessage(error).toLowerCase();
+
+  return [
+    "audio conversion failed",
+    "could not write header",
+    "encoder",
+    "ffmpeg",
+    "invalid audio format",
+    "libopus",
+    "postprocessing",
+    "requested audio format",
+    "unsupported codec"
   ].some((needle) => message.includes(needle));
 }
 
@@ -1262,6 +1353,12 @@ function buildProviderBulkDownloadJob(
 
   const format = normalizeDownloadFormat(request.format);
   const quality = normalizeDownloadQuality(request.quality, format);
+  const fallbackConfig = normalizeDownloadFallback({
+    fallbackFormat: request.fallbackFormat,
+    fallbackQuality: request.fallbackQuality,
+    primaryFormat: format,
+    primaryQuality: quality
+  });
   const chunkSize = clampPositiveInteger(
     request.chunkSize,
     defaultProviderBulkChunkSize,
@@ -1314,6 +1411,8 @@ function buildProviderBulkDownloadJob(
       chunkPauseMs,
       chunkSize,
       delayMs,
+      fallbackFormat: fallbackConfig ? "mp3" : "none",
+      ...(fallbackConfig ? { fallbackQuality: fallbackConfig.quality } : {}),
       format,
       quality
     },
@@ -1374,6 +1473,8 @@ async function runProviderBulkDownloadJob(jobId: string) {
         item.download = await downloadAuthorizedProviderTrack({
           bulkRiskAccepted: true,
           diagnosticId: `${job.diagnosticId}-${item.track.position}`,
+          fallbackFormat: job.request.fallbackFormat,
+          fallbackQuality: job.request.fallbackQuality,
           fallbackSources: item.fallbackSources,
           format: job.request.format,
           providerId: item.providerId,
@@ -1688,9 +1789,9 @@ function pruneProviderDownloadJobs() {
 }
 
 function normalizeDownloadFormat(value?: string): DownloadFormat {
-  return value?.trim().toLowerCase() === "mp3"
-    ? "mp3"
-    : defaultProviderDownloadFormat;
+  const normalizedFormat = value?.trim().toLowerCase();
+
+  return normalizedFormat === "mp3" ? "mp3" : defaultProviderDownloadFormat;
 }
 
 function normalizeDownloadQuality(
@@ -1701,6 +1802,8 @@ function normalizeDownloadQuality(
 
   if (
     normalizedQuality === "128" ||
+    normalizedQuality === "160" ||
+    normalizedQuality === "192" ||
     normalizedQuality === "256" ||
     normalizedQuality === "320"
   ) {
@@ -1708,6 +1811,52 @@ function normalizeDownloadQuality(
   }
 
   return providerDownloadFormatProfiles[format].defaultQuality;
+}
+
+function normalizeDownloadFallback({
+  fallbackFormat,
+  fallbackQuality,
+  primaryFormat,
+  primaryQuality
+}: {
+  fallbackFormat?: string;
+  fallbackQuality?: string;
+  primaryFormat: DownloadFormat;
+  primaryQuality: DownloadQuality;
+}): ProviderDownloadFormatProfile | null {
+  if (primaryFormat !== "opus") {
+    return null;
+  }
+
+  const normalizedFallbackFormat = fallbackFormat?.trim().toLowerCase();
+
+  if (normalizedFallbackFormat === "none") {
+    return null;
+  }
+
+  return {
+    format: "mp3",
+    quality: normalizeMp3FallbackQuality(fallbackQuality, primaryQuality)
+  };
+}
+
+function normalizeMp3FallbackQuality(
+  value: string | undefined,
+  _primaryQuality: DownloadQuality
+): DownloadQuality {
+  return value?.trim() === "320" ? "320" : "320";
+}
+
+function formatFallbackSelectedReason(
+  selectedReason: string | undefined,
+  primaryFormat: DownloadFormat,
+  fallback: ProviderDownloadFormatProfile
+) {
+  const fallbackReason = `SpotifyBU used ${fallback.format.toUpperCase()} ${
+    fallback.quality
+  } kbps fallback after ${primaryFormat.toUpperCase()} could not be written.`;
+
+  return selectedReason ? `${selectedReason}. ${fallbackReason}` : fallbackReason;
 }
 
 function normalizeSearchProviderOrder(providerIds?: string[]) {

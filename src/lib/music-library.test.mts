@@ -27,7 +27,10 @@ import {
   startMusicServerScan,
   type MusicLibraryIndex
 } from "./music-library.ts";
-import { tagAudioFileWithSpotifyIdentity } from "./providers/tagging.ts";
+import {
+  tagAudioFileWithSpotifyIdentity,
+  tagDownloadedFile
+} from "./providers/tagging.ts";
 import {
   spotifyBuIdentityCommentPrefix,
   spotifyBuIdentityTags,
@@ -68,7 +71,7 @@ test("standard album folder uses Unknown Year when metadata is missing", async (
   });
 });
 
-test("download destinations use M4A paths in the same long folder as organization", async (t) => {
+test("download destinations use Opus paths in the same long folder as organization", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
     const libraryPath = await mkdtemp(
       path.join(tmpdir(), "spotifybu-library-")
@@ -107,13 +110,13 @@ test("download destinations use M4A paths in the same long folder as organizatio
     );
     const destination = await prepareMusicLibraryTrackFileDestination(
       spotifyTrack,
-      "m4a"
+      "opus"
     );
 
     assert.ok(plan.relativePath.split("/").some((segment) => segment.length > 120));
     assert.equal(destination.relativeDirectory, plan.relativePath);
-    assert.ok(destination.fileName.endsWith(".m4a"));
-    assert.ok(destination.relativePath.endsWith(".m4a"));
+    assert.ok(destination.fileName.endsWith(".opus"));
+    assert.ok(destination.relativePath.endsWith(".opus"));
     assert.ok((await stat(exactDirectory)).isDirectory());
 
     if (truncatedDirectory !== exactDirectory) {
@@ -1197,6 +1200,71 @@ test("metadata backfill upgrades existing identity-tagged backups with release t
   });
 });
 
+test("library index reads SpotifyBU Opus stream tags and artwork", async (t) => {
+  if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
+    t.skip("ffmpeg and ffprobe are required for Opus index coverage.");
+    return;
+  }
+
+  await withDefaultOrganizeSettings(t, async () => {
+    const libraryPath = await mkdtemp(
+      path.join(tmpdir(), "spotifybu-library-")
+    );
+    const coverServer = await startCoverServer();
+    const spotifyTrack = {
+      ...exampleTrack,
+      albumImageUrl: coverServer.url,
+      albumReleaseDate: "2026-02-03",
+      albumType: "compilation",
+      id: "4uLU6hMCjMI75M1A2tKUQC",
+      isrc: "USABC1234567",
+      spotifyUri: "spotify:track:4uLU6hMCjMI75M1A2tKUQC"
+    } satisfies BackupTrack;
+    const relativePath =
+      "Example Artist/Example Artist - Example Record (2026)/Example Artist - Example Record (2026) - 01 - Opening.opus";
+    const filePath = path.join(libraryPath, ...relativePath.split("/"));
+
+    t.after(async () => {
+      await closeServer(coverServer.server);
+      await rm(libraryPath, {
+        force: true,
+        recursive: true
+      });
+    });
+
+    await withEnvironment(t, { MUSIC_LIBRARY_PATH: libraryPath }, async () => {
+      await mkdir(path.dirname(filePath), {
+        recursive: true
+      });
+      await writeSilentOpus(filePath, ["title=Provider Clip Title"]);
+      await tagDownloadedFile(filePath, spotifyTrack);
+      await scanMusicLibraryIndex();
+
+      const index = await readCurrentMusicLibraryIndex();
+      const indexedTrack = index?.tracks.find(
+        (track) => track.relativePath === relativePath
+      );
+
+      assert.equal(indexedTrack?.source, "tags");
+      assert.equal(indexedTrack?.title, "Opening");
+      assert.equal(indexedTrack?.artist, "Example Artist");
+      assert.equal(indexedTrack?.albumArtist, "Example Artist");
+      assert.equal(indexedTrack?.album, "Example Record");
+      assert.equal(indexedTrack?.trackNumber, 1);
+      assert.equal(indexedTrack?.discNumber, 1);
+      assert.equal(indexedTrack?.releaseDate, "2026-02-03");
+      assert.equal(indexedTrack?.isrc, "USABC1234567");
+      assert.equal(indexedTrack?.compilation, true);
+      assert.equal(indexedTrack?.spotifyTrackId, "4uLU6hMCjMI75M1A2tKUQC");
+      assert.equal(
+        indexedTrack?.spotifyTrackUri,
+        "spotify:track:4uLU6hMCjMI75M1A2tKUQC"
+      );
+      assert.equal(indexedTrack?.spotifybuIdentityVersion, spotifyBuIdentityVersion);
+    });
+  });
+});
+
 test("music library status accepts Navidrome library path env var", async (t) => {
   const libraryPath = await mkdtemp(path.join(tmpdir(), "spotifybu-library-"));
 
@@ -1628,7 +1696,31 @@ async function writeSilentMp3(filePath: string, metadata: string[]) {
   );
 }
 
-async function readAudioTags(filePath: string) {
+async function writeSilentOpus(filePath: string, metadata: string[]) {
+  await execFileAsync(
+    "ffmpeg",
+    [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "anullsrc=r=48000:cl=stereo",
+      "-t",
+      "0.1",
+      "-codec:a",
+      "libopus",
+      "-b:a",
+      "160k",
+      ...metadata.flatMap((value) => ["-metadata", value]),
+      filePath
+    ],
+    {
+      timeout: 60000
+    }
+  );
+}
+
+async function readAudioProbe(filePath: string) {
   const { stdout } = await execFileAsync(
     "ffprobe",
     [
@@ -1637,6 +1729,7 @@ async function readAudioTags(filePath: string) {
       "-print_format",
       "json",
       "-show_format",
+      "-show_streams",
       filePath
     ],
     {
@@ -1647,12 +1740,73 @@ async function readAudioTags(filePath: string) {
     format?: {
       tags?: Record<string, string>;
     };
+    streams?: Array<{
+      codec_type?: string;
+      tags?: Record<string, string>;
+    }>;
   };
-
-  return Object.fromEntries(
-    Object.entries(body.format?.tags ?? {}).map(([key, value]) => [
-      key.toLowerCase(),
-      value
-    ])
+  const audioStream = body.streams?.find(
+    (stream) => stream.codec_type === "audio"
   );
+
+  return {
+    tags: lowerCaseTags(body.format?.tags, audioStream?.tags)
+  };
+}
+
+async function readAudioTags(filePath: string) {
+  return (await readAudioProbe(filePath)).tags;
+}
+
+function lowerCaseTags(
+  ...tagRecords: Array<Record<string, string> | undefined>
+) {
+  return Object.fromEntries(
+    tagRecords.flatMap((tags) =>
+      Object.entries(tags ?? {}).map(([key, value]) => [
+        key.toLowerCase(),
+        value
+      ])
+    )
+  );
+}
+
+async function startCoverServer() {
+  const image = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+    "base64"
+  );
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, {
+      "Content-Type": "image/png"
+    });
+    response.end(image);
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const address = server.address();
+
+  assert.equal(typeof address, "object");
+  assert.ok(address);
+
+  return {
+    server,
+    url: `http://127.0.0.1:${address.port}/cover.png`
+  };
+}
+
+async function closeServer(server: http.Server) {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
 }

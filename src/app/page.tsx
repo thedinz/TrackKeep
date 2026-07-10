@@ -412,6 +412,20 @@ type PlexSettingsResponse = {
   plex: PublicPlexSettings;
 };
 
+type ProviderDownloadOpusQuality = "160" | "192" | "256";
+type ProviderDownloadFallbackFormat = "mp3" | "none";
+type ProviderDownloadMp3FallbackQuality = "320";
+
+type ProviderDownloadSettings = {
+  fallbackFormat: ProviderDownloadFallbackFormat;
+  mp3FallbackQuality: ProviderDownloadMp3FallbackQuality;
+  opusQuality: ProviderDownloadOpusQuality;
+};
+
+type ProviderDownloadSettingsResponse = {
+  providerDownload: ProviderDownloadSettings;
+};
+
 type TrackOrganizeDialogState = {
   match: LibraryMatch;
   track: BackupTrack;
@@ -562,6 +576,8 @@ type ProviderBulkDownloadJob = {
     chunkPauseMs: number;
     chunkSize: number;
     delayMs: number;
+    fallbackFormat: ProviderDownloadFallbackFormat;
+    fallbackQuality?: string;
     format: string;
     quality: string;
   };
@@ -612,10 +628,15 @@ const singleTrackProviderSearchLimit = 8;
 const providerDownloadPollIntervalMs = 2500;
 const maxProviderDownloadPollAttempts = 720;
 const bulkProviderJobStorageKey = "spotifybu.bulkProviderJobId";
+const defaultProviderDownloadSettings = {
+  fallbackFormat: "mp3",
+  mp3FallbackQuality: "320",
+  opusQuality: "192"
+} satisfies ProviderDownloadSettings;
 const providerDownloadFormatOptions = [
   {
-    label: "M4A/AAC",
-    value: "m4a"
+    label: "Opus",
+    value: "opus"
   },
   {
     label: "MP3 legacy",
@@ -623,14 +644,18 @@ const providerDownloadFormatOptions = [
   }
 ] as const;
 const providerDownloadQualityOptions = {
-  m4a: [
+  opus: [
+    {
+      label: "192 kbps",
+      value: "192"
+    },
+    {
+      label: "160 kbps",
+      value: "160"
+    },
     {
       label: "256 kbps",
       value: "256"
-    },
-    {
-      label: "128 kbps",
-      value: "128"
     }
   ],
   mp3: [
@@ -649,20 +674,23 @@ const mediaSourceProviders: readonly SourceProviderCatalogEntry[] =
     (provider) => downloadEnabledProviderIds.has(provider.id)
   );
 
-function defaultProviderDownloadQuality(format: string) {
-  return format === "mp3" ? "320" : "256";
+function defaultProviderDownloadQuality(
+  format: string,
+  settings: ProviderDownloadSettings = defaultProviderDownloadSettings
+) {
+  return format === "mp3" ? "320" : settings.opusQuality;
 }
 
 function providerDownloadQualityChoices(format: string) {
   return format === "mp3"
     ? providerDownloadQualityOptions.mp3
-    : providerDownloadQualityOptions.m4a;
+    : providerDownloadQualityOptions.opus;
 }
 
 function providerDownloadProfileLabel(format: string, quality: string) {
   return format === "mp3"
     ? `MP3 legacy ${quality} kbps`
-    : `M4A/AAC ${quality} kbps`;
+    : `Opus ${quality} kbps`;
 }
 
 export default function Home() {
@@ -744,8 +772,12 @@ export default function Home() {
   );
   const [requestError, setRequestError] = useState<string | null>(null);
   const [downloadTrackPosition, setDownloadTrackPosition] = useState("");
-  const [downloadFormat, setDownloadFormat] = useState("m4a");
-  const [downloadQuality, setDownloadQuality] = useState("256");
+  const [providerDownloadSettings, setProviderDownloadSettings] =
+    useState<ProviderDownloadSettings>(defaultProviderDownloadSettings);
+  const [downloadFormat, setDownloadFormat] = useState("opus");
+  const [downloadQuality, setDownloadQuality] = useState<string>(
+    defaultProviderDownloadSettings.opusQuality
+  );
   const [providerCandidates, setProviderCandidates] = useState<
     ProviderSearchCandidate[]
   >([]);
@@ -948,6 +980,23 @@ export default function Home() {
     }
   }, []);
 
+  const loadProviderDownloadSettings = useCallback(async () => {
+    try {
+      const response = await fetchJson<ProviderDownloadSettingsResponse>(
+        "/api/providers/download/settings"
+      );
+
+      setProviderDownloadSettings(response.providerDownload);
+      setDownloadQuality((current) =>
+        current === defaultProviderDownloadSettings.opusQuality
+          ? response.providerDownload.opusQuality
+          : current
+      );
+    } catch {
+      setProviderDownloadSettings(defaultProviderDownloadSettings);
+    }
+  }, []);
+
   const applyLibraryIndexResponse = useCallback(
     (response: LibraryIndexResponse) => {
       setLibraryIndex((current) =>
@@ -1076,7 +1125,7 @@ export default function Home() {
           deleteCount
         )} SpotifyBU-tagged file${
           deleteCount === 1 ? "" : "s"
-        } from the Navidrome music folder?\n\nThese tracks will become missing so you can redownload them as M4A/AAC.`
+        } from the Navidrome music folder?\n\nThese tracks will become missing so you can redownload them as Opus.`
       )
     ) {
       return;
@@ -1107,7 +1156,7 @@ export default function Home() {
               response.deletedCount
             )} SpotifyBU-tagged file${
               response.deletedCount === 1 ? "" : "s"
-            }. Redownload the missing tracks to get M4A/AAC files.`
+            }. Redownload the missing tracks to get Opus files.`
           : "No SpotifyBU-tagged files needed deletion."
       );
     } catch (error) {
@@ -1680,6 +1729,8 @@ export default function Home() {
                 providerCandidates,
                 downloadSource.sourceUrl
               ),
+          fallbackFormat: providerDownloadSettings.fallbackFormat,
+          fallbackQuality: providerDownloadSettings.mp3FallbackQuality,
           format: downloadFormat,
           providerId: downloadSource.providerId,
           quality: downloadQuality,
@@ -1744,6 +1795,7 @@ export default function Home() {
     manualProviderSourceUrl,
     markDownloadedTrackInLibrary,
     providerCandidates,
+    providerDownloadSettings,
     refreshLibraryMatches,
     selectedProviderCandidateId,
     tracks
@@ -1858,6 +1910,7 @@ export default function Home() {
       void loadMusicLibraryStatus();
       void loadMusicServerScanStatus();
       void loadPlexSettingsStatus();
+      void loadProviderDownloadSettings();
     }
 
     void loadAuthenticatedStartupData();
@@ -1871,6 +1924,7 @@ export default function Home() {
     loadMusicLibraryStatus,
     loadMusicServerScanStatus,
     loadPlexSettingsStatus,
+    loadProviderDownloadSettings,
     loadSession,
     loadSpotifyAuthConfig
   ]);
@@ -2465,6 +2519,8 @@ export default function Home() {
         "/api/providers/download/bulk",
         {
           bulkRiskAccepted: downloadBulkRiskAccepted,
+          fallbackFormat: providerDownloadSettings.fallbackFormat,
+          fallbackQuality: providerDownloadSettings.mp3FallbackQuality,
           format: downloadFormat,
           items,
           quality: downloadQuality,
@@ -2493,7 +2549,8 @@ export default function Home() {
     downloadBulkRiskAccepted,
     downloadFormat,
     downloadQuality,
-    downloadRightsConfirmed
+    downloadRightsConfirmed,
+    providerDownloadSettings
   ]);
 
   const cancelBulkProviderJob = useCallback(async () => {
@@ -3387,7 +3444,10 @@ export default function Home() {
 
                           setDownloadFormat(nextFormat);
                           setDownloadQuality(
-                            defaultProviderDownloadQuality(nextFormat)
+                            defaultProviderDownloadQuality(
+                              nextFormat,
+                              providerDownloadSettings
+                            )
                           );
                           setDownloadRightsConfirmed(false);
                           setDownloadBulkRiskAccepted(false);

@@ -39,7 +39,7 @@ SpotifyBU can source audio from files already present in the mounted Navidrome m
 - Reviewed single-track source downloads for YouTube and JioSaavn using `yt-dlp`, alternate candidate fallback, and background job polling
 - Dry-run bulk candidate previews with live progress before provider downloads
 - Resumable background bulk playlist jobs with cancellation, retry, per-track waits, chunk pauses, progress reporting, and partial-failure reporting
-- M4A/AAC output at 256 kbps by default, with MP3 kept as a legacy compatibility option
+- Ogg Opus output at 192 kbps by default, configurable to 160/192/256 kbps, with optional MP3 320 kbps fallback and MP3 kept as a legacy compatibility option
 - Navidrome volume staging with idle cleanup for abandoned failed download/convert temp files
 - Docker image with Node.js, `ffmpeg`, prerelease/nightly-channel `yt-dlp[default]`, Python 3, and `pip`
 - GitHub Container Registry image publishing for `dev`, `latest`, and version tags
@@ -342,12 +342,16 @@ Provider downloads stage temporary files under:
 ```
 
 Finished files are moved into the active organize scheme before the response
-completes. New provider downloads use M4A/AAC at 256 kbps by default and write
-`.m4a` files; MP3 remains available only as a legacy compatibility format.
-Existing MP3 files are left in place and continue to scan/match normally.
-SpotifyBU does not transcode old MP3s as a quality upgrade, because transcoding
-lossy audio cannot recover quality; redownload the source if you want the
-improved default output. The default standard scheme is `Artist/Artist - Album
+completes. New provider downloads use Ogg Opus at 192 kbps by default, can be
+changed in Settings to 160/192/256 kbps, and write `.opus` files with
+Navidrome-facing Vorbis comments and embedded artwork. If Opus cannot be written
+for a format/conversion reason, Settings can allow a quality-matched MP3 320 kbps
+fallback; MP3 also remains available as a legacy compatibility format. Existing
+MP3 and older SpotifyBU M4A files are left in place and continue to scan/match
+normally.
+SpotifyBU does not transcode old lossy files as a quality upgrade, because
+transcoding lossy audio cannot recover quality; redownload the source if you
+want the improved default output. The default standard scheme is `Artist/Artist - Album
 (Year)/Artist - Album (Year) - 01 - Track Title`. Multi-disc albums use
 `Disc-Track` numbering, for example `02-03`. If a download, move, or conversion
 fails, leftover staging files stay on the mounted music volume rather than the
@@ -356,9 +360,9 @@ removes stale staging files older than 10 minutes old.
 
 Newly tagged SpotifyBU provider downloads also include Spotify identity metadata
 such as `spotifybu:track_id`, `spotifybu:track_uri`, `spotifybu:album_id`,
-`spotifybu:isrc`, and `spotifybu:identity_version`. For M4A files with embedded
-artwork, SpotifyBU stores that identity payload in a standard comment atom so
-the library scanner can read it while preserving the artwork. Library indexing
+`spotifybu:isrc`, and `spotifybu:identity_version`. Opus downloads store these
+as normal Vorbis comments alongside title, artist, album artist, album, track,
+disc, release date, ISRC, compilation, and embedded artwork. Library indexing
 reads these tags first so a file can still reconnect to its Spotify track after
 another organizer moves or renames it. Playlist membership is not written into
 audio files; it continues to come from SpotifyBU playlist backup snapshots and

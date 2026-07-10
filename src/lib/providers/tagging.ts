@@ -1,6 +1,6 @@
 import { execFile } from "child_process";
 import { constants } from "fs";
-import { access, rename, rm, writeFile } from "fs/promises";
+import { access, readFile, rename, rm, writeFile } from "fs/promises";
 import path from "path";
 import { promisify } from "util";
 import {
@@ -163,21 +163,25 @@ async function writeTaggedAudioFile(
   metadataArgs: string[],
   coverPath: string | null
 ) {
+  const isOggOpus = isOggOpusPath(tempPath);
+  const pictureMetadataArgs =
+    coverPath && isOggOpus ? await oggOpusPictureMetadataArgs(coverPath) : [];
+
   await execFileAsync(
     "ffmpeg",
     [
       "-y",
       "-i",
       filePath,
-      ...(coverPath ? ["-i", coverPath] : []),
+      ...(coverPath && !isOggOpus ? ["-i", coverPath] : []),
       "-map",
       "0:a:0",
-      ...(coverPath ? ["-map", "1:v:0"] : []),
+      ...(coverPath && !isOggOpus ? ["-map", "1:v:0"] : []),
       "-map_metadata",
       "-1",
       "-c:a",
       "copy",
-      ...(coverPath
+      ...(coverPath && !isOggOpus
         ? [
             ...coverCodecArgs(tempPath, coverPath),
             "-disposition:v:0",
@@ -191,6 +195,7 @@ async function writeTaggedAudioFile(
       ...containerMetadataArgs(tempPath, coverPath),
       ...id3MetadataArgs(tempPath),
       ...metadataArgs,
+      ...pictureMetadataArgs,
       ...mp4ArtworkIdentityFallbackArgs(tempPath, metadataArgs, coverPath),
       tempPath
     ],
@@ -320,6 +325,59 @@ function id3MetadataArgs(filePath: string) {
   return path.extname(filePath).toLowerCase() === ".mp3"
     ? ["-id3v2_version", "3"]
     : [];
+}
+
+function isOggOpusPath(filePath: string) {
+  return path.extname(filePath).toLowerCase() === ".opus";
+}
+
+async function oggOpusPictureMetadataArgs(coverPath: string) {
+  return [
+    "-metadata",
+    `METADATA_BLOCK_PICTURE=${await flacPictureBlockBase64(coverPath)}`
+  ];
+}
+
+async function flacPictureBlockBase64(coverPath: string) {
+  const imageBytes = await readFile(coverPath);
+  const mimeBytes = Buffer.from(coverMimeType(coverPath), "utf8");
+  const descriptionBytes = Buffer.from("Cover (front)", "utf8");
+
+  return Buffer.concat([
+    uint32Be(3),
+    uint32Be(mimeBytes.length),
+    mimeBytes,
+    uint32Be(descriptionBytes.length),
+    descriptionBytes,
+    uint32Be(0),
+    uint32Be(0),
+    uint32Be(0),
+    uint32Be(0),
+    uint32Be(imageBytes.length),
+    imageBytes
+  ]).toString("base64");
+}
+
+function coverMimeType(coverPath: string) {
+  const extension = path.extname(coverPath).toLowerCase();
+
+  if (extension === ".png") {
+    return "image/png";
+  }
+
+  if (extension === ".webp") {
+    return "image/webp";
+  }
+
+  return "image/jpeg";
+}
+
+function uint32Be(value: number) {
+  const bytes = Buffer.alloc(4);
+
+  bytes.writeUInt32BE(value);
+
+  return bytes;
 }
 
 async function downloadSpotifyAlbumCover(
