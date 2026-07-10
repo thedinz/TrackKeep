@@ -3376,7 +3376,15 @@ async function probeAudioFile(filePath: string) {
   try {
     const { stdout } = await execFileAsync(
       "ffprobe",
-      ["-v", "quiet", "-print_format", "json", "-show_format", filePath],
+      [
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
+        "-show_format",
+        "-show_streams",
+        filePath
+      ],
       {
         maxBuffer: 1024 * 1024,
         timeout: 10000
@@ -3387,11 +3395,18 @@ async function probeAudioFile(filePath: string) {
         duration?: string;
         tags?: Record<string, string | number>;
       };
+      streams?: Array<{
+        codec_type?: string;
+        tags?: Record<string, string | number>;
+      }>;
     };
+    const audioStreamTags = parsed.streams?.find(
+      (stream) => stream.codec_type === "audio"
+    )?.tags;
 
     return {
       durationMs: secondsToMilliseconds(parsed.format?.duration),
-      tags: normalizeTagMap(parsed.format?.tags)
+      tags: normalizeTagMap(parsed.format?.tags, audioStreamTags)
     };
   } catch {
     return null;
@@ -3495,14 +3510,16 @@ function inferTrackNumbersFromFileName(value: string) {
   };
 }
 
-function normalizeTagMap(tags?: Record<string, string | number>) {
+function normalizeTagMap(...tagRecords: Array<Record<string, string | number> | undefined>) {
   const tagMap = new Map<string, string>();
 
-  for (const [key, value] of Object.entries(tags ?? {})) {
-    tagMap.set(
-      key.toLowerCase().replace(/[-\s]+/g, "_"),
-      String(value).trim()
-    );
+  for (const tags of tagRecords) {
+    for (const [key, value] of Object.entries(tags ?? {})) {
+      tagMap.set(
+        key.toLowerCase().replace(/[-\s]+/g, "_"),
+        String(value).trim()
+      );
+    }
   }
 
   return tagMap;

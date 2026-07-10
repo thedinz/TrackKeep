@@ -26,23 +26,23 @@ import type { BackupTrack } from "../spotify.ts";
 
 const execFileAsync = promisify(execFile);
 
-test("default provider download profile is M4A/AAC 256k ahead of legacy MP3", () => {
-  const m4a = providerDownloadFormatProfiles.m4a;
+test("default provider download profile is Opus 192k ahead of legacy MP3", () => {
+  const opus = providerDownloadFormatProfiles.opus;
   const mp3 = providerDownloadFormatProfiles.mp3;
 
-  assert.equal(m4a.container, "M4A");
-  assert.equal(m4a.codec, "AAC");
-  assert.equal(m4a.bitrate, 256000);
-  assert.equal(m4a.defaultQuality, "256");
-  assert.equal(m4a.extension, "m4a");
+  assert.equal(opus.container, "Ogg Opus");
+  assert.equal(opus.codec, "Opus");
+  assert.equal(opus.bitrate, 192000);
+  assert.equal(opus.defaultQuality, "192");
+  assert.equal(opus.extension, "opus");
   assert.equal(mp3.container, "MPEG");
   assert.equal(mp3.codec, "MP3");
   assert.equal(mp3.bitrate, 320000);
   assert.equal(mp3.defaultQuality, "320");
-  assert.ok(m4a.modernLossyRank > mp3.modernLossyRank);
+  assert.ok(opus.modernLossyRank > mp3.modernLossyRank);
 });
 
-test("provider downloads request m4a/256K and write tagged .m4a files by default", async (t) => {
+test("provider downloads request Opus/192K and write tagged .opus files by default", async (t) => {
   if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
     t.skip("ffmpeg and ffprobe are required for download metadata coverage.");
     return;
@@ -88,33 +88,33 @@ test("provider downloads request m4a/256K and write tagged .m4a files by default
         }
       });
 
-      assert.equal(result.format, "m4a");
-      assert.equal(result.quality, "256");
-      assert.ok(result.destinationPath.endsWith(".m4a"));
-      assert.ok(result.relativePath?.endsWith(".m4a"));
+      assert.equal(result.format, "opus");
+      assert.equal(result.quality, "192");
+      assert.ok(result.destinationPath.endsWith(".opus"));
+      assert.ok(result.relativePath?.endsWith(".opus"));
       await stat(result.destinationPath);
 
       const ytDlpInvocation = JSON.parse(
         await readFile(argsPath, "utf8")
       ) as FakeYtDlpInvocation;
-      assert.equal(optionAfter(ytDlpInvocation.args, "--audio-format"), "m4a");
-      assert.equal(optionAfter(ytDlpInvocation.args, "--audio-quality"), "256K");
-      assert.equal(ytDlpInvocation.audioFormat, "m4a");
-      assert.equal(ytDlpInvocation.audioQuality, "256K");
-      assert.ok(ytDlpInvocation.outputPath.endsWith(".m4a"));
+      assert.equal(optionAfter(ytDlpInvocation.args, "--audio-format"), "opus");
+      assert.equal(optionAfter(ytDlpInvocation.args, "--audio-quality"), "192K");
+      assert.equal(ytDlpInvocation.audioFormat, "opus");
+      assert.equal(ytDlpInvocation.audioQuality, "192K");
+      assert.ok(ytDlpInvocation.outputPath.endsWith(".opus"));
 
       const probe = await readAudioProbe(result.destinationPath);
-      const tags = lowerCaseTags(probe.format?.tags);
       const audioStream = probe.streams?.find(
         (stream) => stream.codec_type === "audio"
       );
       const coverStream = probe.streams?.find(
         (stream) => stream.codec_type === "video"
       );
+      const tags = lowerCaseTags(probe.format?.tags, audioStream?.tags);
 
-      assert.equal(audioStream?.codec_name, "aac");
+      assert.equal(audioStream?.codec_name, "opus");
       assert.equal(coverStream?.disposition?.attached_pic, 1);
-      assert.match(probe.format?.format_name ?? "", /mp4/i);
+      assert.match(probe.format?.format_name ?? "", /ogg/i);
       assert.equal(tags.title, "Opening");
       assert.equal(tags.artist, "Example Artist");
       assert.equal(tags.album, "Example Record");
@@ -122,7 +122,8 @@ test("provider downloads request m4a/256K and write tagged .m4a files by default
       assert.equal(tags.track, "1");
       assert.equal(tags.disc, "1");
       assert.equal(tags.date, "2026-02-03");
-      assert.ok(tags.comment?.startsWith("SpotifyBU identity "));
+      assert.equal(tags.releasedate, "2026-02-03");
+      assert.equal(tags.isrc, "USABC1234567");
       const identityMetadata = spotifyBuIdentityMetadataFromTagLookup((keys) =>
         tagValue(tags, keys)
       );
@@ -138,6 +139,138 @@ test("provider downloads request m4a/256K and write tagged .m4a files by default
       assert.equal(
         identityMetadata.spotifybuIdentityVersion,
         spotifyBuIdentityVersion
+      );
+    }
+  );
+});
+
+test("provider downloads fall back from Opus to comparable MP3 quality", async (t) => {
+  if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
+    t.skip("ffmpeg and ffprobe are required for download fallback coverage.");
+    return;
+  }
+
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "spotifybu-download-"));
+  const libraryPath = path.join(tempRoot, "library");
+  const configPath = path.join(tempRoot, "config");
+  const binPath = path.join(tempRoot, "bin");
+  const argsPath = path.join(tempRoot, "yt-dlp-args.json");
+
+  t.after(async () => {
+    await rm(tempRoot, {
+      force: true,
+      recursive: true
+    });
+  });
+
+  await writeFakeYtDlp(binPath);
+
+  await withEnvironment(
+    {
+      MUSIC_LIBRARY_PATH: libraryPath,
+      PATH: `${binPath}${path.delimiter}${process.env.PATH ?? ""}`,
+      SPOTIFYBU_CONFIG_DIR: configPath,
+      SPOTIFYBU_FAKE_YTDLP_APPEND_ARGS: "1",
+      SPOTIFYBU_FAKE_YTDLP_FAIL_OPUS: "1",
+      SPOTIFYBU_FAKE_YTDLP_ARGS_PATH: argsPath
+    },
+    async () => {
+      const result = await downloadAuthorizedProviderTrack({
+        bulkRiskAccepted: true,
+        fallbackFormat: "mp3",
+        fallbackQuality: "320",
+        format: "opus",
+        providerId: "youtube",
+        quality: "160",
+        rightsConfirmed: true,
+        sourceUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        track: exampleTrack
+      });
+
+      assert.equal(result.format, "mp3");
+      assert.equal(result.quality, "320");
+      assert.ok(result.destinationPath.endsWith(".mp3"));
+      assert.ok(result.relativePath?.endsWith(".mp3"));
+      await stat(result.destinationPath);
+
+      const ytDlpInvocations = JSON.parse(
+        await readFile(argsPath, "utf8")
+      ) as FakeYtDlpInvocation[];
+      assert.equal(ytDlpInvocations.length, 2);
+      assert.equal(
+        optionAfter(ytDlpInvocations[0].args, "--audio-format"),
+        "opus"
+      );
+      assert.equal(
+        optionAfter(ytDlpInvocations[0].args, "--audio-quality"),
+        "160K"
+      );
+      assert.equal(
+        optionAfter(ytDlpInvocations[1].args, "--audio-format"),
+        "mp3"
+      );
+      assert.equal(
+        optionAfter(ytDlpInvocations[1].args, "--audio-quality"),
+        "320K"
+      );
+
+      const probe = await readAudioProbe(result.destinationPath);
+      const audioStream = probe.streams?.find(
+        (stream) => stream.codec_type === "audio"
+      );
+      assert.equal(audioStream?.codec_name, "mp3");
+    }
+  );
+});
+
+test("provider downloads do not use MP3 fallback when disabled", async (t) => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "spotifybu-download-"));
+  const libraryPath = path.join(tempRoot, "library");
+  const configPath = path.join(tempRoot, "config");
+  const binPath = path.join(tempRoot, "bin");
+  const argsPath = path.join(tempRoot, "yt-dlp-args.json");
+
+  t.after(async () => {
+    await rm(tempRoot, {
+      force: true,
+      recursive: true
+    });
+  });
+
+  await writeFakeYtDlp(binPath);
+
+  await withEnvironment(
+    {
+      MUSIC_LIBRARY_PATH: libraryPath,
+      PATH: `${binPath}${path.delimiter}${process.env.PATH ?? ""}`,
+      SPOTIFYBU_CONFIG_DIR: configPath,
+      SPOTIFYBU_FAKE_YTDLP_APPEND_ARGS: "1",
+      SPOTIFYBU_FAKE_YTDLP_FAIL_OPUS: "1",
+      SPOTIFYBU_FAKE_YTDLP_ARGS_PATH: argsPath
+    },
+    async () => {
+      await assert.rejects(
+        () =>
+          downloadAuthorizedProviderTrack({
+            bulkRiskAccepted: true,
+            fallbackFormat: "none",
+            format: "opus",
+            providerId: "youtube",
+            quality: "160",
+            rightsConfirmed: true,
+            sourceUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            track: exampleTrack
+          }),
+        /Unknown encoder libopus/
+      );
+
+      const ytDlpInvocations = JSON.parse(
+        await readFile(argsPath, "utf8")
+      ) as FakeYtDlpInvocation[];
+      assert.equal(ytDlpInvocations.length, 1);
+      assert.equal(
+        optionAfter(ytDlpInvocations[0].args, "--audio-format"),
+        "opus"
       );
     }
   );
@@ -181,8 +314,8 @@ const optionAfter = (name) => {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : "";
 };
-const audioFormat = optionAfter("--audio-format") || "m4a";
-const audioQuality = optionAfter("--audio-quality") || "256K";
+const audioFormat = optionAfter("--audio-format") || "opus";
+const audioQuality = optionAfter("--audio-quality") || "192K";
 const outputTemplate = optionAfter("--output");
 
 if (!outputTemplate) {
@@ -194,13 +327,35 @@ const outputPath = outputTemplate.replace("%(ext)s", audioFormat);
 fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 
 if (process.env.SPOTIFYBU_FAKE_YTDLP_ARGS_PATH) {
-  fs.writeFileSync(
-    process.env.SPOTIFYBU_FAKE_YTDLP_ARGS_PATH,
-    JSON.stringify({ args, audioFormat, audioQuality, outputPath }, null, 2)
-  );
+  const invocation = { args, audioFormat, audioQuality, outputPath };
+
+  if (process.env.SPOTIFYBU_FAKE_YTDLP_APPEND_ARGS === "1") {
+    let invocations = [];
+
+    try {
+      invocations = JSON.parse(
+        fs.readFileSync(process.env.SPOTIFYBU_FAKE_YTDLP_ARGS_PATH, "utf8")
+      );
+    } catch {}
+
+    fs.writeFileSync(
+      process.env.SPOTIFYBU_FAKE_YTDLP_ARGS_PATH,
+      JSON.stringify([...invocations, invocation], null, 2)
+    );
+  } else {
+    fs.writeFileSync(
+      process.env.SPOTIFYBU_FAKE_YTDLP_ARGS_PATH,
+      JSON.stringify(invocation, null, 2)
+    );
+  }
 }
 
-const codec = audioFormat === "mp3" ? "libmp3lame" : "aac";
+if (process.env.SPOTIFYBU_FAKE_YTDLP_FAIL_OPUS === "1" && audioFormat === "opus") {
+  console.error("ERROR: Postprocessing: audio conversion failed: Unknown encoder libopus");
+  process.exit(1);
+}
+
+const codec = audioFormat === "mp3" ? "libmp3lame" : "libopus";
 const result = spawnSync(
   "ffmpeg",
   [
@@ -265,13 +420,21 @@ async function readAudioProbe(filePath: string) {
       disposition?: {
         attached_pic?: number;
       };
+      tags?: Record<string, string>;
     }>;
   };
 }
 
-function lowerCaseTags(tags: Record<string, string> | undefined) {
+function lowerCaseTags(
+  ...tagRecords: Array<Record<string, string> | undefined>
+) {
   return Object.fromEntries(
-    Object.entries(tags ?? {}).map(([key, value]) => [key.toLowerCase(), value])
+    tagRecords.flatMap((tags) =>
+      Object.entries(tags ?? {}).map(([key, value]) => [
+        key.toLowerCase(),
+        value
+      ])
+    )
   );
 }
 

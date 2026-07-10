@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   Clock,
+  Download,
   Fingerprint,
   LockKeyhole,
   RefreshCw,
@@ -85,6 +86,20 @@ type PlexSettingsResponse = {
   plex: PublicPlexSettings;
 };
 
+type ProviderDownloadOpusQuality = "160" | "192" | "256";
+type ProviderDownloadFallbackFormat = "mp3" | "none";
+type ProviderDownloadMp3FallbackQuality = "320";
+
+type ProviderDownloadSettings = {
+  fallbackFormat: ProviderDownloadFallbackFormat;
+  mp3FallbackQuality: ProviderDownloadMp3FallbackQuality;
+  opusQuality: ProviderDownloadOpusQuality;
+};
+
+type ProviderDownloadSettingsResponse = {
+  providerDownload: ProviderDownloadSettings;
+};
+
 type MusicLibraryIdentityTagBackfillResult = {
   alreadyTaggedCount: number;
   attemptedCount: number;
@@ -138,6 +153,8 @@ export default function SettingsPage() {
   const [isSavingAuthMode, setIsSavingAuthMode] = useState(false);
   const [isSavingAutoScan, setIsSavingAutoScan] = useState(false);
   const [isSavingPlex, setIsSavingPlex] = useState(false);
+  const [isSavingProviderDownload, setIsSavingProviderDownload] =
+    useState(false);
   const [isBackfillingIdentityTags, setIsBackfillingIdentityTags] =
     useState(false);
   const [autoScan, setAutoScan] = useState<MusicLibraryAutoScanStatus | null>(null);
@@ -152,6 +169,8 @@ export default function SettingsPage() {
   const [plexSettings, setPlexSettings] = useState<PublicPlexSettings | null>(
     null
   );
+  const [providerDownloadSettings, setProviderDownloadSettings] =
+    useState<ProviderDownloadSettings | null>(null);
   const [plexToken, setPlexToken] = useState("");
   const [status, setStatus] = useState<AppAuthStatus | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -194,6 +213,15 @@ export default function SettingsPage() {
       })
       .catch(() => {
         setError("Could not load Plex settings.");
+      });
+
+    void fetch("/api/providers/download/settings")
+      .then(readJson<ProviderDownloadSettingsResponse>)
+      .then((response) => {
+        setProviderDownloadSettings(response.providerDownload);
+      })
+      .catch(() => {
+        setError("Could not load provider download settings.");
       });
   }, []);
 
@@ -413,6 +441,59 @@ export default function SettingsPage() {
       }
     },
     [plexSettings, plexToken]
+  );
+
+  const updateProviderDownloadSettingsState = useCallback(
+    (update: Partial<ProviderDownloadSettings>) => {
+      setProviderDownloadSettings((current) =>
+        current
+          ? {
+              ...current,
+              ...update
+            }
+          : current
+      );
+    },
+    []
+  );
+
+  const submitProviderDownloadSettings = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+
+      if (!providerDownloadSettings) {
+        return;
+      }
+
+      setError(null);
+      setSuccess(null);
+      setIsSavingProviderDownload(true);
+
+      try {
+        const response = await fetch("/api/providers/download/settings", {
+          body: JSON.stringify({
+            providerDownload: providerDownloadSettings
+          }),
+          headers: {
+            "Content-Type": "application/json"
+          },
+          method: "POST"
+        });
+        const body = await readJson<ProviderDownloadSettingsResponse>(response);
+
+        setProviderDownloadSettings(body.providerDownload);
+        setSuccess(providerDownloadSettingsSavedMessage(body.providerDownload));
+      } catch (settingsError) {
+        setError(
+          settingsError instanceof Error
+            ? settingsError.message
+            : "Could not save provider download settings."
+        );
+      } finally {
+        setIsSavingProviderDownload(false);
+      }
+    },
+    [providerDownloadSettings]
   );
 
   const applyIdentityBackfillJob = useCallback(
@@ -839,6 +920,98 @@ export default function SettingsPage() {
         <div className="panel settings-panel">
           <div className="panel-header">
             <div className="panel-title">
+              <Download size={20} />
+              <div>
+                <h2>Provider Downloads</h2>
+                <p className="muted">Default Ogg Opus quality for new backups</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="settings-body">
+            {providerDownloadSettings ? (
+              <form
+                className="auth-form"
+                onSubmit={submitProviderDownloadSettings}
+              >
+                <div className="settings-inline-grid">
+                  <label className="form-field">
+                    <span className="stat-label">Opus Quality</span>
+                    <select
+                      disabled={isSavingProviderDownload}
+                      onChange={(event) => {
+                        const opusQuality = opusQualityFromValue(
+                          event.target.value
+                        );
+
+                        updateProviderDownloadSettingsState({
+                          mp3FallbackQuality:
+                            comparableMp3FallbackQuality(opusQuality),
+                          opusQuality
+                        });
+                      }}
+                      value={providerDownloadSettings.opusQuality}
+                    >
+                      <option value="192">192 kbps</option>
+                      <option value="160">160 kbps</option>
+                      <option value="256">256 kbps</option>
+                    </select>
+                  </label>
+
+                  <label className="form-field">
+                    <span className="stat-label">MP3 Fallback</span>
+                    <select
+                      disabled={isSavingProviderDownload}
+                      onChange={(event) =>
+                        updateProviderDownloadSettingsState({
+                          fallbackFormat: fallbackFormatFromValue(
+                            event.target.value
+                          ),
+                          mp3FallbackQuality: "320"
+                        })
+                      }
+                      value={providerDownloadSettings.fallbackFormat}
+                    >
+                      <option value="mp3">MP3 320 kbps</option>
+                      <option value="none">Off</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div className="auth-note">
+                  <Download size={18} />
+                  <span>
+                    New provider downloads default to Opus. If Opus cannot be
+                    written, SpotifyBU can fall back to MP3 320 kbps; FLAC is not
+                    used as a fallback.
+                  </span>
+                </div>
+
+                <button
+                  className="command green"
+                  disabled={isSavingProviderDownload}
+                  type="submit"
+                >
+                  {isSavingProviderDownload ? (
+                    <RefreshCw className="spin" size={18} />
+                  ) : (
+                    <Save size={18} />
+                  )}
+                  Save downloads
+                </button>
+              </form>
+            ) : (
+              <div className="auth-note">
+                <RefreshCw className="spin" size={18} />
+                <span>Loading provider download settings</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="panel settings-panel">
+          <div className="panel-header">
+            <div className="panel-title">
               <Fingerprint size={20} />
               <div>
                 <h2>Spotify Metadata Tags</h2>
@@ -1093,6 +1266,28 @@ function withBrowserTimeZoneDefault(
 
 function browserTimeZone() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+function opusQualityFromValue(value: string): ProviderDownloadOpusQuality {
+  return value === "160" || value === "256" ? value : "192";
+}
+
+function fallbackFormatFromValue(value: string): ProviderDownloadFallbackFormat {
+  return value === "none" ? "none" : "mp3";
+}
+
+function comparableMp3FallbackQuality(
+  _opusQuality: ProviderDownloadOpusQuality
+): ProviderDownloadMp3FallbackQuality {
+  return "320";
+}
+
+function providerDownloadSettingsSavedMessage(
+  settings: ProviderDownloadSettings
+) {
+  return settings.fallbackFormat === "mp3"
+    ? `Provider downloads will default to Opus ${settings.opusQuality} kbps with MP3 ${settings.mp3FallbackQuality} kbps fallback.`
+    : `Provider downloads will default to Opus ${settings.opusQuality} kbps without MP3 fallback.`;
 }
 
 function autoScanScheduleLabel(autoScan: MusicLibraryAutoScanStatus) {
