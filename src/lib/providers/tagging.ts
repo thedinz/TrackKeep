@@ -164,46 +164,60 @@ async function writeTaggedAudioFile(
   coverPath: string | null
 ) {
   const isOggOpus = isOggOpusPath(tempPath);
-  const pictureMetadataArgs =
-    coverPath && isOggOpus ? await oggOpusPictureMetadataArgs(coverPath) : [];
+  const pictureMetadataPath =
+    coverPath && isOggOpus
+      ? await writeOggOpusPictureMetadataFile(tempPath, coverPath)
+      : null;
 
-  await execFileAsync(
-    "ffmpeg",
-    [
-      "-y",
-      "-i",
-      filePath,
-      ...(coverPath && !isOggOpus ? ["-i", coverPath] : []),
-      "-map",
-      "0:a:0",
-      ...(coverPath && !isOggOpus ? ["-map", "1:v:0"] : []),
-      "-map_metadata",
-      "-1",
-      "-c:a",
-      "copy",
-      ...(coverPath && !isOggOpus
-        ? [
-            ...coverCodecArgs(tempPath, coverPath),
-            "-disposition:v:0",
-            "attached_pic",
-            "-metadata:s:v",
-            "title=Album cover",
-            "-metadata:s:v",
-            "comment=Cover (front)"
-          ]
-        : []),
-      ...containerMetadataArgs(tempPath, coverPath),
-      ...id3MetadataArgs(tempPath),
-      ...metadataArgs,
-      ...pictureMetadataArgs,
-      ...mp4ArtworkIdentityFallbackArgs(tempPath, metadataArgs, coverPath),
-      tempPath
-    ],
-    {
-      maxBuffer: 1024 * 1024 * 2,
-      timeout: 60000
+  try {
+    await execFileAsync(
+      "ffmpeg",
+      [
+        "-y",
+        "-i",
+        filePath,
+        ...(pictureMetadataPath
+          ? ["-f", "ffmetadata", "-i", pictureMetadataPath]
+          : []),
+        ...(coverPath && !isOggOpus ? ["-i", coverPath] : []),
+        "-map",
+        "0:a:0",
+        ...(coverPath && !isOggOpus ? ["-map", "1:v:0"] : []),
+        "-map_metadata",
+        pictureMetadataPath ? "1" : "-1",
+        "-map_metadata:s:a:0",
+        "-1",
+        "-c:a",
+        "copy",
+        ...(coverPath && !isOggOpus
+          ? [
+              ...coverCodecArgs(tempPath, coverPath),
+              "-disposition:v:0",
+              "attached_pic",
+              "-metadata:s:v",
+              "title=Album cover",
+              "-metadata:s:v",
+              "comment=Cover (front)"
+            ]
+          : []),
+        ...containerMetadataArgs(tempPath, coverPath),
+        ...id3MetadataArgs(tempPath),
+        ...metadataArgs,
+        ...mp4ArtworkIdentityFallbackArgs(tempPath, metadataArgs, coverPath),
+        tempPath
+      ],
+      {
+        maxBuffer: 1024 * 1024 * 2,
+        timeout: 60000
+      }
+    );
+  } finally {
+    if (pictureMetadataPath) {
+      await rm(pictureMetadataPath, {
+        force: true
+      }).catch(() => undefined);
     }
-  );
+  }
 }
 
 async function writeIdentityTaggedAudioFile(
@@ -331,11 +345,37 @@ function isOggOpusPath(filePath: string) {
   return path.extname(filePath).toLowerCase() === ".opus";
 }
 
-async function oggOpusPictureMetadataArgs(coverPath: string) {
-  return [
-    "-metadata",
-    `METADATA_BLOCK_PICTURE=${await flacPictureBlockBase64(coverPath)}`
-  ];
+async function writeOggOpusPictureMetadataFile(
+  audioTempPath: string,
+  coverPath: string
+) {
+  const parsedPath = path.parse(audioTempPath);
+  const metadataPath = path.join(
+    /* turbopackIgnore: true */ parsedPath.dir,
+    `${parsedPath.name}.spotifybu-picture.ffmetadata`
+  );
+  const pictureBlock = await flacPictureBlockBase64(coverPath);
+
+  await writeFile(
+    metadataPath,
+    [
+      ";FFMETADATA1",
+      `METADATA_BLOCK_PICTURE=${escapeFfmetadataValue(pictureBlock)}`,
+      ""
+    ].join("\n"),
+    "utf8"
+  );
+
+  return metadataPath;
+}
+
+function escapeFfmetadataValue(value: string) {
+  return value
+    .replaceAll("\\", "\\\\")
+    .replaceAll("\n", "\\\n")
+    .replaceAll("=", "\\=")
+    .replaceAll(";", "\\;")
+    .replaceAll("#", "\\#");
 }
 
 async function flacPictureBlockBase64(coverPath: string) {
