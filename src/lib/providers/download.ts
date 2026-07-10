@@ -1189,12 +1189,19 @@ async function downloadAuthorizedProviderTrackInner(
     });
 
     stage = "locating downloaded file";
-    const stagedPath = await findDownloadedPath({
+    let stagedPath = await findDownloadedPath({
       beforePaths,
       format,
       outputTemplate,
       stdout,
       targetDirectory: stagingDirectory
+    });
+
+    stage = "normalizing downloaded audio";
+    stagedPath = await normalizeStagedAudioFile({
+      format,
+      quality,
+      stagedPath
     });
 
     stage = "tagging downloaded file";
@@ -2556,6 +2563,206 @@ async function runYtDlp({
   }
 
   return stdout.toString();
+}
+
+async function normalizeStagedAudioFile({
+  format,
+  quality,
+  stagedPath
+}: {
+  format: DownloadFormat;
+  quality: DownloadQuality;
+  stagedPath: string;
+}) {
+  const shouldNormalize = await shouldNormalizeStagedAudioFile({
+    format,
+    quality,
+    stagedPath
+  });
+
+  if (!shouldNormalize) {
+    return stagedPath;
+  }
+
+  const targetPath = transcodedStagedAudioPath(stagedPath, format);
+
+  try {
+    await execFileAsync(
+      "ffmpeg",
+      [
+        "-y",
+        "-i",
+        stagedPath,
+        "-map",
+        "0:a:0",
+        "-vn",
+        "-map_metadata",
+        "-1",
+        "-codec:a",
+        audioEncoderForFormat(format),
+        "-b:a",
+        `${quality}k`,
+        ...opusBitrateModeArgs(format),
+        ...id3ArgsForFormat(format),
+        targetPath
+      ],
+      {
+        maxBuffer: 1024 * 1024 * 2,
+        timeout: 60000
+      }
+    );
+  } catch (error) {
+    throw new Error(
+      `Provider audio normalization failed: ${formatFfmpegError(error)}`
+    );
+  }
+
+  if (targetPath !== stagedPath) {
+    await rm(stagedPath, {
+      force: true
+    }).catch(() => undefined);
+  }
+
+  return targetPath;
+}
+
+async function shouldNormalizeStagedAudioFile({
+  format,
+  quality,
+  stagedPath
+}: {
+  format: DownloadFormat;
+  quality: DownloadQuality;
+  stagedPath: string;
+}) {
+  const normalizedPath = normalizedStagedAudioPath(stagedPath, format);
+
+  if (stagedPath !== normalizedPath) {
+    return true;
+  }
+
+  const encoding = await probeStagedAudioEncoding(stagedPath).catch(() => null);
+
+  if (!encoding) {
+    return true;
+  }
+
+  if (encoding.codecName !== audioCodecNameForFormat(format)) {
+    return true;
+  }
+
+  if (!encoding.bitRate) {
+    return true;
+  }
+
+  const targetBitrate = Number(quality) * 1000;
+
+  return (
+    encoding.bitRate < targetBitrate * 0.9 ||
+    encoding.bitRate > targetBitrate * 1.25
+  );
+}
+
+async function probeStagedAudioEncoding(filePath: string) {
+  const { stdout } = await execFileAsync(
+    "ffprobe",
+    [
+      "-v",
+      "quiet",
+      "-print_format",
+      "json",
+      "-show_format",
+      "-show_streams",
+      filePath
+    ],
+    {
+      maxBuffer: 1024 * 1024,
+      timeout: 30000
+    }
+  );
+  const probe = JSON.parse(stdout.toString()) as {
+    format?: {
+      bit_rate?: string;
+    };
+    streams?: Array<{
+      bit_rate?: string;
+      codec_name?: string;
+      codec_type?: string;
+    }>;
+  };
+  const audioStream = probe.streams?.find(
+    (stream) => stream.codec_type === "audio"
+  );
+
+  return {
+    bitRate:
+      parseBitrate(audioStream?.bit_rate) ?? parseBitrate(probe.format?.bit_rate),
+    codecName: audioStream?.codec_name?.toLowerCase() ?? ""
+  };
+}
+
+function normalizedStagedAudioPath(filePath: string, format: DownloadFormat) {
+  const parsedPath = path.parse(filePath);
+  const extension = `.${format}`;
+
+  if (parsedPath.ext.toLowerCase() === extension) {
+    return filePath;
+  }
+
+  return path.join(
+    /* turbopackIgnore: true */ parsedPath.dir,
+    `${parsedPath.name}${extension}`
+  );
+}
+
+function transcodedStagedAudioPath(filePath: string, format: DownloadFormat) {
+  const parsedPath = path.parse(filePath);
+
+  return path.join(
+    /* turbopackIgnore: true */ parsedPath.dir,
+    `${parsedPath.name}.spotifybu-normalized.${format}`
+  );
+}
+
+function parseBitrate(value: string | undefined) {
+  const bitrate = Number(value);
+
+  return Number.isFinite(bitrate) && bitrate > 0 ? bitrate : null;
+}
+
+function audioCodecNameForFormat(format: DownloadFormat) {
+  return format === "mp3" ? "mp3" : "opus";
+}
+
+function audioEncoderForFormat(format: DownloadFormat) {
+  return format === "mp3" ? "libmp3lame" : "libopus";
+}
+
+function opusBitrateModeArgs(format: DownloadFormat) {
+  return format === "opus" ? ["-vbr", "off"] : [];
+}
+
+function id3ArgsForFormat(format: DownloadFormat) {
+  return format === "mp3" ? ["-id3v2_version", "3"] : [];
+}
+
+function formatFfmpegError(error: unknown) {
+  const execError = error as ExecFileError;
+  const output = [
+    bufferishToString(execError.stderr),
+    bufferishToString(execError.stdout),
+    error instanceof Error ? error.message : ""
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const diagnosticLine = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .reverse()
+    .find((line) => /error|failed|invalid|unable/i.test(line));
+
+  return diagnosticLine ?? (error instanceof Error ? error.message : "ffmpeg failed");
 }
 
 function ytDlpJsRuntimeArgs() {

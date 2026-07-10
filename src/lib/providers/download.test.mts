@@ -144,6 +144,75 @@ test("provider downloads request Opus/192K and write tagged .opus files by defau
   );
 });
 
+test("provider downloads normalize lower bitrate Opus sources to selected quality", async (t) => {
+  if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
+    t.skip("ffmpeg and ffprobe are required for download bitrate coverage.");
+    return;
+  }
+
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "spotifybu-download-"));
+  const libraryPath = path.join(tempRoot, "library");
+  const configPath = path.join(tempRoot, "config");
+  const binPath = path.join(tempRoot, "bin");
+  const argsPath = path.join(tempRoot, "yt-dlp-args.json");
+
+  t.after(async () => {
+    await rm(tempRoot, {
+      force: true,
+      recursive: true
+    });
+  });
+
+  await writeFakeYtDlp(binPath);
+
+  await withEnvironment(
+    {
+      MUSIC_LIBRARY_PATH: libraryPath,
+      PATH: `${binPath}${path.delimiter}${process.env.PATH ?? ""}`,
+      SPOTIFYBU_CONFIG_DIR: configPath,
+      SPOTIFYBU_FAKE_YTDLP_ARGS_PATH: argsPath,
+      SPOTIFYBU_FAKE_YTDLP_DURATION: "2",
+      SPOTIFYBU_FAKE_YTDLP_OUTPUT_BITRATE: "128K"
+    },
+    async () => {
+      const result = await downloadAuthorizedProviderTrack({
+        bulkRiskAccepted: true,
+        format: "opus",
+        providerId: "youtube",
+        quality: "256",
+        rightsConfirmed: true,
+        sourceUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        track: exampleTrack
+      });
+
+      assert.equal(result.format, "opus");
+      assert.equal(result.quality, "256");
+      assert.ok(result.destinationPath.endsWith(".opus"));
+      assert.ok(result.relativePath?.endsWith(".opus"));
+      assert.equal(path.basename(result.destinationPath).includes("normalized"), false);
+
+      const ytDlpInvocation = JSON.parse(
+        await readFile(argsPath, "utf8")
+      ) as FakeYtDlpInvocation;
+      assert.equal(optionAfter(ytDlpInvocation.args, "--audio-format"), "opus");
+      assert.equal(optionAfter(ytDlpInvocation.args, "--audio-quality"), "256K");
+      assert.equal(ytDlpInvocation.outputBitrate, "128K");
+
+      const probe = await readAudioProbe(result.destinationPath);
+      const audioStream = probe.streams?.find(
+        (stream) => stream.codec_type === "audio"
+      );
+      const bitrate = audioBitrate(probe);
+
+      assert.equal(audioStream?.codec_name, "opus");
+      assert.ok(
+        bitrate && bitrate >= 230000,
+        `expected normalized bitrate near 256 kbps, got ${bitrate ?? "unknown"}`
+      );
+    }
+  );
+});
+
 test("provider downloads fall back from Opus to configured MP3 quality", async (t) => {
   if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
     t.skip("ffmpeg and ffprobe are required for download fallback coverage.");
@@ -280,6 +349,7 @@ type FakeYtDlpInvocation = {
   args: string[];
   audioFormat: string;
   audioQuality: string;
+  outputBitrate?: string;
   outputPath: string;
 };
 
@@ -316,7 +386,9 @@ const optionAfter = (name) => {
 };
 const audioFormat = optionAfter("--audio-format") || "opus";
 const audioQuality = optionAfter("--audio-quality") || "192K";
+const outputBitrate = process.env.SPOTIFYBU_FAKE_YTDLP_OUTPUT_BITRATE || audioQuality;
 const outputTemplate = optionAfter("--output");
+const duration = process.env.SPOTIFYBU_FAKE_YTDLP_DURATION || "0.25";
 
 if (!outputTemplate) {
   console.error("missing --output");
@@ -327,7 +399,7 @@ const outputPath = outputTemplate.replace("%(ext)s", audioFormat);
 fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 
 if (process.env.SPOTIFYBU_FAKE_YTDLP_ARGS_PATH) {
-  const invocation = { args, audioFormat, audioQuality, outputPath };
+  const invocation = { args, audioFormat, audioQuality, outputBitrate, outputPath };
 
   if (process.env.SPOTIFYBU_FAKE_YTDLP_APPEND_ARGS === "1") {
     let invocations = [];
@@ -365,11 +437,11 @@ const result = spawnSync(
     "-i",
     "anullsrc=r=44100:cl=stereo",
     "-t",
-    "0.25",
+    duration,
     "-codec:a",
     codec,
     "-b:a",
-    audioQuality.toLowerCase(),
+    outputBitrate.toLowerCase(),
     outputPath
   ],
   {
@@ -411,10 +483,12 @@ async function readAudioProbe(filePath: string) {
 
   return JSON.parse(stdout.toString()) as {
     format?: {
+      bit_rate?: string;
       format_name?: string;
       tags?: Record<string, string>;
     };
     streams?: Array<{
+      bit_rate?: string;
       codec_name?: string;
       codec_type?: string;
       disposition?: {
@@ -423,6 +497,20 @@ async function readAudioProbe(filePath: string) {
       tags?: Record<string, string>;
     }>;
   };
+}
+
+function audioBitrate(probe: Awaited<ReturnType<typeof readAudioProbe>>) {
+  const audioStream = probe.streams?.find(
+    (stream) => stream.codec_type === "audio"
+  );
+
+  return parseBitrate(audioStream?.bit_rate) ?? parseBitrate(probe.format?.bit_rate);
+}
+
+function parseBitrate(value: string | undefined) {
+  const bitrate = Number(value);
+
+  return Number.isFinite(bitrate) && bitrate > 0 ? bitrate : null;
 }
 
 function lowerCaseTags(
