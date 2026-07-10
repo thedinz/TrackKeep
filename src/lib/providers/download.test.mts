@@ -144,7 +144,7 @@ test("provider downloads request Opus/192K and write tagged .opus files by defau
   );
 });
 
-test("provider downloads normalize lower bitrate Opus sources to selected quality", async (t) => {
+test("provider downloads keep lower bitrate Opus sources without upconverting", async (t) => {
   if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
     t.skip("ffmpeg and ffprobe are required for download bitrate coverage.");
     return;
@@ -172,6 +172,7 @@ test("provider downloads normalize lower bitrate Opus sources to selected qualit
       SPOTIFYBU_CONFIG_DIR: configPath,
       SPOTIFYBU_FAKE_YTDLP_ARGS_PATH: argsPath,
       SPOTIFYBU_FAKE_YTDLP_DURATION: "2",
+      SPOTIFYBU_FAKE_YTDLP_OPUS_CBR: "1",
       SPOTIFYBU_FAKE_YTDLP_OUTPUT_BITRATE: "128K"
     },
     async () => {
@@ -206,8 +207,10 @@ test("provider downloads normalize lower bitrate Opus sources to selected qualit
 
       assert.equal(audioStream?.codec_name, "opus");
       assert.ok(
-        bitrate && bitrate >= 230000,
-        `expected normalized bitrate near 256 kbps, got ${bitrate ?? "unknown"}`
+        bitrate && bitrate < 180000,
+        `expected source bitrate below selected 256 kbps cap, got ${
+          bitrate ?? "unknown"
+        }`
       );
     }
   );
@@ -428,6 +431,10 @@ if (process.env.SPOTIFYBU_FAKE_YTDLP_FAIL_OPUS === "1" && audioFormat === "opus"
 }
 
 const codec = audioFormat === "mp3" ? "libmp3lame" : "libopus";
+const opusBitrateMode =
+  audioFormat === "opus" && process.env.SPOTIFYBU_FAKE_YTDLP_OPUS_CBR === "1"
+    ? ["-vbr", "off"]
+    : [];
 const result = spawnSync(
   "ffmpeg",
   [
@@ -442,6 +449,7 @@ const result = spawnSync(
     codec,
     "-b:a",
     outputBitrate.toLowerCase(),
+    ...opusBitrateMode,
     outputPath
   ],
   {

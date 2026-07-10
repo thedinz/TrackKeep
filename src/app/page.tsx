@@ -689,8 +689,8 @@ function providerDownloadQualityChoices(format: string) {
 
 function providerDownloadProfileLabel(format: string, quality: string) {
   return format === "mp3"
-    ? `MP3 legacy ${quality} kbps`
-    : `Opus ${quality} kbps`;
+    ? `MP3 legacy up to ${quality} kbps`
+    : `Opus up to ${quality} kbps`;
 }
 
 export default function Home() {
@@ -3466,7 +3466,7 @@ export default function Home() {
                       </select>
                     </label>
                     <label className="provider-field">
-                      <span>Quality</span>
+                      <span>Quality Cap</span>
                       <select
                         disabled={
                           isDownloadingProvider || isDownloadingBulkProvider
