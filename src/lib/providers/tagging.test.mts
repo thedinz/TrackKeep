@@ -349,6 +349,63 @@ test("writes Opus audio tags and artwork with discrete SpotifyBU identity tags",
   assert.equal(tags[spotifyBuIdentityTags.identityVersion], spotifyBuIdentityVersion);
 });
 
+test("writes Opus artwork without passing large picture blocks through argv", async (t) => {
+  if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
+    t.skip("ffmpeg and ffprobe are required for large Opus artwork coverage.");
+    return;
+  }
+
+  const directory = await mkdtemp(
+    path.join(tmpdir(), "spotifybu-opus-large-artwork-")
+  );
+  const coverServer = await startCoverServer(largeCoverImage());
+  t.after(async () => {
+    await closeServer(coverServer.server);
+    await rm(directory, {
+      force: true,
+      recursive: true
+    });
+  });
+
+  const filePath = path.join(directory, "provider-source.opus");
+
+  await execFileAsync(
+    "ffmpeg",
+    [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "anullsrc=r=48000:cl=stereo",
+      "-t",
+      "0.1",
+      "-codec:a",
+      "libopus",
+      "-b:a",
+      "256k",
+      "-metadata",
+      "title=Provider Clip Title",
+      filePath
+    ],
+    {
+      timeout: 60000
+    }
+  );
+
+  await tagDownloadedFile(filePath, {
+    ...exampleTrack,
+    albumImageUrl: coverServer.url,
+    albumReleaseDate: "2012-08-07"
+  } satisfies BackupTrack);
+
+  const probe = await readAudioProbe(filePath);
+
+  assert.equal(probe.audioCodec, "opus");
+  assert.equal(probe.hasAttachedPicture, true);
+  assert.equal(probe.tags.title, "Fuck You All The Time - Shlohmo Remix");
+  assert.equal(probe.tags.album, "Late Nights With Jeremih");
+});
+
 test("fails instead of silently skipping expected Spotify artwork", async (t) => {
   const server = http.createServer((request, response) => {
     response.writeHead(404, {
@@ -476,11 +533,21 @@ function lowerCaseTags(
   );
 }
 
-async function startCoverServer() {
-  const image = Buffer.from(
+function defaultCoverImage() {
+  return Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
     "base64"
   );
+}
+
+function largeCoverImage() {
+  return Buffer.concat([
+    defaultCoverImage(),
+    Buffer.alloc(3 * 1024 * 1024, 0)
+  ]);
+}
+
+async function startCoverServer(image = defaultCoverImage()) {
   const server = http.createServer((_request, response) => {
     response.writeHead(200, {
       "Content-Type": "image/png"
