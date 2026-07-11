@@ -234,7 +234,7 @@ test("standard matching finds indexed title variants but keeps Spotify naming ca
   });
 });
 
-test("library index parser reads SpotifyBU identity tags", () => {
+test("library index parser reads TrackKeep identity tags", () => {
   const spotifyTrackId = "6rqhFgbbKwnb9MLmUQDhG6";
   const spotifyAlbumId = "0sNOF9WDwhWunNAHPD3Baj";
   const identity = parseMusicLibraryIndexedTrackIdentityTags(
@@ -254,7 +254,7 @@ test("library index parser reads SpotifyBU identity tags", () => {
   assert.equal(identity.spotifybuIdentityVersion, spotifyBuIdentityVersion);
 });
 
-test("library index parser reads SpotifyBU identity from M4A artwork comment fallback", () => {
+test("library index parser reads TrackKeep identity from M4A artwork comment fallback", () => {
   const spotifyTrackId = "6rqhFgbbKwnb9MLmUQDhG6";
   const spotifyAlbumId = "0sNOF9WDwhWunNAHPD3Baj";
   const identity = parseMusicLibraryIndexedTrackIdentityTags(
@@ -1167,7 +1167,7 @@ test("metadata backfill upgrades existing identity-tagged backups with release t
           description: "",
           id: "playlist-backfill",
           name: "Backfill",
-          owner: "SpotifyBU",
+          owner: "TrackKeep",
           public: false,
           tracksTotal: 1
         },
@@ -1200,7 +1200,7 @@ test("metadata backfill upgrades existing identity-tagged backups with release t
   });
 });
 
-test("library index reads SpotifyBU Opus stream tags and artwork", async (t) => {
+test("library index reads TrackKeep Opus stream tags and artwork", async (t) => {
   if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
     t.skip("ffmpeg and ffprobe are required for Opus index coverage.");
     return;

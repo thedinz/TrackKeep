@@ -1,8 +1,8 @@
 {
-  "name": "spotifybu",
+  "name": "trackkeep",
   "version": "1.7.0",
   "private": true,
-  "description": "SpotifyBU is a web app for backing up Spotify playlist metadata and preparing authorized media backups.",
+  "description": "TrackKeep is a web app for backing up Spotify playlist metadata and preparing authorized media backups.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

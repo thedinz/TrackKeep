@@ -718,7 +718,7 @@ export async function getTracks(tokenSet: SpotifyTokenSet, trackIds: string[]) {
   });
 
   if (!tracks.length) {
-    throw new Error("SpotifyBU could not resolve any Spotify songs from that list.");
+    throw new Error("TrackKeep could not resolve any Spotify songs from that list.");
   }
 
   return tracks;

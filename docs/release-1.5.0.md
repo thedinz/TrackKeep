@@ -1,6 +1,6 @@
-# SpotifyBU 1.5.0
+# TrackKeep 1.5.0
 
-SpotifyBU 1.5.0 hardens Spotify OAuth reconnect handling and adds focused
+TrackKeep 1.5.0 hardens Spotify OAuth reconnect handling and adds focused
 diagnostics for auth loops.
 
 ## Added
@@ -15,7 +15,7 @@ diagnostics for auth loops.
 
 - Connect Spotify links now use the canonical app base URL from the auth config
   response, so the OAuth start and callback use the same browser origin.
-- Spotify and SpotifyBU session cookies now calculate their `Secure` attribute
+- Spotify and TrackKeep session cookies now calculate their `Secure` attribute
   from the request context when no explicit `SPOTIFYBU_SECURE_COOKIES` override
   is set.
 - OAuth error messages on the connect screen are clearer when callback state is

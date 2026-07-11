@@ -1,11 +1,11 @@
 # Source Provider Notes
 
-SpotifyBU's source-provider layer exists to build a local backup of a Spotify
+TrackKeep's source-provider layer exists to build a local backup of a Spotify
 library for Navidrome. Local Navidrome-folder matching is a dedupe and coverage check, not the main value:
 it answers "is this Spotify track already backed up locally?" so the app can
 focus sourcing work on missing tracks.
 
-SpotifyBU's source layer should follow the same broad shape as spotDL while keeping provider behavior explicit and auditable:
+TrackKeep's source layer should follow the same broad shape as spotDL while keeping provider behavior explicit and auditable:
 
 1. Read Spotify playlist metadata.
 2. Match against the mounted Navidrome music folder to skip tracks already backed up.
@@ -19,14 +19,14 @@ SpotifyBU's source layer should follow the same broad shape as spotDL while keep
 
 ## Spotify Playlist Access
 
-SpotifyBU uses Spotify's official playlist item API for direct playlist backup.
+TrackKeep uses Spotify's official playlist item API for direct playlist backup.
 Spotify may return `403 Forbidden` for followed playlist items when the connected
 Spotify user does not own or collaborate on that playlist. In that case,
-SpotifyBU can show playlist metadata but cannot receive the ordered track list
+TrackKeep can show playlist metadata but cannot receive the ordered track list
 from Spotify's playlist endpoint.
 
 The supported fallback is the `Track list` source type. Users can paste Spotify
-song URLs, URIs, or IDs from a playlist export or copied track list. SpotifyBU
+song URLs, URIs, or IDs from a playlist export or copied track list. TrackKeep
 then resolves those songs through Spotify's track metadata endpoint and feeds the
 result into the same Navidrome matching, provider search, and backup workflow.
 This avoids scraping Spotify pages or pretending the playlist permission limit
@@ -50,7 +50,7 @@ Useful references:
 - https://spotdl.github.io/spotify-downloader/reference/providers/audio/base/
 - https://spotdl.readthedocs.io/en/latest/reference/providers/audio/index.html
 
-## SpotifyBU Provider Rules
+## TrackKeep Provider Rules
 
 - Providers must declare whether they can search, download, tag, and report provenance.
 - Providers must declare their authorization model before any download action is enabled.
@@ -60,10 +60,10 @@ Useful references:
 - Provider downloads should run as background jobs with retry, cancellation, and a dry-run preview.
 - External providers must show a rights confirmation and a bulk-download warning before the first download job.
 - Bulk jobs should use conservative rate limits and should make cancellation available at track and playlist scope.
-- The current implemented external download path searches YouTube first, then JioSaavn, for one selected Spotify track or for every missing track in a playlist-scale queue. The user still reviews the candidate and confirms download rights before a single-track download starts. If a provider source fails with a source-side error such as a YouTube 403, SpotifyBU can retry alternate reviewed or previewed candidates before marking the track as failed.
+- The current implemented external download path searches YouTube first, then JioSaavn, for one selected Spotify track or for every missing track in a playlist-scale queue. The user still reviews the candidate and confirms download rights before a single-track download starts. If a provider source fails with a source-side error such as a YouTube 403, TrackKeep can retry alternate reviewed or previewed candidates before marking the track as failed.
 - Downloads request Ogg Opus up to 192 kbps by default, configurable to 160/192/256 kbps caps in Settings, with optional MP3 192/256/320 kbps fallback for Opus format/conversion failures and MP3 kept as an explicit legacy compatibility format. Lower-bitrate provider audio should remain at source quality instead of being upconverted.
-- Opus downloads must write Navidrome-facing Vorbis comments for descriptive, release, compilation, ISRC, and SpotifyBU identity metadata, plus embedded artwork through `METADATA_BLOCK_PICTURE`.
-- Existing MP3 and older SpotifyBU M4A backups remain supported for scanning, matching, and migration deletion, but SpotifyBU should not transcode old lossy files as a quality upgrade. Redownload from an authorized source to improve lossy output quality.
+- Opus downloads must write Navidrome-facing Vorbis comments for descriptive, release, compilation, ISRC, and TrackKeep identity metadata, plus embedded artwork through `METADATA_BLOCK_PICTURE`.
+- Existing MP3 and older TrackKeep M4A backups remain supported for scanning, matching, and migration deletion, but TrackKeep should not transcode old lossy files as a quality upgrade. Redownload from an authorized source to improve lossy output quality.
 - Bulk queues run sequentially with configurable wait between tracks, chunk size, and chunk pause to reduce provider blocking risk. Defaults are intentionally conservative and can still be overridden by request settings.
 - Provider work stages temporary files under `.spotifybu/tmp/provider-downloads` inside the mounted Navidrome music folder, then moves completed files into final album folders.
 - If a download, conversion, or move fails, stale staging files are cleaned after 10 minutes of provider-download idleness so unfinished media does not accumulate in the container filesystem.
@@ -87,13 +87,13 @@ The provider catalog lives in `src/lib/providers/types.ts` and is exposed by `/a
 
 ## Bulk Download Risks
 
-SpotifyBU explains that large playlist jobs can trigger throttling, captchas, temporary service blocks, provider account action, regional failures, or service-term issues. The app does not treat this warning as a substitute for authorization; it is a preflight confirmation alongside provider configuration, dry-run candidate review, rate limits, retry controls, cancellation, and provenance logging.
+TrackKeep explains that large playlist jobs can trigger throttling, captchas, temporary service blocks, provider account action, regional failures, or service-term issues. The app does not treat this warning as a substitute for authorization; it is a preflight confirmation alongside provider configuration, dry-run candidate review, rate limits, retry controls, cancellation, and provenance logging.
 
 The current routes intentionally block provider playlists with `--no-playlist` and UI copy. Playlist-scale backups are represented as missing Spotify tracks, previewed one item at a time with automatic provider search, and then processed by a persisted background job with conservative throttling, cancellation, retry, fallback candidates, and partial-failure reporting. The app checks YouTube first, then JioSaavn, and skips tracks where no candidate can be found.
 
 ## yt-dlp Maintenance
 
-SpotifyBU Docker images install `yt-dlp[default]` with prerelease updates enabled so the matching EJS challenge scripts stay current with yt-dlp. When provider or Docker behavior changes, run `npm run check:yt-dlp` and include any needed yt-dlp update or image rebuild work in the same change.
+TrackKeep Docker images install `yt-dlp[default]` with prerelease updates enabled so the matching EJS challenge scripts stay current with yt-dlp. When provider or Docker behavior changes, run `npm run check:yt-dlp` and include any needed yt-dlp update or image rebuild work in the same change.
 
 ## First Provider Candidates
 
@@ -109,7 +109,7 @@ SpotifyBU Docker images install `yt-dlp[default]` with prerelease updates enable
    - Wrap a tool such as spotDL or `yt-dlp` only when the user has confirmed they have rights to download the selected media.
    - Start with YouTube and JioSaavn as explicit provider targets.
    - Search YouTube first, then JioSaavn, and keep provider ranking/provenance visible to the user.
-   - Keep command arguments generated by SpotifyBU and constrain output to the Navidrome staging path.
+   - Keep command arguments generated by TrackKeep and constrain output to the Navidrome staging path.
 
 4. Licensed/royalty-free catalog provider
    - Search and download from catalogs whose terms explicitly permit downloading.

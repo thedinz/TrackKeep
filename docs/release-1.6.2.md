@@ -1,6 +1,6 @@
-# SpotifyBU 1.6.2
+# TrackKeep 1.6.2
 
-SpotifyBU 1.6.2 restores Navidrome-first product language after the generic
+TrackKeep 1.6.2 restores Navidrome-first product language after the generic
 music-library wording in the 1.6.x cleanup made the intended target less clear.
 
 ## Changed

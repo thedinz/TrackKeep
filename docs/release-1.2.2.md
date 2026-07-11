@@ -1,6 +1,6 @@
-# SpotifyBU 1.2.2
+# TrackKeep 1.2.2
 
-SpotifyBU 1.2.2 makes bulk provider candidate previews report live progress
+TrackKeep 1.2.2 makes bulk provider candidate previews report live progress
 while each missing Spotify track is checked.
 
 ## Changed

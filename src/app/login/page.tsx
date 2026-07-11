@@ -92,10 +92,10 @@ export default function LoginPage() {
         <div className="brand auth-brand">
           <div className="brand-mark" aria-hidden="true">
             <span className="brand-orbit" />
-            <span className="brand-note">BU</span>
+            <span className="brand-note">TK</span>
           </div>
           <div>
-            <p className="eyebrow">SpotifyBU</p>
+            <p className="eyebrow">TrackKeep</p>
             <h1>Sign in</h1>
           </div>
         </div>
@@ -111,7 +111,7 @@ export default function LoginPage() {
           <div className="auth-note">
             <Music2 size={18} />
             <span>
-              External auth is enabled. The built-in SpotifyBU login form is
+              External auth is enabled. The built-in TrackKeep login form is
               disabled.
             </span>
           </div>
@@ -160,7 +160,7 @@ export default function LoginPage() {
       </section>
 
       <footer className="app-footer auth-footer">
-        <span>SpotifyBU</span>
+        <span>TrackKeep</span>
         <span>v{appInfo?.version ?? "..."}</span>
         <span>{appInfo?.branch ?? "..."} branch</span>
       </footer>

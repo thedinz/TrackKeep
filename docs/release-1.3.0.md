@@ -1,6 +1,6 @@
-# SpotifyBU 1.3.0
+# TrackKeep 1.3.0
 
-SpotifyBU 1.3.0 adds an explicit full-sync mode for music library playlists.
+TrackKeep 1.3.0 adds an explicit full-sync mode for music library playlists.
 
 ## Added
 

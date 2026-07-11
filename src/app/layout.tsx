@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "SpotifyBU",
+  title: "TrackKeep",
   description: "Back up Spotify playlist metadata and prepare authorized media backups.",
   icons: {
     icon: "/icon.svg",

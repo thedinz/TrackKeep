@@ -23,7 +23,7 @@ export async function DELETE(request: NextRequest) {
     if (!tracks?.length) {
       return NextResponse.json(
         {
-          error: "Send Spotify tracks before deleting SpotifyBU-tagged files."
+          error: "Send Spotify tracks before deleting TrackKeep-tagged files."
         },
         {
           status: 400
@@ -92,7 +92,7 @@ export async function DELETE(request: NextRequest) {
           error:
             error instanceof Error
               ? error.message
-              : "SpotifyBU could not delete SpotifyBU-tagged library tracks."
+              : "TrackKeep could not delete TrackKeep-tagged library tracks."
         },
         {
           status: 400
@@ -145,7 +145,7 @@ export async function DELETE(request: NextRequest) {
         error:
           error instanceof Error
             ? error.message
-            : "SpotifyBU could not delete that library track."
+            : "TrackKeep could not delete that library track."
       },
       {
         status: 400

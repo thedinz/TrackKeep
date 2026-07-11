@@ -1,7 +1,7 @@
 import type { BackupTrack } from "./spotify";
 
 export const spotifyBuIdentityVersion = "1";
-export const spotifyBuIdentityCommentPrefix = "SpotifyBU identity ";
+export const spotifyBuIdentityCommentPrefix = "TrackKeep identity ";
 
 export const spotifyBuIdentityTags = {
   albumId: "spotifybu:album_id",

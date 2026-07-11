@@ -920,11 +920,11 @@ export default function Home() {
       setMusicLibraryStatus({
         configured: false,
         exists: false,
-        message: "SpotifyBU could not check the Navidrome music folder.",
+        message: "TrackKeep could not check the Navidrome music folder.",
         readable: false,
         server: {
           configured: false,
-          message: "SpotifyBU could not check the Navidrome API.",
+          message: "TrackKeep could not check the Navidrome API.",
           musicLibraryUrl: "",
           state: "error"
         },
@@ -949,7 +949,7 @@ export default function Home() {
         error: errorMessage(error),
         folderCount: 0,
         lastScan: null,
-        message: "SpotifyBU could not check Navidrome scan status.",
+        message: "TrackKeep could not check Navidrome scan status.",
         musicLibraryUrl: "",
         running: false,
         scanType: null
@@ -971,7 +971,7 @@ export default function Home() {
         status: {
           configured: false,
           libraries: [],
-          message: "SpotifyBU could not check Plex settings.",
+          message: "TrackKeep could not check Plex settings.",
           serverUrl: "",
           state: "error"
         },
@@ -1123,7 +1123,7 @@ export default function Home() {
       !window.confirm(
         `Delete ${numberFormatter.format(
           deleteCount
-        )} SpotifyBU-tagged file${
+        )} TrackKeep-tagged file${
           deleteCount === 1 ? "" : "s"
         } from the Navidrome music folder?\n\nThese tracks will become missing so you can redownload them as Opus.`
       )
@@ -1154,10 +1154,10 @@ export default function Home() {
         response.deletedCount
           ? `Deleted ${numberFormatter.format(
               response.deletedCount
-            )} SpotifyBU-tagged file${
+            )} TrackKeep-tagged file${
               response.deletedCount === 1 ? "" : "s"
             }. Redownload the missing tracks to get Opus files.`
-          : "No SpotifyBU-tagged files needed deletion."
+          : "No TrackKeep-tagged files needed deletion."
       );
     } catch (error) {
       setRequestError(errorMessage(error));
@@ -1739,7 +1739,7 @@ export default function Home() {
             ? `User entered a manual ${providerDisplayName(
                 downloadSource.providerId
               )} source URL`
-            : `User reviewed SpotifyBU provider search result (${
+            : `User reviewed TrackKeep provider search result (${
                 selectedCandidate?.title ?? downloadSource.sourceUrl
               })`,
           sourceUrl: downloadSource.sourceUrl,
@@ -1773,7 +1773,7 @@ export default function Home() {
         await refreshLibraryMatches();
       } catch (error) {
         setProviderDownloadMessage(
-          `${downloadMessage}. SpotifyBU could not refresh the match table automatically (${errorMessage(
+          `${downloadMessage}. TrackKeep could not refresh the match table automatically (${errorMessage(
             error
           )}). The file is already in the library folder; run Library Index after the server settles.`
         );
@@ -1955,7 +1955,7 @@ export default function Home() {
 
         if (response.scan?.state === "failed") {
           setRequestError(
-            response.scan.error ?? "SpotifyBU could not scan the Navidrome folder."
+            response.scan.error ?? "TrackKeep could not scan the Navidrome folder."
           );
         }
       } catch (error) {
@@ -2016,7 +2016,7 @@ export default function Home() {
               ? {
                   ...current,
                   error: errorMessage(error),
-                  message: "SpotifyBU could not refresh Navidrome scan status.",
+                  message: "TrackKeep could not refresh Navidrome scan status.",
                   running: false
                 }
               : current
@@ -2693,7 +2693,7 @@ export default function Home() {
       setBulkDownloadMessage(
         `${providerBulkJobResultMessage(
           bulkDownloadJob
-        )} SpotifyBU could not refresh the match table automatically (${errorMessage(
+        )} TrackKeep could not refresh the match table automatically (${errorMessage(
           error
         )}). Run Library Index after the server settles.`
       );
@@ -2721,7 +2721,7 @@ export default function Home() {
       ? "Library Index running in the background."
       : libraryIndexScan?.state === "failed"
         ? `Library Index failed: ${
-            libraryIndexScan.error ?? "SpotifyBU could not scan the library."
+            libraryIndexScan.error ?? "TrackKeep could not scan the library."
           }`
         : libraryIndexScan?.state === "succeeded"
           ? "Library Index completed."
@@ -2772,10 +2772,10 @@ export default function Home() {
         <div className="brand">
           <div className="brand-mark" aria-hidden="true">
             <span className="brand-orbit" />
-            <span className="brand-note">BU</span>
+            <span className="brand-note">TK</span>
           </div>
           <div>
-            <p className="eyebrow">SpotifyBU</p>
+            <p className="eyebrow">TrackKeep</p>
             <h1>Spotify Backup</h1>
           </div>
         </div>
@@ -3426,7 +3426,7 @@ export default function Home() {
                           {unresolvedSpotifyLocalTracks.length === 1
                             ? ""
                             : "s"}{" "}
-                          as local files, so SpotifyBU will not search or
+                          as local files, so TrackKeep will not search or
                           download provider sources for them.
                         </p>
                       </div>
@@ -4018,7 +4018,7 @@ export default function Home() {
                         onClick={() =>
                           void deleteSpotifyBuTaggedLibraryTracks()
                         }
-                        title="Delete SpotifyBU-tagged files from this source so they can be redownloaded"
+                        title="Delete TrackKeep-tagged files from this source so they can be redownloaded"
                         type="button"
                       >
                         {isDeletingSpotifyBuTaggedTracks ? (
@@ -4026,7 +4026,7 @@ export default function Home() {
                         ) : (
                           <Trash2 size={16} />
                         )}
-                        Delete SpotifyBU Files
+                        Delete TrackKeep Files
                       </button>
                     ) : null}
                   </div>
@@ -4336,7 +4336,7 @@ export default function Home() {
                 <span>
                   <h3>External media providers</h3>
                   <p>
-                    No provider account connection is needed here. SpotifyBU
+                    No provider account connection is needed here. TrackKeep
                     searches YouTube first, then JioSaavn; you review the match
                     before downloading. Bulk jobs can trigger provider blocking.
                   </p>
@@ -4519,7 +4519,7 @@ export default function Home() {
                 className="command"
                 disabled={isAnyOrganizationRunning}
                 onClick={() => void autoOrganizeDialogTrack()}
-                title="Move this file into the SpotifyBU organize scheme"
+                title="Move this file into the TrackKeep organize scheme"
                 type="button"
               >
                 {isAnyOrganizationRunning ? (
@@ -4538,7 +4538,7 @@ export default function Home() {
                     "ignore"
                   )
                 }
-                title="Keep this file where SpotifyBU found it"
+                title="Keep this file where TrackKeep found it"
                 type="button"
               >
                 {isAnyOrganizationRunning ? (
@@ -4553,7 +4553,7 @@ export default function Home() {
         </div>
       ) : null}
       <footer className="app-footer">
-        <span>SpotifyBU</span>
+        <span>TrackKeep</span>
         <span>v{appInfo?.version ?? "..."}</span>
         <span>{appInfo?.branch ?? "..."} branch</span>
       </footer>
@@ -4579,15 +4579,15 @@ function spotifyAuthErrorMessage(error: string) {
   }
 
   if (error === "missing_oauth_state") {
-    return "Spotify returned without the saved login state. Open SpotifyBU from the redirect URI host shown below, then connect again.";
+    return "Spotify returned without the saved login state. Open TrackKeep from the redirect URI host shown below, then connect again.";
   }
 
   if (error === "oauth_state_mismatch") {
-    return "Spotify returned a different login state than the one SpotifyBU started. Try Connect Spotify again from this tab.";
+    return "Spotify returned a different login state than the one TrackKeep started. Try Connect Spotify again from this tab.";
   }
 
   if (error === "token_exchange_failed") {
-    return "Spotify approved the login, but SpotifyBU could not exchange the callback code for a session.";
+    return "Spotify approved the login, but TrackKeep could not exchange the callback code for a session.";
   }
 
   return error.replace(/_/g, " ");
@@ -4686,7 +4686,7 @@ async function postProviderBulkPreviewStream(
       return;
     }
 
-    throw new Error(event.error || "SpotifyBU could not preview candidates.");
+    throw new Error(event.error || "TrackKeep could not preview candidates.");
   };
 
   while (true) {
@@ -4775,7 +4775,7 @@ function parseProviderBulkPreviewStreamEvent(
       error:
         typeof parsed.error === "string"
           ? parsed.error
-          : "SpotifyBU could not preview candidates.",
+          : "TrackKeep could not preview candidates.",
       type: "error"
     };
   }
@@ -5165,7 +5165,7 @@ function renderLibraryMatch(
             className="track-status exists actionable"
             disabled={options.organizeDisabled || options.isUpdatingOrganizeIgnore}
             onClick={options.onClearOrganizeIgnore}
-            title="Undo manual organization and let SpotifyBU organize this file again"
+            title="Undo manual organization and let TrackKeep organize this file again"
             type="button"
           >
             {options.isUpdatingOrganizeIgnore ? (
@@ -5617,7 +5617,7 @@ function buildBulkDownloadItems(preview: ProviderBulkCandidatePreview | null) {
         item.candidate?.url
       ),
       providerId: item.candidate?.providerId ?? "",
-      selectedReason: `SpotifyBU dry-run bulk preview selected ${
+      selectedReason: `TrackKeep dry-run bulk preview selected ${
         item.candidate?.title ?? "provider candidate"
       } (${item.candidate?.score.overall ?? 0}% match)`,
       sourceUrl: item.candidate?.url ?? "",
@@ -5651,7 +5651,7 @@ function buildProviderFallbackSources(
       candidateScore: candidate.score.overall,
       candidateTitle: candidate.title,
       providerId: candidate.providerId,
-      selectedReason: `SpotifyBU automatically retried fallback provider candidate ${candidate.title} (${candidate.score.overall}% match)`,
+      selectedReason: `TrackKeep automatically retried fallback provider candidate ${candidate.title} (${candidate.score.overall}% match)`,
       sourceUrl: candidate.url
     });
   }
