@@ -1,11 +1,13 @@
 import { execFile } from "child_process";
 import { constants } from "fs";
-import { access, rename, rm, writeFile } from "fs/promises";
+import { access, readFile, rename, rm, writeFile } from "fs/promises";
 import path from "path";
 import { promisify } from "util";
 import {
+  spotifyBuIdentityCommentPrefix,
   spotifyBuIdentityMetadataEntries,
-  spotifyBuIdentityMetadataForTrack
+  spotifyBuIdentityMetadataForTrack,
+  spotifyBuIdentityTags
 } from "@/lib/spotify-identity-tags";
 import type { BackupTrack } from "@/lib/spotify";
 
@@ -161,42 +163,61 @@ async function writeTaggedAudioFile(
   metadataArgs: string[],
   coverPath: string | null
 ) {
-  await execFileAsync(
-    "ffmpeg",
-    [
-      "-y",
-      "-i",
-      filePath,
-      ...(coverPath ? ["-i", coverPath] : []),
-      "-map",
-      "0:a:0",
-      ...(coverPath ? ["-map", "1:v:0"] : []),
-      "-map_metadata",
-      "-1",
-      "-c:a",
-      "copy",
-      ...(coverPath
-        ? [
-            "-c:v",
-            "mjpeg",
-            "-disposition:v:0",
-            "attached_pic",
-            "-metadata:s:v",
-            "title=Album cover",
-            "-metadata:s:v",
-            "comment=Cover (front)"
-          ]
-        : []),
-      ...containerMetadataArgs(tempPath),
-      ...id3MetadataArgs(tempPath),
-      ...metadataArgs,
-      tempPath
-    ],
-    {
-      maxBuffer: 1024 * 1024 * 2,
-      timeout: 60000
+  const isOggOpus = isOggOpusPath(tempPath);
+  const pictureMetadataPath =
+    coverPath && isOggOpus
+      ? await writeOggOpusPictureMetadataFile(tempPath, coverPath)
+      : null;
+
+  try {
+    await execFileAsync(
+      "ffmpeg",
+      [
+        "-y",
+        "-i",
+        filePath,
+        ...(pictureMetadataPath
+          ? ["-f", "ffmetadata", "-i", pictureMetadataPath]
+          : []),
+        ...(coverPath && !isOggOpus ? ["-i", coverPath] : []),
+        "-map",
+        "0:a:0",
+        ...(coverPath && !isOggOpus ? ["-map", "1:v:0"] : []),
+        "-map_metadata",
+        pictureMetadataPath ? "1" : "-1",
+        "-map_metadata:s:a:0",
+        "-1",
+        "-c:a",
+        "copy",
+        ...(coverPath && !isOggOpus
+          ? [
+              ...coverCodecArgs(tempPath, coverPath),
+              "-disposition:v:0",
+              "attached_pic",
+              "-metadata:s:v",
+              "title=Album cover",
+              "-metadata:s:v",
+              "comment=Cover (front)"
+            ]
+          : []),
+        ...containerMetadataArgs(tempPath, coverPath),
+        ...id3MetadataArgs(tempPath),
+        ...metadataArgs,
+        ...mp4ArtworkIdentityFallbackArgs(tempPath, metadataArgs, coverPath),
+        tempPath
+      ],
+      {
+        maxBuffer: 1024 * 1024 * 2,
+        timeout: 60000
+      }
+    );
+  } finally {
+    if (pictureMetadataPath) {
+      await rm(pictureMetadataPath, {
+        force: true
+      }).catch(() => undefined);
     }
-  );
+  }
 }
 
 async function writeIdentityTaggedAudioFile(
@@ -228,20 +249,175 @@ async function writeIdentityTaggedAudioFile(
   );
 }
 
-function containerMetadataArgs(filePath: string) {
+function containerMetadataArgs(filePath: string, coverPath?: string | null) {
   const extension = path.extname(filePath).toLowerCase();
 
   if (extension === ".m4a" || extension === ".m4b" || extension === ".mp4") {
-    return ["-movflags", "use_metadata_tags"];
+    // ffmpeg drops MP4 attached pictures when use_metadata_tags is enabled.
+    return coverPath ? [] : ["-movflags", "use_metadata_tags"];
   }
 
   return [];
+}
+
+function coverCodecArgs(filePath: string, coverPath: string) {
+  const audioExtension = path.extname(filePath).toLowerCase();
+  const coverExtension = path.extname(coverPath).toLowerCase();
+  const isMp4Family =
+    audioExtension === ".m4a" ||
+    audioExtension === ".m4b" ||
+    audioExtension === ".mp4";
+
+  if (
+    isMp4Family &&
+    coverExtension !== ".jpg" &&
+    coverExtension !== ".jpeg"
+  ) {
+    return ["-c:v", "png"];
+  }
+
+  return ["-c:v", "mjpeg"];
+}
+
+function mp4ArtworkIdentityFallbackArgs(
+  filePath: string,
+  metadataArgs: string[],
+  coverPath?: string | null
+) {
+  const extension = path.extname(filePath).toLowerCase();
+  const isMp4Family =
+    extension === ".m4a" || extension === ".m4b" || extension === ".mp4";
+
+  if (!coverPath || !isMp4Family) {
+    return [];
+  }
+
+  const metadata = metadataMapFromArgs(metadataArgs);
+  const identityMetadata: Record<string, string> = {};
+
+  for (const key of Object.values(spotifyBuIdentityTags)) {
+    const value = metadata.get(key);
+
+    if (value) {
+      identityMetadata[key] = value;
+    }
+  }
+
+  if (!Object.keys(identityMetadata).length) {
+    return [];
+  }
+
+  return [
+    "-metadata",
+    `comment=${spotifyBuIdentityCommentPrefix}${JSON.stringify(identityMetadata)}`
+  ];
+}
+
+function metadataMapFromArgs(metadataArgs: string[]) {
+  const metadata = new Map<string, string>();
+
+  for (let index = 0; index < metadataArgs.length - 1; index += 1) {
+    if (metadataArgs[index] !== "-metadata") {
+      continue;
+    }
+
+    const metadataValue = metadataArgs[index + 1];
+    const separator = metadataValue.indexOf("=");
+
+    if (separator > 0) {
+      metadata.set(
+        metadataValue.slice(0, separator).toLowerCase(),
+        metadataValue.slice(separator + 1)
+      );
+    }
+  }
+
+  return metadata;
 }
 
 function id3MetadataArgs(filePath: string) {
   return path.extname(filePath).toLowerCase() === ".mp3"
     ? ["-id3v2_version", "3"]
     : [];
+}
+
+function isOggOpusPath(filePath: string) {
+  return path.extname(filePath).toLowerCase() === ".opus";
+}
+
+async function writeOggOpusPictureMetadataFile(
+  audioTempPath: string,
+  coverPath: string
+) {
+  const parsedPath = path.parse(audioTempPath);
+  const metadataPath = path.join(
+    /* turbopackIgnore: true */ parsedPath.dir,
+    `${parsedPath.name}.spotifybu-picture.ffmetadata`
+  );
+  const pictureBlock = await flacPictureBlockBase64(coverPath);
+
+  await writeFile(
+    metadataPath,
+    [
+      ";FFMETADATA1",
+      `METADATA_BLOCK_PICTURE=${escapeFfmetadataValue(pictureBlock)}`,
+      ""
+    ].join("\n"),
+    "utf8"
+  );
+
+  return metadataPath;
+}
+
+function escapeFfmetadataValue(value: string) {
+  return value
+    .replaceAll("\\", "\\\\")
+    .replaceAll("\n", "\\\n")
+    .replaceAll("=", "\\=")
+    .replaceAll(";", "\\;")
+    .replaceAll("#", "\\#");
+}
+
+async function flacPictureBlockBase64(coverPath: string) {
+  const imageBytes = await readFile(coverPath);
+  const mimeBytes = Buffer.from(coverMimeType(coverPath), "utf8");
+  const descriptionBytes = Buffer.from("Cover (front)", "utf8");
+
+  return Buffer.concat([
+    uint32Be(3),
+    uint32Be(mimeBytes.length),
+    mimeBytes,
+    uint32Be(descriptionBytes.length),
+    descriptionBytes,
+    uint32Be(0),
+    uint32Be(0),
+    uint32Be(0),
+    uint32Be(0),
+    uint32Be(imageBytes.length),
+    imageBytes
+  ]).toString("base64");
+}
+
+function coverMimeType(coverPath: string) {
+  const extension = path.extname(coverPath).toLowerCase();
+
+  if (extension === ".png") {
+    return "image/png";
+  }
+
+  if (extension === ".webp") {
+    return "image/webp";
+  }
+
+  return "image/jpeg";
+}
+
+function uint32Be(value: number) {
+  const bytes = Buffer.alloc(4);
+
+  bytes.writeUInt32BE(value);
+
+  return bytes;
 }
 
 async function downloadSpotifyAlbumCover(

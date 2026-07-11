@@ -6,6 +6,10 @@ The point is not to replace Navidrome search. Navidrome already tells you what f
 
 Current stable release: `1.7.0`. It includes the web UI, local or external-proxy app auth, Spotify OAuth diagnostics, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, Navidrome folder checks, TrackKeep organize naming, library indexing, durable Spotify identity tags for downloaded files, matched-file organization, Navidrome and Plex playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
+Existing Docker image names, `SPOTIFYBU_*` environment variables, and `.spotifybu`
+data paths retain their original identifiers for backward compatibility. The
+product name shown in the app and documentation is TrackKeep.
+
 Download the latest stable release from GitHub: https://github.com/thedinz/TrackKeep/releases/latest
 
 TrackKeep can source audio from files already present in the mounted Navidrome music folder and can search YouTube first, then JioSaavn, for missing Spotify tracks. Single-track backup lets the user review provider candidates before downloading. Bulk playlist backup now starts with a dry-run candidate preview, then runs as a resumable background job with cancel and retry controls. Provider downloads show authorization and bulk-risk warnings, preserve provenance, and stage files only into the configured Navidrome music folder.
@@ -24,6 +28,7 @@ TrackKeep can source audio from files already present in the mounted Navidrome m
 - Playlist track preview
 - Optional Navidrome or Plex playlist creation from matched Spotify playlist tracks
 - Navidrome folder status checks
+- Right-sidebar quick and full Navidrome server scans with progress status
 - Navidrome music folder indexing for local backup coverage checks
 - Navidrome folder planning using clean artist, album, and track paths
 - Backup coverage counts for backed-up and missing Spotify tracks
@@ -38,7 +43,7 @@ TrackKeep can source audio from files already present in the mounted Navidrome m
 - Reviewed single-track source downloads for YouTube and JioSaavn using `yt-dlp`, alternate candidate fallback, and background job polling
 - Dry-run bulk candidate previews with live progress before provider downloads
 - Resumable background bulk playlist jobs with cancellation, retry, per-track waits, chunk pauses, progress reporting, and partial-failure reporting
-- MP3 output with 128 kbps or 320 kbps quality targets
+- Ogg Opus output up to 192 kbps by default, configurable to 160/192/256 kbps caps, with optional MP3 192/256/320 kbps fallback and MP3 kept as a legacy compatibility option
 - Navidrome volume staging with idle cleanup for abandoned failed download/convert temp files
 - Docker image with Node.js, `ffmpeg`, prerelease/nightly-channel `yt-dlp[default]`, Python 3, and `pip`
 - GitHub Container Registry image publishing for `dev`, `latest`, and version tags
@@ -340,17 +345,34 @@ Provider downloads stage temporary files under:
 /music/.spotifybu/tmp/provider-downloads
 ```
 
-Finished files are moved into the active organize scheme before the response completes. The default standard scheme is `Artist/Artist - Album (Year)/Artist - Album (Year) - 01 - Track Title`. Multi-disc albums use `Disc-Track` numbering, for example `02-03`. If a download, move, or conversion fails, leftover staging files stay on the mounted music volume rather than the container filesystem. After 10 minutes of provider-download idleness, TrackKeep removes stale staging files older than 10 minutes old.
+Finished files are moved into the active organize scheme before the response
+completes. New provider downloads request Ogg Opus up to 192 kbps by default,
+can be changed in Settings to 160/192/256 kbps caps, and write `.opus` files
+with Navidrome-facing Vorbis comments and embedded artwork. Lower-bitrate
+provider audio is kept at source quality instead of being upconverted. If Opus
+cannot be written for a format/conversion reason, Settings can allow an MP3
+fallback at 192, 256, or the default/recommended 320 kbps; MP3 also remains
+available as a legacy compatibility format. Existing MP3 and older TrackKeep M4A
+files are left in place and continue to scan/match normally.
+TrackKeep does not transcode old lossy files as a quality upgrade, because
+transcoding lossy audio cannot recover quality; redownload the source if you
+want the improved default output. The default standard scheme is `Artist/Artist - Album
+(Year)/Artist - Album (Year) - 01 - Track Title`. Multi-disc albums use
+`Disc-Track` numbering, for example `02-03`. If a download, move, or conversion
+fails, leftover staging files stay on the mounted music volume rather than the
+container filesystem. After 10 minutes of provider-download idleness, TrackKeep
+removes stale staging files older than 10 minutes old.
 
-Newly tagged TrackKeep provider downloads also include custom Spotify identity
-metadata such as `spotifybu:track_id`, `spotifybu:track_uri`,
-`spotifybu:album_id`, `spotifybu:isrc`, and
-`spotifybu:identity_version`. Library indexing reads these tags first so a file
-can still reconnect to its Spotify track after another organizer moves or
-renames it. Playlist membership is not written into audio files; it continues to
-come from TrackKeep playlist backup snapshots and the local database. Settings
-includes a maintenance action to add these identity tags to already matched
-backups from saved playlist snapshots.
+Newly tagged TrackKeep provider downloads also include Spotify identity metadata
+such as `spotifybu:track_id`, `spotifybu:track_uri`, `spotifybu:album_id`,
+`spotifybu:isrc`, and `spotifybu:identity_version`. Opus downloads store these
+as normal Vorbis comments alongside title, artist, album artist, album, track,
+disc, release date, ISRC, compilation, and embedded artwork. Library indexing
+reads these tags first so a file can still reconnect to its Spotify track after
+another organizer moves or renames it. Playlist membership is not written into
+audio files; it continues to come from TrackKeep playlist backup snapshots and
+the local database. Settings includes a maintenance action to add these identity
+tags to already matched backups from saved playlist snapshots.
 
 Navidrome still needs read access to the same host folder and a scan/watch configuration that sees new files.
 
@@ -362,9 +384,10 @@ Running Organize before backing up missing files is recommended, but not require
 
 TrackKeep's Library Index scan reads the mounted music folder directly. It does
 not need a Navidrome username or password for that local index. If
-`NAVIDROME_USERNAME` and `NAVIDROME_PASSWORD` are set, TrackKeep also uses
-Navidrome's Subsonic-compatible API to ping the server and request a server-side
-library scan after TrackKeep indexes or stages files. Without those credentials,
+`NAVIDROME_USERNAME` and `NAVIDROME_PASSWORD` are set, the right sidebar also
+offers quick and full Navidrome server scans with progress status, using the
+same Subsonic-compatible API NaviClean uses. TrackKeep can also request a
+server-side library scan after it indexes or stages files. Without those credentials,
 TrackKeep can still write files into `/music`, but Navidrome will pick them up
 only through its own startup/watch/scheduled scan behavior. The generic
 `MUSIC_LIBRARY_USERNAME` and `MUSIC_LIBRARY_PASSWORD` names are accepted too.

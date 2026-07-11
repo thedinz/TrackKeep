@@ -78,7 +78,7 @@ export async function GET(request: Request, context: RouteContext) {
           error:
             error instanceof Error
               ? error.message
-              : "SpotifyBU could not load this Spotify playlist."
+              : "TrackKeep could not load this Spotify playlist."
         },
         { status: 502 }
       ),

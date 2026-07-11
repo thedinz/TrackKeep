@@ -38,7 +38,7 @@ export async function GET() {
         error:
           error instanceof Error
             ? error.message
-            : "SpotifyBU could not read the Navidrome library index.",
+            : "TrackKeep could not read the Navidrome library index.",
         state: "failed"
       }
     });
@@ -64,7 +64,7 @@ export async function POST() {
         error:
           error instanceof Error
             ? error.message
-            : "SpotifyBU could not scan the Navidrome folder."
+            : "TrackKeep could not scan the Navidrome folder."
       },
       {
         status: 400

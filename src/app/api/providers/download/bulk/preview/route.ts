@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
         error:
           error instanceof Error
             ? error.message
-            : "SpotifyBU could not preview provider candidates."
+            : "TrackKeep could not preview provider candidates."
       },
       {
         status: 400
@@ -99,7 +99,7 @@ function streamProviderBulkDownloadPreview(body: PreviewRequestBody) {
             error:
               error instanceof Error
                 ? error.message
-                : "SpotifyBU could not preview provider candidates.",
+                : "TrackKeep could not preview provider candidates.",
             type: "error"
           });
         } finally {

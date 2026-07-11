@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   Clock,
+  Download,
   Fingerprint,
   LockKeyhole,
   RefreshCw,
@@ -85,6 +86,20 @@ type PlexSettingsResponse = {
   plex: PublicPlexSettings;
 };
 
+type ProviderDownloadOpusQuality = "160" | "192" | "256";
+type ProviderDownloadFallbackFormat = "mp3" | "none";
+type ProviderDownloadMp3FallbackQuality = "192" | "256" | "320";
+
+type ProviderDownloadSettings = {
+  fallbackFormat: ProviderDownloadFallbackFormat;
+  mp3FallbackQuality: ProviderDownloadMp3FallbackQuality;
+  opusQuality: ProviderDownloadOpusQuality;
+};
+
+type ProviderDownloadSettingsResponse = {
+  providerDownload: ProviderDownloadSettings;
+};
+
 type MusicLibraryIdentityTagBackfillResult = {
   alreadyTaggedCount: number;
   attemptedCount: number;
@@ -138,6 +153,8 @@ export default function SettingsPage() {
   const [isSavingAuthMode, setIsSavingAuthMode] = useState(false);
   const [isSavingAutoScan, setIsSavingAutoScan] = useState(false);
   const [isSavingPlex, setIsSavingPlex] = useState(false);
+  const [isSavingProviderDownload, setIsSavingProviderDownload] =
+    useState(false);
   const [isBackfillingIdentityTags, setIsBackfillingIdentityTags] =
     useState(false);
   const [autoScan, setAutoScan] = useState<MusicLibraryAutoScanStatus | null>(null);
@@ -152,6 +169,8 @@ export default function SettingsPage() {
   const [plexSettings, setPlexSettings] = useState<PublicPlexSettings | null>(
     null
   );
+  const [providerDownloadSettings, setProviderDownloadSettings] =
+    useState<ProviderDownloadSettings | null>(null);
   const [plexToken, setPlexToken] = useState("");
   const [status, setStatus] = useState<AppAuthStatus | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -194,6 +213,15 @@ export default function SettingsPage() {
       })
       .catch(() => {
         setError("Could not load Plex settings.");
+      });
+
+    void fetch("/api/providers/download/settings")
+      .then(readJson<ProviderDownloadSettingsResponse>)
+      .then((response) => {
+        setProviderDownloadSettings(response.providerDownload);
+      })
+      .catch(() => {
+        setError("Could not load provider download settings.");
       });
   }, []);
 
@@ -281,7 +309,7 @@ export default function SettingsPage() {
         setSuccess(
           body.authMode === "external"
             ? "External auth enabled. Built-in login is disabled."
-            : "Internal SpotifyBU login enabled."
+            : "Internal TrackKeep login enabled."
         );
       } catch (settingsError) {
         setError(
@@ -413,6 +441,59 @@ export default function SettingsPage() {
       }
     },
     [plexSettings, plexToken]
+  );
+
+  const updateProviderDownloadSettingsState = useCallback(
+    (update: Partial<ProviderDownloadSettings>) => {
+      setProviderDownloadSettings((current) =>
+        current
+          ? {
+              ...current,
+              ...update
+            }
+          : current
+      );
+    },
+    []
+  );
+
+  const submitProviderDownloadSettings = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+
+      if (!providerDownloadSettings) {
+        return;
+      }
+
+      setError(null);
+      setSuccess(null);
+      setIsSavingProviderDownload(true);
+
+      try {
+        const response = await fetch("/api/providers/download/settings", {
+          body: JSON.stringify({
+            providerDownload: providerDownloadSettings
+          }),
+          headers: {
+            "Content-Type": "application/json"
+          },
+          method: "POST"
+        });
+        const body = await readJson<ProviderDownloadSettingsResponse>(response);
+
+        setProviderDownloadSettings(body.providerDownload);
+        setSuccess(providerDownloadSettingsSavedMessage(body.providerDownload));
+      } catch (settingsError) {
+        setError(
+          settingsError instanceof Error
+            ? settingsError.message
+            : "Could not save provider download settings."
+        );
+      } finally {
+        setIsSavingProviderDownload(false);
+      }
+    },
+    [providerDownloadSettings]
   );
 
   const applyIdentityBackfillJob = useCallback(
@@ -574,10 +655,10 @@ export default function SettingsPage() {
         <div className="brand">
           <div className="brand-mark" aria-hidden="true">
             <span className="brand-orbit" />
-            <span className="brand-note">BU</span>
+            <span className="brand-note">TK</span>
           </div>
           <div>
-            <p className="eyebrow">SpotifyBU</p>
+            <p className="eyebrow">TrackKeep</p>
             <h1>Settings</h1>
           </div>
         </div>
@@ -613,7 +694,7 @@ export default function SettingsPage() {
                 <LockKeyhole size={18} />
                 <span>
                   Built-in login is disabled. Make sure Authentik or another
-                  trusted proxy protects SpotifyBU before exposing this app.
+                  trusted proxy protects TrackKeep before exposing this app.
                 </span>
               </div>
             ) : null}
@@ -643,7 +724,7 @@ export default function SettingsPage() {
                   }
                   value={authMode}
                 >
-                  <option value="internal">Internal SpotifyBU login</option>
+                  <option value="internal">Internal TrackKeep login</option>
                   <option value="external">External proxy auth</option>
                 </select>
               </label>
@@ -839,6 +920,99 @@ export default function SettingsPage() {
         <div className="panel settings-panel">
           <div className="panel-header">
             <div className="panel-title">
+              <Download size={20} />
+              <div>
+                <h2>Provider Downloads</h2>
+                <p className="muted">Default Ogg Opus quality cap for new backups</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="settings-body">
+            {providerDownloadSettings ? (
+              <form
+                className="auth-form"
+                onSubmit={submitProviderDownloadSettings}
+              >
+                <div className="settings-inline-grid">
+                  <label className="form-field">
+                    <span className="stat-label">Opus Quality Cap</span>
+                    <select
+                      disabled={isSavingProviderDownload}
+                      onChange={(event) => {
+                        const opusQuality = opusQualityFromValue(
+                          event.target.value
+                        );
+
+                        updateProviderDownloadSettingsState({
+                          opusQuality
+                        });
+                      }}
+                      value={providerDownloadSettings.opusQuality}
+                    >
+                      <option value="192">192 kbps</option>
+                      <option value="160">160 kbps</option>
+                      <option value="256">256 kbps</option>
+                    </select>
+                  </label>
+
+                  <label className="form-field">
+                    <span className="stat-label">MP3 Fallback</span>
+                    <select
+                      disabled={isSavingProviderDownload}
+                      onChange={(event) =>
+                        updateProviderDownloadSettingsState(
+                          fallbackSettingsFromValue(event.target.value)
+                        )
+                      }
+                      value={providerDownloadFallbackValue(
+                        providerDownloadSettings
+                      )}
+                    >
+                      <option value="mp3:320">MP3 320 kbps</option>
+                      <option value="mp3:256">MP3 256 kbps</option>
+                      <option value="mp3:192">MP3 192 kbps</option>
+                      <option value="none">Off</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div className="auth-note">
+                  <Download size={18} />
+                  <span>
+                    TrackKeep requests up to the selected Opus quality and keeps
+                    lower-bitrate provider audio at source quality instead of
+                    upconverting it. If Opus cannot be written, TrackKeep can
+                    fall back to the selected MP3 quality; FLAC is not used as a
+                    fallback.
+                  </span>
+                </div>
+
+                <button
+                  className="command green"
+                  disabled={isSavingProviderDownload}
+                  type="submit"
+                >
+                  {isSavingProviderDownload ? (
+                    <RefreshCw className="spin" size={18} />
+                  ) : (
+                    <Save size={18} />
+                  )}
+                  Save downloads
+                </button>
+              </form>
+            ) : (
+              <div className="auth-note">
+                <RefreshCw className="spin" size={18} />
+                <span>Loading provider download settings</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="panel settings-panel">
+          <div className="panel-header">
+            <div className="panel-title">
               <Fingerprint size={20} />
               <div>
                 <h2>Spotify Metadata Tags</h2>
@@ -851,7 +1025,7 @@ export default function SettingsPage() {
             <div className="auth-note">
               <Fingerprint size={18} />
               <span>
-                Add SpotifyBU identity, release date, and compilation tags to
+                Add TrackKeep identity, release date, and compilation tags to
                 matched files from saved playlist snapshots.
               </span>
             </div>
@@ -929,7 +1103,7 @@ export default function SettingsPage() {
               <Clock size={20} />
               <div>
                 <h2>Navidrome Auto Scan</h2>
-                <p className="muted">Daily SpotifyBU index and Navidrome rescan</p>
+                <p className="muted">Daily TrackKeep index and Navidrome rescan</p>
               </div>
             </div>
           </div>
@@ -999,8 +1173,8 @@ export default function SettingsPage() {
             <div className="panel-title">
               <SlidersHorizontal size={20} />
               <div>
-                <h2>Organize Scheme</h2>
-                <p className="muted">Choose how SpotifyBU stages organized Navidrome files</p>
+                <h2>Organize Layout</h2>
+                <p className="muted">Informational view of the fixed Navidrome file layout</p>
               </div>
             </div>
           </div>
@@ -1011,7 +1185,7 @@ export default function SettingsPage() {
                 <div className="auth-note">
                   <CheckCircle2 size={18} />
                   <span>
-                    SpotifyBU uses one Spotify metadata layout for organized
+                    TrackKeep uses this fixed Spotify metadata layout for organized
                     Navidrome files.
                   </span>
                 </div>
@@ -1095,6 +1269,46 @@ function browserTimeZone() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
+function opusQualityFromValue(value: string): ProviderDownloadOpusQuality {
+  return value === "160" || value === "256" ? value : "192";
+}
+
+function fallbackSettingsFromValue(
+  value: string
+): Pick<ProviderDownloadSettings, "fallbackFormat" | "mp3FallbackQuality"> {
+  if (value === "none") {
+    return {
+      fallbackFormat: "none",
+      mp3FallbackQuality: "320"
+    };
+  }
+
+  return {
+    fallbackFormat: "mp3",
+    mp3FallbackQuality: mp3FallbackQualityFromValue(value.replace(/^mp3:/, ""))
+  };
+}
+
+function mp3FallbackQualityFromValue(
+  value: string
+): ProviderDownloadMp3FallbackQuality {
+  return value === "192" || value === "256" ? value : "320";
+}
+
+function providerDownloadFallbackValue(settings: ProviderDownloadSettings) {
+  return settings.fallbackFormat === "mp3"
+    ? `mp3:${settings.mp3FallbackQuality}`
+    : "none";
+}
+
+function providerDownloadSettingsSavedMessage(
+  settings: ProviderDownloadSettings
+) {
+  return settings.fallbackFormat === "mp3"
+    ? `Provider downloads will request Opus up to ${settings.opusQuality} kbps with MP3 ${settings.mp3FallbackQuality} kbps fallback.`
+    : `Provider downloads will request Opus up to ${settings.opusQuality} kbps without MP3 fallback.`;
+}
+
 function autoScanScheduleLabel(autoScan: MusicLibraryAutoScanStatus) {
   if (!autoScan.settings.enabled) {
     return "Daily scan is off.";
@@ -1141,7 +1355,7 @@ function identityBackfillJobProgressNote(
   job: MusicLibraryIdentityTagBackfillJob
 ) {
   if (job.status === "failed") {
-    return job.error ?? "SpotifyBU could not backfill Spotify metadata tags.";
+    return job.error ?? "TrackKeep could not backfill Spotify metadata tags.";
   }
 
   if (job.currentTrackName && isIdentityBackfillJobActive(job)) {

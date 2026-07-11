@@ -67,7 +67,7 @@ async function updateOrganizeIgnore(
         error:
           error instanceof Error
             ? error.message
-            : "SpotifyBU could not change that organize ignore."
+            : "TrackKeep could not change that organize ignore."
       },
       {
         status: 400

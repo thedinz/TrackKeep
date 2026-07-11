@@ -12,6 +12,7 @@ import {
   clearMusicLibraryTrackOrganizationIgnore,
   deleteMusicLibraryTrack,
   getMusicLibraryStatus,
+  getMusicServerScanStatus,
   getMusicServerStatus,
   ignoreMusicLibraryTrackOrganization,
   matchMusicLibraryTracks,
@@ -23,10 +24,15 @@ import {
   recordMusicLibraryAlbumFolders,
   readCurrentMusicLibraryIndex,
   scanMusicLibraryIndex,
+  startMusicServerScan,
   type MusicLibraryIndex
 } from "./music-library.ts";
-import { tagAudioFileWithSpotifyIdentity } from "./providers/tagging.ts";
 import {
+  tagAudioFileWithSpotifyIdentity,
+  tagDownloadedFile
+} from "./providers/tagging.ts";
+import {
+  spotifyBuIdentityCommentPrefix,
   spotifyBuIdentityTags,
   spotifyBuIdentityVersion
 } from "./spotify-identity-tags.ts";
@@ -65,7 +71,7 @@ test("standard album folder uses Unknown Year when metadata is missing", async (
   });
 });
 
-test("download destinations use the same long folder path as organization", async (t) => {
+test("download destinations use Opus paths in the same long folder as organization", async (t) => {
   await withDefaultOrganizeSettings(t, async () => {
     const libraryPath = await mkdtemp(
       path.join(tmpdir(), "spotifybu-library-")
@@ -104,11 +110,13 @@ test("download destinations use the same long folder path as organization", asyn
     );
     const destination = await prepareMusicLibraryTrackFileDestination(
       spotifyTrack,
-      "mp3"
+      "opus"
     );
 
     assert.ok(plan.relativePath.split("/").some((segment) => segment.length > 120));
     assert.equal(destination.relativeDirectory, plan.relativePath);
+    assert.ok(destination.fileName.endsWith(".opus"));
+    assert.ok(destination.relativePath.endsWith(".opus"));
     assert.ok((await stat(exactDirectory)).isDirectory());
 
     if (truncatedDirectory !== exactDirectory) {
@@ -226,7 +234,7 @@ test("standard matching finds indexed title variants but keeps Spotify naming ca
   });
 });
 
-test("library index parser reads SpotifyBU identity tags", () => {
+test("library index parser reads TrackKeep identity tags", () => {
   const spotifyTrackId = "6rqhFgbbKwnb9MLmUQDhG6";
   const spotifyAlbumId = "0sNOF9WDwhWunNAHPD3Baj";
   const identity = parseMusicLibraryIndexedTrackIdentityTags(
@@ -236,6 +244,31 @@ test("library index parser reads SpotifyBU identity tags", () => {
       [spotifyBuIdentityTags.albumId, spotifyAlbumId],
       [spotifyBuIdentityTags.isrc, "usrc17607839"],
       [spotifyBuIdentityTags.identityVersion, spotifyBuIdentityVersion]
+    ])
+  );
+
+  assert.equal(identity.spotifyTrackId, spotifyTrackId);
+  assert.equal(identity.spotifyTrackUri, `spotify:track:${spotifyTrackId}`);
+  assert.equal(identity.spotifyAlbumId, spotifyAlbumId);
+  assert.equal(identity.spotifyIsrc, "USRC17607839");
+  assert.equal(identity.spotifybuIdentityVersion, spotifyBuIdentityVersion);
+});
+
+test("library index parser reads TrackKeep identity from M4A artwork comment fallback", () => {
+  const spotifyTrackId = "6rqhFgbbKwnb9MLmUQDhG6";
+  const spotifyAlbumId = "0sNOF9WDwhWunNAHPD3Baj";
+  const identity = parseMusicLibraryIndexedTrackIdentityTags(
+    new Map([
+      [
+        "comment",
+        `${spotifyBuIdentityCommentPrefix}${JSON.stringify({
+          [spotifyBuIdentityTags.trackId]: spotifyTrackId,
+          [spotifyBuIdentityTags.trackUri]: `spotify:track:${spotifyTrackId}`,
+          [spotifyBuIdentityTags.albumId]: spotifyAlbumId,
+          [spotifyBuIdentityTags.isrc]: "usrc17607839",
+          [spotifyBuIdentityTags.identityVersion]: spotifyBuIdentityVersion
+        })}`
+      ]
     ])
   );
 
@@ -1134,7 +1167,7 @@ test("metadata backfill upgrades existing identity-tagged backups with release t
           description: "",
           id: "playlist-backfill",
           name: "Backfill",
-          owner: "SpotifyBU",
+          owner: "TrackKeep",
           public: false,
           tracksTotal: 1
         },
@@ -1163,6 +1196,71 @@ test("metadata backfill upgrades existing identity-tagged backups with release t
       assert.equal(tags.compilation, "1");
       assert.equal(indexedTrack?.releaseDate, "2026-02-03");
       assert.equal(indexedTrack?.compilation, true);
+    });
+  });
+});
+
+test("library index reads TrackKeep Opus stream tags and artwork", async (t) => {
+  if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
+    t.skip("ffmpeg and ffprobe are required for Opus index coverage.");
+    return;
+  }
+
+  await withDefaultOrganizeSettings(t, async () => {
+    const libraryPath = await mkdtemp(
+      path.join(tmpdir(), "spotifybu-library-")
+    );
+    const coverServer = await startCoverServer();
+    const spotifyTrack = {
+      ...exampleTrack,
+      albumImageUrl: coverServer.url,
+      albumReleaseDate: "2026-02-03",
+      albumType: "compilation",
+      id: "4uLU6hMCjMI75M1A2tKUQC",
+      isrc: "USABC1234567",
+      spotifyUri: "spotify:track:4uLU6hMCjMI75M1A2tKUQC"
+    } satisfies BackupTrack;
+    const relativePath =
+      "Example Artist/Example Artist - Example Record (2026)/Example Artist - Example Record (2026) - 01 - Opening.opus";
+    const filePath = path.join(libraryPath, ...relativePath.split("/"));
+
+    t.after(async () => {
+      await closeServer(coverServer.server);
+      await rm(libraryPath, {
+        force: true,
+        recursive: true
+      });
+    });
+
+    await withEnvironment(t, { MUSIC_LIBRARY_PATH: libraryPath }, async () => {
+      await mkdir(path.dirname(filePath), {
+        recursive: true
+      });
+      await writeSilentOpus(filePath, ["title=Provider Clip Title"]);
+      await tagDownloadedFile(filePath, spotifyTrack);
+      await scanMusicLibraryIndex();
+
+      const index = await readCurrentMusicLibraryIndex();
+      const indexedTrack = index?.tracks.find(
+        (track) => track.relativePath === relativePath
+      );
+
+      assert.equal(indexedTrack?.source, "tags");
+      assert.equal(indexedTrack?.title, "Opening");
+      assert.equal(indexedTrack?.artist, "Example Artist");
+      assert.equal(indexedTrack?.albumArtist, "Example Artist");
+      assert.equal(indexedTrack?.album, "Example Record");
+      assert.equal(indexedTrack?.trackNumber, 1);
+      assert.equal(indexedTrack?.discNumber, 1);
+      assert.equal(indexedTrack?.releaseDate, "2026-02-03");
+      assert.equal(indexedTrack?.isrc, "USABC1234567");
+      assert.equal(indexedTrack?.compilation, true);
+      assert.equal(indexedTrack?.spotifyTrackId, "4uLU6hMCjMI75M1A2tKUQC");
+      assert.equal(
+        indexedTrack?.spotifyTrackUri,
+        "spotify:track:4uLU6hMCjMI75M1A2tKUQC"
+      );
+      assert.equal(indexedTrack?.spotifybuIdentityVersion, spotifyBuIdentityVersion);
     });
   });
 });
@@ -1311,6 +1409,160 @@ test("Navidrome API status accepts Navidrome URL and credentials", async (t) => 
   );
 });
 
+test("Navidrome scan status maps progress fields", async (t) => {
+  const requestedPaths: string[] = [];
+  const server = http.createServer((request, response) => {
+    requestedPaths.push(request.url ?? "");
+    response.writeHead(200, {
+      "Content-Type": "application/json"
+    });
+    response.end(
+      JSON.stringify({
+        "subsonic-response": {
+          scanStatus: {
+            count: "42",
+            elapsedTime: "90",
+            folderCount: "7",
+            lastScan: "2026-07-08T14:30:00.000Z",
+            scanning: true,
+            scanType: "full"
+          },
+          status: "ok"
+        }
+      })
+    );
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  t.after(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+  });
+
+  const address = server.address();
+
+  assert.equal(typeof address, "object");
+  assert.ok(address);
+
+  await withEnvironment(
+    t,
+    {
+      MUSIC_LIBRARY_PASSWORD: null,
+      MUSIC_LIBRARY_URL: null,
+      MUSIC_LIBRARY_USER: null,
+      MUSIC_LIBRARY_USERNAME: null,
+      NAVIDROME_PASSWORD: "navidrome-password",
+      NAVIDROME_URL: `http://127.0.0.1:${address.port}`,
+      NAVIDROME_USER: null,
+      NAVIDROME_USERNAME: "navidrome-user"
+    },
+    async () => {
+      const status = await getMusicServerScanStatus();
+
+      assert.equal(status.configured, true);
+      assert.equal(status.running, true);
+      assert.equal(status.count, 42);
+      assert.equal(status.elapsedSeconds, 90);
+      assert.equal(status.folderCount, 7);
+      assert.equal(status.lastScan, "2026-07-08T14:30:00.000Z");
+      assert.equal(status.scanType, "full");
+      assert.ok(
+        requestedPaths.some((requestPath) =>
+          requestPath.startsWith("/rest/getScanStatus.view?")
+        )
+      );
+    }
+  );
+});
+
+test("Navidrome scan requests send quick and full scan flags", async (t) => {
+  const requestedFullScanValues: Array<string | null> = [];
+  const server = http.createServer((request, response) => {
+    const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+    const fullScanValue = requestUrl.searchParams.get("fullScan");
+
+    requestedFullScanValues.push(fullScanValue);
+    response.writeHead(200, {
+      "Content-Type": "application/json"
+    });
+    response.end(
+      JSON.stringify({
+        "subsonic-response": {
+          scanStatus: {
+            count: fullScanValue === "true" ? 20 : 5,
+            elapsedTime: 1,
+            folderCount: fullScanValue === "true" ? 4 : 1,
+            scanning: true,
+            scanType: fullScanValue === "true" ? "full" : "quick"
+          },
+          status: "ok"
+        }
+      })
+    );
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  t.after(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+  });
+
+  const address = server.address();
+
+  assert.equal(typeof address, "object");
+  assert.ok(address);
+
+  await withEnvironment(
+    t,
+    {
+      MUSIC_LIBRARY_PASSWORD: null,
+      MUSIC_LIBRARY_URL: null,
+      MUSIC_LIBRARY_USER: null,
+      MUSIC_LIBRARY_USERNAME: null,
+      NAVIDROME_PASSWORD: "navidrome-password",
+      NAVIDROME_URL: `http://127.0.0.1:${address.port}`,
+      NAVIDROME_USER: null,
+      NAVIDROME_USERNAME: "navidrome-user"
+    },
+    async () => {
+      const quickStatus = await startMusicServerScan({
+        fullScan: false
+      });
+      const fullStatus = await startMusicServerScan({
+        fullScan: true
+      });
+
+      assert.deepEqual(requestedFullScanValues, ["false", "true"]);
+      assert.equal(quickStatus.message, "Requested a quick Navidrome scan.");
+      assert.equal(quickStatus.scanType, "quick");
+      assert.equal(quickStatus.count, 5);
+      assert.equal(fullStatus.message, "Requested a full Navidrome scan.");
+      assert.equal(fullStatus.scanType, "full");
+      assert.equal(fullStatus.count, 20);
+    }
+  );
+});
+
 const exampleTrack = {
   album: "Example Record",
   albumArtist: "Example Artist",
@@ -1444,7 +1696,31 @@ async function writeSilentMp3(filePath: string, metadata: string[]) {
   );
 }
 
-async function readAudioTags(filePath: string) {
+async function writeSilentOpus(filePath: string, metadata: string[]) {
+  await execFileAsync(
+    "ffmpeg",
+    [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "anullsrc=r=48000:cl=stereo",
+      "-t",
+      "0.1",
+      "-codec:a",
+      "libopus",
+      "-b:a",
+      "160k",
+      ...metadata.flatMap((value) => ["-metadata", value]),
+      filePath
+    ],
+    {
+      timeout: 60000
+    }
+  );
+}
+
+async function readAudioProbe(filePath: string) {
   const { stdout } = await execFileAsync(
     "ffprobe",
     [
@@ -1453,6 +1729,7 @@ async function readAudioTags(filePath: string) {
       "-print_format",
       "json",
       "-show_format",
+      "-show_streams",
       filePath
     ],
     {
@@ -1463,12 +1740,73 @@ async function readAudioTags(filePath: string) {
     format?: {
       tags?: Record<string, string>;
     };
+    streams?: Array<{
+      codec_type?: string;
+      tags?: Record<string, string>;
+    }>;
   };
-
-  return Object.fromEntries(
-    Object.entries(body.format?.tags ?? {}).map(([key, value]) => [
-      key.toLowerCase(),
-      value
-    ])
+  const audioStream = body.streams?.find(
+    (stream) => stream.codec_type === "audio"
   );
+
+  return {
+    tags: lowerCaseTags(body.format?.tags, audioStream?.tags)
+  };
+}
+
+async function readAudioTags(filePath: string) {
+  return (await readAudioProbe(filePath)).tags;
+}
+
+function lowerCaseTags(
+  ...tagRecords: Array<Record<string, string> | undefined>
+) {
+  return Object.fromEntries(
+    tagRecords.flatMap((tags) =>
+      Object.entries(tags ?? {}).map(([key, value]) => [
+        key.toLowerCase(),
+        value
+      ])
+    )
+  );
+}
+
+async function startCoverServer() {
+  const image = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+    "base64"
+  );
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, {
+      "Content-Type": "image/png"
+    });
+    response.end(image);
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const address = server.address();
+
+  assert.equal(typeof address, "object");
+  assert.ok(address);
+
+  return {
+    server,
+    url: `http://127.0.0.1:${address.port}/cover.png`
+  };
+}
+
+async function closeServer(server: http.Server) {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
 }

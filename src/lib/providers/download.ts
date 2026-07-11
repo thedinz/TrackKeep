@@ -39,8 +39,18 @@ import {
 import { tagDownloadedFile } from "./tagging";
 
 type DownloadProviderId = "jiosaavn" | "youtube";
-type DownloadFormat = "mp3";
-type DownloadQuality = "128" | "320";
+type DownloadFormat = "opus" | "mp3";
+type DownloadQuality = "128" | "160" | "192" | "256" | "320";
+type DownloadFallbackFormat = "mp3" | "none";
+type DownloadFormatProfile = {
+  bitrate: number;
+  codec: "Opus" | "MP3";
+  container: "Ogg Opus" | "MPEG";
+  defaultQuality: DownloadQuality;
+  extension: DownloadFormat;
+  label: string;
+  modernLossyRank: number;
+};
 
 export type ProviderSearchRequest = {
   limit?: number;
@@ -132,6 +142,8 @@ type ProviderCandidateSearchOutcome =
 export type AuthorizedProviderDownloadRequest = {
   bulkRiskAccepted: boolean;
   diagnosticId?: string;
+  fallbackFormat?: string;
+  fallbackQuality?: string;
   fallbackSources?: AuthorizedProviderDownloadFallbackSource[];
   format?: string;
   providerId: string;
@@ -153,6 +165,8 @@ export type AuthorizedProviderDownloadFallbackSource = {
 export type AuthorizedProviderDownloadBatchItem = {
   candidateScore?: number;
   candidateTitle?: string;
+  fallbackFormat?: string;
+  fallbackQuality?: string;
   fallbackSources?: AuthorizedProviderDownloadFallbackSource[];
   format?: string;
   providerId: string;
@@ -167,6 +181,8 @@ export type AuthorizedProviderDownloadBatchRequest = {
   chunkPauseMs?: number;
   chunkSize?: number;
   delayMs?: number;
+  fallbackFormat?: string;
+  fallbackQuality?: string;
   format?: string;
   items: AuthorizedProviderDownloadBatchItem[];
   quality?: string;
@@ -178,6 +194,8 @@ export type AuthorizedProviderBulkDownloadRequest = {
   chunkPauseMs?: number;
   chunkSize?: number;
   delayMs?: number;
+  fallbackFormat?: string;
+  fallbackQuality?: string;
   format?: string;
   items: AuthorizedProviderDownloadBatchItem[];
   quality?: string;
@@ -245,6 +263,8 @@ export type ProviderBulkDownloadJobSnapshot = {
     chunkPauseMs: number;
     chunkSize: number;
     delayMs: number;
+    fallbackFormat: DownloadFallbackFormat;
+    fallbackQuality?: DownloadQuality;
     format: DownloadFormat;
     quality: DownloadQuality;
   };
@@ -318,8 +338,11 @@ type YtDlpSearchEntry = {
   channel?: string;
   duration?: number;
   id?: string;
+  release_timestamp?: number;
+  timestamp?: number;
   title?: string;
   uploader?: string;
+  upload_date?: string;
   url?: string;
   webpage_url?: string;
 };
@@ -395,6 +418,27 @@ const confidentYoutubeCandidateScore = 94;
 const stagingRootSegments = [".spotifybu", "tmp", "provider-downloads"];
 const idleCleanupDelayMs = 10 * 60 * 1000;
 const defaultYtDlpJsRuntime = "node";
+const defaultProviderDownloadFormat: DownloadFormat = "opus";
+export const providerDownloadFormatProfiles = {
+  opus: {
+    bitrate: 192000,
+    codec: "Opus",
+    container: "Ogg Opus",
+    defaultQuality: "192",
+    extension: "opus",
+    label: "Opus 192 kbps",
+    modernLossyRank: 2
+  },
+  mp3: {
+    bitrate: 320000,
+    codec: "MP3",
+    container: "MPEG",
+    defaultQuality: "320",
+    extension: "mp3",
+    label: "MP3 320 kbps (legacy)",
+    modernLossyRank: 1
+  }
+} as const satisfies Record<DownloadFormat, DownloadFormatProfile>;
 const providerDownloadJobs = new Map<string, ProviderDownloadJobRecord>();
 const providerBulkDownloadJobs = new Map<string, ProviderBulkDownloadJobRecord>();
 const activeProviderBulkDownloadJobs = new Set<string>();
@@ -452,7 +496,7 @@ export async function searchProviderCandidates(
       providerOrder.indexOf(left.providerId as DownloadProviderId) -
       providerOrder.indexOf(right.providerId as DownloadProviderId);
 
-    return providerDelta || right.score.overall - left.score.overall;
+    return providerDelta || compareSourceCandidatesByScore(left, right);
   });
 
   return {
@@ -696,6 +740,8 @@ export async function downloadAuthorizedProviderBatch(
     try {
       const result = await downloadAuthorizedProviderTrack({
         bulkRiskAccepted: true,
+        fallbackFormat: item.fallbackFormat ?? request.fallbackFormat,
+        fallbackQuality: item.fallbackQuality ?? request.fallbackQuality,
         fallbackSources: item.fallbackSources,
         format: item.format ?? request.format,
         providerId: item.providerId,
@@ -703,7 +749,7 @@ export async function downloadAuthorizedProviderBatch(
         rightsConfirmed: true,
         selectedReason:
           item.selectedReason ??
-          "SpotifyBU queued a reviewed provider candidate for bulk backup",
+          "TrackKeep queued a reviewed provider candidate for bulk backup",
         sourceUrl: item.sourceUrl,
         track: item.track
       });
@@ -792,6 +838,14 @@ async function downloadAuthorizedProviderTrackWithFallback(
   request: AuthorizedProviderDownloadRequest
 ) {
   const diagnosticId = request.diagnosticId ?? providerDownloadDiagnosticId();
+  const primaryFormat = normalizeDownloadFormat(request.format);
+  const primaryQuality = normalizeDownloadQuality(request.quality, primaryFormat);
+  const formatFallback = normalizeDownloadFallback({
+    fallbackFormat: request.fallbackFormat,
+    fallbackQuality: request.fallbackQuality,
+    primaryFormat,
+    primaryQuality
+  });
   const attempts = providerDownloadAttemptSources({
     ...request,
     diagnosticId
@@ -806,17 +860,63 @@ async function downloadAuthorizedProviderTrackWithFallback(
       return await downloadAuthorizedProviderTrackInner({
         ...request,
         diagnosticId,
+        format: primaryFormat,
         providerId: attempt.providerId,
+        quality: primaryQuality,
         selectedReason: attempt.selectedReason,
         sourceUrl: attempt.sourceUrl
       });
     } catch (error) {
       lastError = error;
-      failures.push(providerAttemptFailureLabel(attempt, error));
+      failures.push(
+        providerAttemptFailureLabel(attempt, error, {
+          format: primaryFormat,
+          quality: primaryQuality
+        })
+      );
+
+      let fallbackGateError = error;
+
+      if (formatFallback && isFormatFallbackError(error)) {
+        try {
+          console.warn("[spotifybu.provider-download] retrying fallback format", {
+            diagnosticId,
+            fallbackFormat: formatFallback.format,
+            fallbackQuality: formatFallback.quality,
+            failedFormat: primaryFormat,
+            failedQuality: primaryQuality,
+            providerId: attempt.providerId,
+            sourceHost: safeHostname(attempt.sourceUrl),
+            sourceUrl: attempt.sourceUrl,
+            trackName: request.track?.name,
+            trackPosition: request.track?.position
+          });
+
+          return await downloadAuthorizedProviderTrackInner({
+            ...request,
+            diagnosticId,
+            format: formatFallback.format,
+            providerId: attempt.providerId,
+            quality: formatFallback.quality,
+            selectedReason: formatFallbackSelectedReason(
+              attempt.selectedReason,
+              primaryFormat,
+              formatFallback
+            ),
+            sourceUrl: attempt.sourceUrl
+          });
+        } catch (fallbackError) {
+          lastError = fallbackError;
+          fallbackGateError = fallbackError;
+          failures.push(
+            providerAttemptFailureLabel(attempt, fallbackError, formatFallback)
+          );
+        }
+      }
 
       const nextAttempt = attempts[index + 1];
 
-      if (!nextAttempt || !isProviderFallbackError(error)) {
+      if (!nextAttempt || !isProviderFallbackError(fallbackGateError)) {
         break;
       }
 
@@ -854,6 +954,11 @@ type ProviderDownloadAttemptSource = {
   providerId: DownloadProviderId;
   selectedReason?: string;
   sourceUrl: string;
+};
+
+type ProviderDownloadFormatProfile = {
+  format: DownloadFormat;
+  quality: DownloadQuality;
 };
 
 function providerDownloadAttemptSources(
@@ -930,17 +1035,20 @@ function fallbackSelectedReason(
   fallbackSource: AuthorizedProviderDownloadFallbackSource
 ) {
   return fallbackSource.candidateTitle
-    ? `SpotifyBU automatically retried fallback provider candidate ${fallbackSource.candidateTitle} (${fallbackSource.candidateScore ?? 0}% match)`
-    : "SpotifyBU automatically retried a fallback provider candidate";
+    ? `TrackKeep automatically retried fallback provider candidate ${fallbackSource.candidateTitle} (${fallbackSource.candidateScore ?? 0}% match)`
+    : "TrackKeep automatically retried a fallback provider candidate";
 }
 
 function providerAttemptFailureLabel(
   attempt: ProviderDownloadAttemptSource,
-  error: unknown
+  error: unknown,
+  profile?: ProviderDownloadFormatProfile
 ) {
+  const profileLabel = profile ? ` ${profile.format}/${profile.quality}K` : "";
+
   return `${providerDisplayName(attempt.providerId)} ${safeHostname(
     attempt.sourceUrl
-  )}: ${errorMessage(error)}`;
+  )}${profileLabel}: ${errorMessage(error)}`;
 }
 
 function providerDisplayName(providerId: DownloadProviderId) {
@@ -968,6 +1076,22 @@ function isProviderFallbackError(error: unknown) {
     "this video is unavailable",
     "not available",
     "timed out"
+  ].some((needle) => message.includes(needle));
+}
+
+function isFormatFallbackError(error: unknown) {
+  const message = errorMessage(error).toLowerCase();
+
+  return [
+    "audio conversion failed",
+    "could not write header",
+    "encoder",
+    "ffmpeg",
+    "invalid audio format",
+    "libopus",
+    "postprocessing",
+    "requested audio format",
+    "unsupported codec"
   ].some((needle) => message.includes(needle));
 }
 
@@ -1012,7 +1136,7 @@ async function downloadAuthorizedProviderTrackInner(
 
     const source = resolveProviderSource(providerId, request.sourceUrl);
     const format = normalizeDownloadFormat(request.format);
-    const quality = normalizeDownloadQuality(request.quality);
+    const quality = normalizeDownloadQuality(request.quality, format);
 
     attemptBase = {
       diagnosticId,
@@ -1065,12 +1189,19 @@ async function downloadAuthorizedProviderTrackInner(
     });
 
     stage = "locating downloaded file";
-    const stagedPath = await findDownloadedPath({
+    let stagedPath = await findDownloadedPath({
       beforePaths,
       format,
       outputTemplate,
       stdout,
       targetDirectory: stagingDirectory
+    });
+
+    stage = "normalizing downloaded audio";
+    stagedPath = await normalizeStagedAudioFile({
+      format,
+      quality,
+      stagedPath
     });
 
     stage = "tagging downloaded file";
@@ -1228,7 +1359,13 @@ function buildProviderBulkDownloadJob(
   }
 
   const format = normalizeDownloadFormat(request.format);
-  const quality = normalizeDownloadQuality(request.quality);
+  const quality = normalizeDownloadQuality(request.quality, format);
+  const fallbackConfig = normalizeDownloadFallback({
+    fallbackFormat: request.fallbackFormat,
+    fallbackQuality: request.fallbackQuality,
+    primaryFormat: format,
+    primaryQuality: quality
+  });
   const chunkSize = clampPositiveInteger(
     request.chunkSize,
     defaultProviderBulkChunkSize,
@@ -1265,7 +1402,7 @@ function buildProviderBulkDownloadJob(
       providerId,
       selectedReason:
         item.selectedReason ??
-        "SpotifyBU queued a previewed provider candidate for bulk backup",
+        "TrackKeep queued a previewed provider candidate for bulk backup",
       sourceUrl: source.sourceUrl,
       status: "pending",
       track: item.track
@@ -1281,6 +1418,8 @@ function buildProviderBulkDownloadJob(
       chunkPauseMs,
       chunkSize,
       delayMs,
+      fallbackFormat: fallbackConfig ? "mp3" : "none",
+      ...(fallbackConfig ? { fallbackQuality: fallbackConfig.quality } : {}),
       format,
       quality
     },
@@ -1341,6 +1480,8 @@ async function runProviderBulkDownloadJob(jobId: string) {
         item.download = await downloadAuthorizedProviderTrack({
           bulkRiskAccepted: true,
           diagnosticId: `${job.diagnosticId}-${item.track.position}`,
+          fallbackFormat: job.request.fallbackFormat,
+          fallbackQuality: job.request.fallbackQuality,
           fallbackSources: item.fallbackSources,
           format: job.request.format,
           providerId: item.providerId,
@@ -1572,7 +1713,7 @@ function bestProviderCandidate(candidates: SourceCandidate[]) {
   return candidates
     .filter((candidate) => candidate.url)
     .sort((left, right) => {
-      const scoreDelta = right.score.overall - left.score.overall;
+      const scoreDelta = compareSourceCandidatesByScore(left, right);
 
       if (scoreDelta) {
         return scoreDelta;
@@ -1583,6 +1724,25 @@ function bestProviderCandidate(candidates: SourceCandidate[]) {
         defaultProviderSearchOrder.indexOf(right.providerId as DownloadProviderId)
       );
     })[0];
+}
+
+function compareSourceCandidatesByScore(
+  left: SourceCandidate,
+  right: SourceCandidate
+) {
+  return (
+    right.score.overall - left.score.overall ||
+    (left.providerId === right.providerId
+      ? sourceCandidateUploadedAtTime(right) -
+        sourceCandidateUploadedAtTime(left)
+      : 0)
+  );
+}
+
+function sourceCandidateUploadedAtTime(candidate: SourceCandidate) {
+  const timestamp = Date.parse(candidate.uploadedAt ?? "");
+
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function summarizeProviderDownloadJobRequest(
@@ -1636,11 +1796,80 @@ function pruneProviderDownloadJobs() {
 }
 
 function normalizeDownloadFormat(value?: string): DownloadFormat {
-  return "mp3";
+  const normalizedFormat = value?.trim().toLowerCase();
+
+  return normalizedFormat === "mp3" ? "mp3" : defaultProviderDownloadFormat;
 }
 
-function normalizeDownloadQuality(value?: string): DownloadQuality {
-  return value === "128" ? "128" : "320";
+function normalizeDownloadQuality(
+  value?: string,
+  format: DownloadFormat = defaultProviderDownloadFormat
+): DownloadQuality {
+  const normalizedQuality = value?.trim();
+
+  if (
+    normalizedQuality === "128" ||
+    normalizedQuality === "160" ||
+    normalizedQuality === "192" ||
+    normalizedQuality === "256" ||
+    normalizedQuality === "320"
+  ) {
+    return normalizedQuality;
+  }
+
+  return providerDownloadFormatProfiles[format].defaultQuality;
+}
+
+function normalizeDownloadFallback({
+  fallbackFormat,
+  fallbackQuality,
+  primaryFormat,
+  primaryQuality
+}: {
+  fallbackFormat?: string;
+  fallbackQuality?: string;
+  primaryFormat: DownloadFormat;
+  primaryQuality: DownloadQuality;
+}): ProviderDownloadFormatProfile | null {
+  if (primaryFormat !== "opus") {
+    return null;
+  }
+
+  const normalizedFallbackFormat = fallbackFormat?.trim().toLowerCase();
+
+  if (normalizedFallbackFormat === "none") {
+    return null;
+  }
+
+  return {
+    format: "mp3",
+    quality: normalizeMp3FallbackQuality(fallbackQuality, primaryQuality)
+  };
+}
+
+function normalizeMp3FallbackQuality(
+  value: string | undefined,
+  _primaryQuality: DownloadQuality
+): DownloadQuality {
+  const normalizedQuality = value?.trim();
+
+  return normalizedQuality === "192" ||
+    normalizedQuality === "256" ||
+    normalizedQuality === "320"
+    ? normalizedQuality
+    : "320";
+}
+
+function formatFallbackSelectedReason(
+  selectedReason: string | undefined,
+  primaryFormat: DownloadFormat,
+  fallback: ProviderDownloadFormatProfile
+) {
+  const fallbackReason = `TrackKeep used ${fallback.format.toUpperCase()} ${
+    fallback.quality
+  } kbps fallback after ${primaryFormat.toUpperCase()} could not be written.`;
+
+  return selectedReason ? `${selectedReason}. ${fallbackReason}` : fallbackReason;
 }
 
 function normalizeSearchProviderOrder(providerIds?: string[]) {
@@ -1694,7 +1923,7 @@ async function searchYoutubeCandidates(
   }
 
   return [...candidatesById.values()].sort(
-    (left, right) => right.score.overall - left.score.overall
+    compareSourceCandidatesByScore
   );
 }
 
@@ -1714,7 +1943,7 @@ async function searchJioSaavnCandidates(
   const response = await fetch(searchUrl, {
     cache: "no-store",
     headers: {
-      "User-Agent": "SpotifyBU/1.0"
+      "User-Agent": "TrackKeep/1.0"
     },
     signal: AbortSignal.timeout(10000)
   });
@@ -1786,10 +2015,12 @@ function youtubeCandidateFromEntry(
     typeof entry.duration === "number"
       ? Math.round(entry.duration * 1000)
       : undefined;
+  const uploadedAt = youtubeEntryUploadedAt(entry);
   const score = scoreProviderCandidate(track, {
     artists,
     durationMs,
-    title
+    title,
+    uploadedAt
   });
 
   return {
@@ -1803,8 +2034,67 @@ function youtubeCandidateFromEntry(
     },
     title,
     url: `https://www.youtube.com/watch?v=${videoId}`,
+    ...(uploadedAt ? { uploadedAt } : {}),
     verified: false
   } satisfies SourceCandidate;
+}
+
+function youtubeEntryUploadedAt(entry: YtDlpSearchEntry) {
+  const uploadDate = normalizedYtDlpDate(entry.upload_date);
+
+  if (uploadDate) {
+    return uploadDate;
+  }
+
+  const timestamp = entry.timestamp ?? entry.release_timestamp;
+
+  if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) {
+    return undefined;
+  }
+
+  return new Date(timestamp * 1000).toISOString().slice(0, 10);
+}
+
+function normalizedYtDlpDate(value: string | undefined) {
+  if (!value) {
+    return undefined;
+  }
+
+  const compactDate = value.match(/^(\d{4})(\d{2})(\d{2})$/);
+
+  if (compactDate) {
+    return validYtDlpDate(
+      Number(compactDate[1]),
+      Number(compactDate[2]),
+      Number(compactDate[3])
+    );
+  }
+
+  const calendarDate = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (calendarDate) {
+    return validYtDlpDate(
+      Number(calendarDate[1]),
+      Number(calendarDate[2]),
+      Number(calendarDate[3])
+    );
+  }
+
+  return undefined;
+}
+
+function validYtDlpDate(year: number, month: number, day: number) {
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return undefined;
+  }
+
+  return date.toISOString().slice(0, 10);
 }
 
 function jioSaavnCandidateFromEntry(
@@ -1868,7 +2158,7 @@ function rememberBestYoutubeCandidate(
 
   if (
     !existingCandidate ||
-    candidate.score.overall > existingCandidate.score.overall
+    compareSourceCandidatesByScore(candidate, existingCandidate) < 0
   ) {
     candidatesById.set(candidate.id, candidate);
   }
@@ -1980,6 +2270,7 @@ function scheduleIdleTempCleanup() {
   idleCleanupTimer = setTimeout(() => {
     void cleanupStaleProviderTempFiles().catch(() => undefined);
   }, idleCleanupDelayMs);
+  idleCleanupTimer.unref?.();
 }
 
 async function cleanupStaleProviderTempFiles() {
@@ -2274,6 +2565,198 @@ async function runYtDlp({
   return stdout.toString();
 }
 
+async function normalizeStagedAudioFile({
+  format,
+  quality,
+  stagedPath
+}: {
+  format: DownloadFormat;
+  quality: DownloadQuality;
+  stagedPath: string;
+}) {
+  const shouldNormalize = await shouldNormalizeStagedAudioFile({
+    format,
+    quality,
+    stagedPath
+  });
+
+  if (!shouldNormalize) {
+    return stagedPath;
+  }
+
+  const targetPath = transcodedStagedAudioPath(stagedPath, format);
+
+  try {
+    await execFileAsync(
+      "ffmpeg",
+      [
+        "-y",
+        "-i",
+        stagedPath,
+        "-map",
+        "0:a:0",
+        "-vn",
+        "-map_metadata",
+        "-1",
+        "-codec:a",
+        audioEncoderForFormat(format),
+        "-b:a",
+        `${quality}k`,
+        ...id3ArgsForFormat(format),
+        targetPath
+      ],
+      {
+        maxBuffer: 1024 * 1024 * 2,
+        timeout: 60000
+      }
+    );
+  } catch (error) {
+    throw new Error(
+      `Provider audio normalization failed: ${formatFfmpegError(error)}`
+    );
+  }
+
+  if (targetPath !== stagedPath) {
+    await rm(stagedPath, {
+      force: true
+    }).catch(() => undefined);
+  }
+
+  return targetPath;
+}
+
+async function shouldNormalizeStagedAudioFile({
+  format,
+  quality,
+  stagedPath
+}: {
+  format: DownloadFormat;
+  quality: DownloadQuality;
+  stagedPath: string;
+}) {
+  const normalizedPath = normalizedStagedAudioPath(stagedPath, format);
+
+  if (stagedPath !== normalizedPath) {
+    return true;
+  }
+
+  const encoding = await probeStagedAudioEncoding(stagedPath).catch(() => null);
+
+  if (!encoding) {
+    return true;
+  }
+
+  if (encoding.codecName !== audioCodecNameForFormat(format)) {
+    return true;
+  }
+
+  if (!encoding.bitRate) {
+    return false;
+  }
+
+  const targetBitrate = Number(quality) * 1000;
+
+  return encoding.bitRate > targetBitrate * 1.25;
+}
+
+async function probeStagedAudioEncoding(filePath: string) {
+  const { stdout } = await execFileAsync(
+    "ffprobe",
+    [
+      "-v",
+      "quiet",
+      "-print_format",
+      "json",
+      "-show_format",
+      "-show_streams",
+      filePath
+    ],
+    {
+      maxBuffer: 1024 * 1024,
+      timeout: 30000
+    }
+  );
+  const probe = JSON.parse(stdout.toString()) as {
+    format?: {
+      bit_rate?: string;
+    };
+    streams?: Array<{
+      bit_rate?: string;
+      codec_name?: string;
+      codec_type?: string;
+    }>;
+  };
+  const audioStream = probe.streams?.find(
+    (stream) => stream.codec_type === "audio"
+  );
+
+  return {
+    bitRate:
+      parseBitrate(audioStream?.bit_rate) ?? parseBitrate(probe.format?.bit_rate),
+    codecName: audioStream?.codec_name?.toLowerCase() ?? ""
+  };
+}
+
+function normalizedStagedAudioPath(filePath: string, format: DownloadFormat) {
+  const parsedPath = path.parse(filePath);
+  const extension = `.${format}`;
+
+  if (parsedPath.ext.toLowerCase() === extension) {
+    return filePath;
+  }
+
+  return path.join(
+    /* turbopackIgnore: true */ parsedPath.dir,
+    `${parsedPath.name}${extension}`
+  );
+}
+
+function transcodedStagedAudioPath(filePath: string, format: DownloadFormat) {
+  const parsedPath = path.parse(filePath);
+
+  return path.join(
+    /* turbopackIgnore: true */ parsedPath.dir,
+    `${parsedPath.name}.spotifybu-normalized.${format}`
+  );
+}
+
+function parseBitrate(value: string | undefined) {
+  const bitrate = Number(value);
+
+  return Number.isFinite(bitrate) && bitrate > 0 ? bitrate : null;
+}
+
+function audioCodecNameForFormat(format: DownloadFormat) {
+  return format === "mp3" ? "mp3" : "opus";
+}
+
+function audioEncoderForFormat(format: DownloadFormat) {
+  return format === "mp3" ? "libmp3lame" : "libopus";
+}
+
+function id3ArgsForFormat(format: DownloadFormat) {
+  return format === "mp3" ? ["-id3v2_version", "3"] : [];
+}
+
+function formatFfmpegError(error: unknown) {
+  const execError = error as ExecFileError;
+  const output = [
+    bufferishToString(execError.stderr),
+    bufferishToString(execError.stdout),
+    error instanceof Error ? error.message : ""
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const diagnosticLine = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .reverse()
+    .find((line) => /error|failed|invalid|unable/i.test(line));
+
+  return diagnosticLine ?? (error instanceof Error ? error.message : "ffmpeg failed");
+}
+
 function ytDlpJsRuntimeArgs() {
   const configuredRuntime = process.env.SPOTIFYBU_YTDLP_JS_RUNTIME?.trim();
   const runtime =
@@ -2326,7 +2809,7 @@ function formatYtDlpError(
   ) {
     return [
       "YouTube did not expose a downloadable audio stream for that result.",
-      "Pull or rebuild the latest SpotifyBU image so yt-dlp, yt-dlp-ejs, and the Node challenge runtime are current.",
+      "Pull or rebuild the latest TrackKeep image so yt-dlp, yt-dlp-ejs, and the Node challenge runtime are current.",
       "If this specific video still fails, choose a JioSaavn candidate or another YouTube result.",
       lastDiagnosticLine
         ? `yt-dlp reported: ${formatYtDlpDiagnosticLine(lastDiagnosticLine)}`

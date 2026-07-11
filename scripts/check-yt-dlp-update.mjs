@@ -35,7 +35,7 @@ function fetchJson(url) {
       {
         headers: {
           Accept: "application/json",
-          "User-Agent": "SpotifyBU yt-dlp update check"
+          "User-Agent": "TrackKeep yt-dlp update check"
         },
         timeout: 15000
       },
