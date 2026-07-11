@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
     const message =
       error instanceof Error
         ? error.message
-        : "SpotifyBU could not download from that provider.";
+        : "TrackKeep could not download from that provider.";
     console.error("[spotifybu.provider-download] request failed", {
       diagnosticId,
       error: serializeProviderDownloadError(error),

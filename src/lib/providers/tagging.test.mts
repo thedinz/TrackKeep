@@ -20,7 +20,7 @@ import type { BackupTrack } from "../spotify.ts";
 
 const execFileAsync = promisify(execFile);
 
-test("tagDownloadedFile metadata arguments include SpotifyBU identity tags", () => {
+test("tagDownloadedFile metadata arguments include TrackKeep identity tags", () => {
   const spotifyTrackId = "4uLU6hMCjMI75M1A2tKUQC";
   const spotifyAlbumId = "0ETFjACtuP2ADo6LFhL6HN";
   const metadataValues = metadataArgumentValues(
@@ -273,7 +273,7 @@ test("rewrites provider audio tags with Spotify metadata", async (t) => {
   assert.equal(tags.date, "2012-08-07");
 });
 
-test("writes Opus audio tags and artwork with discrete SpotifyBU identity tags", async (t) => {
+test("writes Opus audio tags and artwork with discrete TrackKeep identity tags", async (t) => {
   if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
     t.skip("ffmpeg and ffprobe are required for Opus tagging coverage.");
     return;

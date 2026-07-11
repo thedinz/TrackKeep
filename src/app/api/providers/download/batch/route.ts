@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
         error:
           error instanceof Error
             ? error.message
-            : "SpotifyBU could not run the provider backup queue."
+            : "TrackKeep could not run the provider backup queue."
       },
       {
         status: 400

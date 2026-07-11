@@ -1,6 +1,6 @@
-# SpotifyBU 1.2.3
+# TrackKeep 1.2.3
 
-SpotifyBU 1.2.3 improves provider candidate selection and makes the
+TrackKeep 1.2.3 improves provider candidate selection and makes the
 music library album organization targets easier to understand.
 
 ## Changed
@@ -12,7 +12,7 @@ music library album organization targets easier to understand.
   organization targets and explains whether tracks are backed up, need
   organizing, are partly backed up, or still need download targets.
 - Existing backed-up tracks are no longer described as `folder planned` just
-  because the SpotifyBU folder log did not create that folder originally.
+  because the TrackKeep folder log did not create that folder originally.
 
 ## Verified
 

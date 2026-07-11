@@ -129,7 +129,7 @@ class PlexApiError extends Error {
 }
 
 const defaultPlexServerUrl = "http://localhost:32400";
-const plexProduct = "SpotifyBU";
+const plexProduct = "TrackKeep";
 const plexVersion = "1.0";
 const plexClientIdentifier = "spotifybu";
 const plexLibraryIdentifier = "com.plexapp.plugins.library";
@@ -329,7 +329,7 @@ export async function createOrUpdatePlexPlaylistFromSpotify(
 
   if (!ratingKeys.length) {
     throw new Error(
-      "No backed-up tracks could be resolved to Plex tracks. Scan SpotifyBU and Plex first."
+      "No backed-up tracks could be resolved to Plex tracks. Scan TrackKeep and Plex first."
     );
   }
 

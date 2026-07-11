@@ -30,7 +30,7 @@ export async function POST(request: Request) {
         error:
           error instanceof Error
             ? error.message
-            : "SpotifyBU could not request a Navidrome scan."
+            : "TrackKeep could not request a Navidrome scan."
       },
       {
         headers: {

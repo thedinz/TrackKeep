@@ -490,7 +490,7 @@ export async function getMusicLibraryStatus() {
         configured: true,
         exists: true,
         libraryPath,
-        message: "SpotifyBU cannot read the configured Navidrome music path.",
+        message: "TrackKeep cannot read the configured Navidrome music path.",
         musicLibraryUrl,
         readable,
         server,
@@ -504,7 +504,7 @@ export async function getMusicLibraryStatus() {
         configured: true,
         exists: true,
         libraryPath,
-        message: "SpotifyBU cannot write into the configured Navidrome music path.",
+        message: "TrackKeep cannot write into the configured Navidrome music path.",
         musicLibraryUrl,
         readable,
         server,
@@ -543,7 +543,7 @@ export async function getMusicLibraryStatus() {
       configured: true,
       exists: false,
       libraryPath,
-      message: "SpotifyBU could not inspect the configured Navidrome music path.",
+      message: "TrackKeep could not inspect the configured Navidrome music path.",
       musicLibraryUrl,
       readable: false,
       server,
@@ -560,7 +560,7 @@ export async function getMusicServerStatus(): Promise<MusicServerStatus> {
     return {
       configured: false,
       message:
-        "Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD to let SpotifyBU ask Navidrome to rescan. MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD are also accepted.",
+        "Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD to let TrackKeep ask Navidrome to rescan. MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD are also accepted.",
       musicLibraryUrl,
       state: "not_configured"
     };
@@ -604,7 +604,7 @@ async function requestMusicServerScan(): Promise<MusicServerScanResult> {
     return {
       configured: false,
       message:
-        "SpotifyBU indexed the mounted Navidrome folder. Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD to also request a Navidrome scan. MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD are also accepted.",
+        "TrackKeep indexed the mounted Navidrome folder. Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD to also request a Navidrome scan. MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD are also accepted.",
       musicLibraryUrl,
       requested: false,
       state: "not_configured"
@@ -622,7 +622,7 @@ async function requestMusicServerScan(): Promise<MusicServerScanResult> {
 
     return {
       configured: true,
-      message: "SpotifyBU indexed the mounted Navidrome folder and requested a Navidrome scan.",
+      message: "TrackKeep indexed the mounted Navidrome folder and requested a Navidrome scan.",
       musicLibraryUrl,
       requested: true,
       scanCount: scanStatus?.count,
@@ -636,7 +636,7 @@ async function requestMusicServerScan(): Promise<MusicServerScanResult> {
   } catch (error) {
     return {
       configured: true,
-      message: `SpotifyBU indexed the mounted Navidrome folder, but could not request a Navidrome scan: ${errorMessage(
+      message: `TrackKeep indexed the mounted Navidrome folder, but could not request a Navidrome scan: ${errorMessage(
         error
       )}`,
       musicLibraryUrl,
@@ -653,7 +653,7 @@ export async function getMusicServerScanStatus(): Promise<MusicServerScanStatus>
     return emptyMusicServerScanStatus({
       configured: false,
       message:
-        "Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD to trigger Navidrome scans from SpotifyBU.",
+        "Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD to trigger Navidrome scans from TrackKeep.",
       musicLibraryUrl
     });
   }
@@ -1242,7 +1242,7 @@ export async function ignoreMusicLibraryTrackOrganization(
   );
 
   if (!rawMatch?.matchedTrack) {
-    throw new Error("SpotifyBU could not find the matched Navidrome file to ignore.");
+    throw new Error("TrackKeep could not find the matched Navidrome file to ignore.");
   }
 
   if (!rawMatch.needsMove || !rawMatch.recommendedRelativePath) {
@@ -1356,7 +1356,7 @@ function musicLibraryTrackOrganizationIgnoreKey(track: BackupTrack) {
   const identityKey = spotifyBuIdentityKeyForTrack(track);
 
   if (!identityKey) {
-    throw new Error("SpotifyBU cannot ignore organization for an unresolved Spotify local track.");
+    throw new Error("TrackKeep cannot ignore organization for an unresolved Spotify local track.");
   }
 
   return identityKey;
@@ -1925,7 +1925,7 @@ export async function createOrUpdateMusicLibraryPlaylistFromSpotify(
 
   if (!songIds.length) {
     throw new Error(
-      "No backed-up tracks could be resolved to Navidrome songs. Scan SpotifyBU and Navidrome first."
+      "No backed-up tracks could be resolved to Navidrome songs. Scan TrackKeep and Navidrome first."
     );
   }
 
@@ -2907,7 +2907,7 @@ function arrayFrom<T>(value: T[] | T | undefined) {
 }
 
 const musicServerApiVersion = "1.16.1";
-const musicServerApiClient = "SpotifyBU";
+const musicServerApiClient = "TrackKeep";
 
 type MusicLibrarySubsonicResponse = {
   "subsonic-response"?: {

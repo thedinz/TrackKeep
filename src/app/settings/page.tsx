@@ -309,7 +309,7 @@ export default function SettingsPage() {
         setSuccess(
           body.authMode === "external"
             ? "External auth enabled. Built-in login is disabled."
-            : "Internal SpotifyBU login enabled."
+            : "Internal TrackKeep login enabled."
         );
       } catch (settingsError) {
         setError(
@@ -655,10 +655,10 @@ export default function SettingsPage() {
         <div className="brand">
           <div className="brand-mark" aria-hidden="true">
             <span className="brand-orbit" />
-            <span className="brand-note">BU</span>
+            <span className="brand-note">TK</span>
           </div>
           <div>
-            <p className="eyebrow">SpotifyBU</p>
+            <p className="eyebrow">TrackKeep</p>
             <h1>Settings</h1>
           </div>
         </div>
@@ -694,7 +694,7 @@ export default function SettingsPage() {
                 <LockKeyhole size={18} />
                 <span>
                   Built-in login is disabled. Make sure Authentik or another
-                  trusted proxy protects SpotifyBU before exposing this app.
+                  trusted proxy protects TrackKeep before exposing this app.
                 </span>
               </div>
             ) : null}
@@ -724,7 +724,7 @@ export default function SettingsPage() {
                   }
                   value={authMode}
                 >
-                  <option value="internal">Internal SpotifyBU login</option>
+                  <option value="internal">Internal TrackKeep login</option>
                   <option value="external">External proxy auth</option>
                 </select>
               </label>
@@ -980,9 +980,9 @@ export default function SettingsPage() {
                 <div className="auth-note">
                   <Download size={18} />
                   <span>
-                    SpotifyBU requests up to the selected Opus quality and keeps
+                    TrackKeep requests up to the selected Opus quality and keeps
                     lower-bitrate provider audio at source quality instead of
-                    upconverting it. If Opus cannot be written, SpotifyBU can
+                    upconverting it. If Opus cannot be written, TrackKeep can
                     fall back to the selected MP3 quality; FLAC is not used as a
                     fallback.
                   </span>
@@ -1025,7 +1025,7 @@ export default function SettingsPage() {
             <div className="auth-note">
               <Fingerprint size={18} />
               <span>
-                Add SpotifyBU identity, release date, and compilation tags to
+                Add TrackKeep identity, release date, and compilation tags to
                 matched files from saved playlist snapshots.
               </span>
             </div>
@@ -1103,7 +1103,7 @@ export default function SettingsPage() {
               <Clock size={20} />
               <div>
                 <h2>Navidrome Auto Scan</h2>
-                <p className="muted">Daily SpotifyBU index and Navidrome rescan</p>
+                <p className="muted">Daily TrackKeep index and Navidrome rescan</p>
               </div>
             </div>
           </div>
@@ -1185,7 +1185,7 @@ export default function SettingsPage() {
                 <div className="auth-note">
                   <CheckCircle2 size={18} />
                   <span>
-                    SpotifyBU uses this fixed Spotify metadata layout for organized
+                    TrackKeep uses this fixed Spotify metadata layout for organized
                     Navidrome files.
                   </span>
                 </div>
@@ -1355,7 +1355,7 @@ function identityBackfillJobProgressNote(
   job: MusicLibraryIdentityTagBackfillJob
 ) {
   if (job.status === "failed") {
-    return job.error ?? "SpotifyBU could not backfill Spotify metadata tags.";
+    return job.error ?? "TrackKeep could not backfill Spotify metadata tags.";
   }
 
   if (job.currentTrackName && isIdentityBackfillJobActive(job)) {

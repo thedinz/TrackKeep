@@ -1,6 +1,6 @@
-# SpotifyBU 1.2.5
+# TrackKeep 1.2.5
 
-SpotifyBU 1.2.5 improves automatic YouTube candidate discovery for tracks
+TrackKeep 1.2.5 improves automatic YouTube candidate discovery for tracks
 whose best source depends on album, live/session, or featured-artist metadata.
 
 ## Changed

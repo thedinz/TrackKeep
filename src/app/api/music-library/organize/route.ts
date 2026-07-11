@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
         error:
           error instanceof Error
             ? error.message
-            : "SpotifyBU could not organize matched Navidrome files."
+            : "TrackKeep could not organize matched Navidrome files."
       },
       {
         status: 400

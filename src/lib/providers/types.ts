@@ -93,7 +93,7 @@ export const SOURCE_PROVIDER_CATALOG = [
   {
     authorization: "external_tool",
     bulkWarning:
-      "YouTube Music is closed for reliable unauthenticated search, so SpotifyBU does not use it in the automatic backup flow yet.",
+      "YouTube Music is closed for reliable unauthenticated search, so TrackKeep does not use it in the automatic backup flow yet.",
     capabilities: ["search", "download", "tag", "provenance"],
     description:
       "Future candidate if a reliable user-controlled provider path is added.",
@@ -117,7 +117,7 @@ export const SOURCE_PROVIDER_CATALOG = [
   {
     authorization: "external_tool",
     bulkWarning:
-      "Piped needs a known public instance and mirrors YouTube results, so SpotifyBU uses direct YouTube search first.",
+      "Piped needs a known public instance and mirrors YouTube results, so TrackKeep uses direct YouTube search first.",
     capabilities: ["search", "download", "tag", "provenance"],
     description:
       "Future alternative YouTube frontend path if a reliable instance is configured.",

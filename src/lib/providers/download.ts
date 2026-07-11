@@ -749,7 +749,7 @@ export async function downloadAuthorizedProviderBatch(
         rightsConfirmed: true,
         selectedReason:
           item.selectedReason ??
-          "SpotifyBU queued a reviewed provider candidate for bulk backup",
+          "TrackKeep queued a reviewed provider candidate for bulk backup",
         sourceUrl: item.sourceUrl,
         track: item.track
       });
@@ -1035,8 +1035,8 @@ function fallbackSelectedReason(
   fallbackSource: AuthorizedProviderDownloadFallbackSource
 ) {
   return fallbackSource.candidateTitle
-    ? `SpotifyBU automatically retried fallback provider candidate ${fallbackSource.candidateTitle} (${fallbackSource.candidateScore ?? 0}% match)`
-    : "SpotifyBU automatically retried a fallback provider candidate";
+    ? `TrackKeep automatically retried fallback provider candidate ${fallbackSource.candidateTitle} (${fallbackSource.candidateScore ?? 0}% match)`
+    : "TrackKeep automatically retried a fallback provider candidate";
 }
 
 function providerAttemptFailureLabel(
@@ -1402,7 +1402,7 @@ function buildProviderBulkDownloadJob(
       providerId,
       selectedReason:
         item.selectedReason ??
-        "SpotifyBU queued a previewed provider candidate for bulk backup",
+        "TrackKeep queued a previewed provider candidate for bulk backup",
       sourceUrl: source.sourceUrl,
       status: "pending",
       track: item.track
@@ -1865,7 +1865,7 @@ function formatFallbackSelectedReason(
   primaryFormat: DownloadFormat,
   fallback: ProviderDownloadFormatProfile
 ) {
-  const fallbackReason = `SpotifyBU used ${fallback.format.toUpperCase()} ${
+  const fallbackReason = `TrackKeep used ${fallback.format.toUpperCase()} ${
     fallback.quality
   } kbps fallback after ${primaryFormat.toUpperCase()} could not be written.`;
 
@@ -1943,7 +1943,7 @@ async function searchJioSaavnCandidates(
   const response = await fetch(searchUrl, {
     cache: "no-store",
     headers: {
-      "User-Agent": "SpotifyBU/1.0"
+      "User-Agent": "TrackKeep/1.0"
     },
     signal: AbortSignal.timeout(10000)
   });
@@ -2809,7 +2809,7 @@ function formatYtDlpError(
   ) {
     return [
       "YouTube did not expose a downloadable audio stream for that result.",
-      "Pull or rebuild the latest SpotifyBU image so yt-dlp, yt-dlp-ejs, and the Node challenge runtime are current.",
+      "Pull or rebuild the latest TrackKeep image so yt-dlp, yt-dlp-ejs, and the Node challenge runtime are current.",
       "If this specific video still fails, choose a JioSaavn candidate or another YouTube result.",
       lastDiagnosticLine
         ? `yt-dlp reported: ${formatYtDlpDiagnosticLine(lastDiagnosticLine)}`
