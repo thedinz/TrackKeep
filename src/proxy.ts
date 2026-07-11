@@ -49,7 +49,7 @@ export async function proxy(request: NextRequest) {
 
   if (pathname.startsWith("/api/")) {
     return NextResponse.json(
-      { error: "Log in to SpotifyBU before using this endpoint." },
+      { error: "Log in to TrackKeep before using this endpoint." },
       { status: 401 }
     );
   }

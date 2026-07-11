@@ -1,6 +1,6 @@
-# SpotifyBU 1.7.0
+# TrackKeep 1.7.0
 
-SpotifyBU 1.7.0 promotes Plex playlist sync from the `dev` track to the stable
+TrackKeep 1.7.0 promotes Plex playlist sync from the `dev` track to the stable
 release. Spotify playlists can now sync matched local tracks into Plex playlists
 alongside the existing Navidrome workflow.
 
@@ -20,7 +20,7 @@ alongside the existing Navidrome workflow.
 ## Changed
 
 - Provider downloads and identity-tag backfills now add Navidrome-compatible
-  release tags in addition to SpotifyBU identity metadata.
+  release tags in addition to TrackKeep identity metadata.
 - Identity-tag backfill progress handling is more resilient for existing
   libraries.
 - Organize matching is stricter about the expected source and destination paths.

@@ -39,6 +39,8 @@ export async function POST(request: NextRequest) {
       fallbackSources: Array.isArray(body.fallbackSources)
         ? body.fallbackSources
         : [],
+      fallbackFormat: String(body.fallbackFormat ?? ""),
+      fallbackQuality: String(body.fallbackQuality ?? ""),
       format: String(body.format ?? ""),
       providerId: String(body.providerId ?? ""),
       quality: String(body.quality ?? ""),
@@ -70,7 +72,7 @@ export async function POST(request: NextRequest) {
     const message =
       error instanceof Error
         ? error.message
-        : "SpotifyBU could not download from that provider.";
+        : "TrackKeep could not download from that provider.";
     console.error("[spotifybu.provider-download] request failed", {
       diagnosticId,
       error: serializeProviderDownloadError(error),

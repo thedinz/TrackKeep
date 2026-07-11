@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
     const message =
       error instanceof Error
         ? error.message
-        : "SpotifyBU could not search providers.";
+        : "TrackKeep could not search providers.";
     console.error("[spotifybu.provider-search] request failed", {
       diagnosticId,
       error: serializeProviderSearchError(error),

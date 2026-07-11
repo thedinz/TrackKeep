@@ -1,6 +1,6 @@
-# SpotifyBU 1.2.4
+# TrackKeep 1.2.4
 
-SpotifyBU 1.2.4 makes matched-file organization clearer and adds targeted
+TrackKeep 1.2.4 makes matched-file organization clearer and adds targeted
 organization actions throughout the track workflow.
 
 ## Added

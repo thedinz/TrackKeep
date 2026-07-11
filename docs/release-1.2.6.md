@@ -1,6 +1,6 @@
-# SpotifyBU 1.2.6
+# TrackKeep 1.2.6
 
-SpotifyBU 1.2.6 improves playlist backup visibility when a Spotify playlist
+TrackKeep 1.2.6 improves playlist backup visibility when a Spotify playlist
 changes after it was previously backed up.
 
 ## Changed

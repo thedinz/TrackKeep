@@ -82,7 +82,7 @@ export async function POST(request: Request, context: RouteContext) {
           error:
             error instanceof Error
               ? error.message
-              : "SpotifyBU could not sync the playlist."
+              : "TrackKeep could not sync the playlist."
         },
         {
           status: 400

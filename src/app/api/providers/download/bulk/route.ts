@@ -30,6 +30,8 @@ export async function POST(request: NextRequest) {
       chunkPauseMs: numericBodyValue(body.chunkPauseMs),
       chunkSize: numericBodyValue(body.chunkSize),
       delayMs: numericBodyValue(body.delayMs),
+      fallbackFormat: String(body.fallbackFormat ?? ""),
+      fallbackQuality: String(body.fallbackQuality ?? ""),
       format: String(body.format ?? ""),
       items: Array.isArray(body.items) ? body.items : [],
       quality: String(body.quality ?? ""),
@@ -53,7 +55,7 @@ export async function POST(request: NextRequest) {
         error:
           error instanceof Error
             ? error.message
-            : "SpotifyBU could not start the provider bulk backup job."
+            : "TrackKeep could not start the provider bulk backup job."
       },
       {
         status: 400

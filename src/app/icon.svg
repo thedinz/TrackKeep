@@ -1,35 +1,36 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="24" fill="#07120a"/>
-  <circle cx="64" cy="64" r="44" fill="#1db954"/>
-  <circle cx="64" cy="64" r="34" fill="#07120a"/>
+  <defs>
+    <linearGradient id="background" x1="18" y1="12" x2="112" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#172018"/>
+      <stop offset="1" stop-color="#050806"/>
+    </linearGradient>
+    <linearGradient id="shield" x1="38" y1="28" x2="91" y2="103" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#25e66d"/>
+      <stop offset="1" stop-color="#1db954"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="24" fill="url(#background)"/>
   <path
-    d="M39 52c16-8 38-7 53 2"
-    fill="none"
-    stroke="#25e66d"
-    stroke-linecap="round"
-    stroke-width="8"
+    d="M64 22 96 34v29c0 21-11 35-32 44-21-9-32-23-32-44V34l32-12Z"
+    fill="#07120a"
+    stroke="url(#shield)"
+    stroke-linejoin="round"
+    stroke-width="6"
   />
   <path
-    d="M43 68c13-6 30-5 42 2"
+    d="M72 45v34"
     fill="none"
     stroke="#25e66d"
     stroke-linecap="round"
     stroke-width="7"
   />
   <path
-    d="M48 83c10-4 22-3 31 2"
+    d="m72 46 17-4v11l-17 4"
     fill="none"
     stroke="#25e66d"
     stroke-linecap="round"
-    stroke-width="6"
+    stroke-linejoin="round"
+    stroke-width="7"
   />
-  <text
-    x="64"
-    y="112"
-    fill="#b9ffd0"
-    font-family="Arial, Helvetica, sans-serif"
-    font-size="24"
-    font-weight="800"
-    text-anchor="middle"
-  >BU</text>
+  <ellipse cx="61" cy="82" rx="12" ry="9" transform="rotate(-14 61 82)" fill="#25e66d"/>
 </svg>

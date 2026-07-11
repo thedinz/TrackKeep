@@ -55,7 +55,7 @@ export async function GET(request: Request) {
           error:
             error instanceof Error
               ? error.message
-              : "SpotifyBU could not load Spotify playlists."
+              : "TrackKeep could not load Spotify playlists."
         },
         { status: 502 }
       ),

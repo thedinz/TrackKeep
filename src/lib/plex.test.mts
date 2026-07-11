@@ -548,7 +548,7 @@ const examplePlaylist = {
   id: "spotify-playlist",
   imageUrl: "https://i.scdn.co/image/custom-playlist-cover",
   name: "Road Mix",
-  owner: "SpotifyBU",
+  owner: "TrackKeep",
   public: false,
   tracksTotal: 1
 } satisfies PlaylistSummary;

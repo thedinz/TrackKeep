@@ -87,6 +87,10 @@ type MusicServerStatus = {
   musicLibraryUrl: string;
   requested?: boolean;
   scanCount?: number;
+  scanElapsedSeconds?: number;
+  scanFolderCount?: number;
+  scanLastScan?: string;
+  scanType?: string;
   scanning?: boolean;
   state:
     | "not_configured"
@@ -95,6 +99,21 @@ type MusicServerStatus = {
     | "auth_failed"
     | "error";
 };
+
+type MusicServerScanStatus = {
+  configured: boolean;
+  count: number;
+  elapsedSeconds: number | null;
+  error: string | null;
+  folderCount: number;
+  lastScan: string | null;
+  message: string;
+  musicLibraryUrl: string;
+  running: boolean;
+  scanType: string | null;
+};
+
+type MusicServerScanMode = "quick" | "full";
 
 type MusicLibraryIndexSkip = {
   kind: "directory" | "file";
@@ -155,6 +174,11 @@ type IndexedTrack = {
   isrc?: string;
   relativeDirectory: string;
   relativePath: string;
+  spotifyAlbumId?: string;
+  spotifyIsrc?: string;
+  spotifyTrackId?: string;
+  spotifyTrackUri?: string;
+  spotifybuIdentityVersion?: string;
   title: string;
 };
 
@@ -316,6 +340,21 @@ type LibraryTrackDeleteResponse = LibraryIndexResponse & {
   removedFromIndex: boolean;
 };
 
+type LibraryTrackBulkDeleteResponse = LibraryIndexResponse &
+  LibraryMatchesResponse & {
+    deletedCount: number;
+    deletedTracks: Array<{
+      deleted: boolean;
+      providerLogCleanup: {
+        attemptsRemoved: number;
+        downloadsRemoved: number;
+      };
+      relativePath: string;
+      removedFromIndex: boolean;
+    }>;
+    removedFromIndexCount: number;
+  };
+
 type MusicLibraryPlaylistSyncResponse = {
   musicLibraryPlaylist: {
     addedCount?: number;
@@ -371,6 +410,20 @@ type PublicPlexSettings = {
 
 type PlexSettingsResponse = {
   plex: PublicPlexSettings;
+};
+
+type ProviderDownloadOpusQuality = "160" | "192" | "256";
+type ProviderDownloadFallbackFormat = "mp3" | "none";
+type ProviderDownloadMp3FallbackQuality = "192" | "256" | "320";
+
+type ProviderDownloadSettings = {
+  fallbackFormat: ProviderDownloadFallbackFormat;
+  mp3FallbackQuality: ProviderDownloadMp3FallbackQuality;
+  opusQuality: ProviderDownloadOpusQuality;
+};
+
+type ProviderDownloadSettingsResponse = {
+  providerDownload: ProviderDownloadSettings;
 };
 
 type TrackOrganizeDialogState = {
@@ -456,9 +509,11 @@ type ProviderSearchCandidate = {
     isrcMatch?: boolean;
     overall: number;
     titleScore: number;
+    uploadDatePenalty?: number;
   };
   title: string;
   url?: string;
+  uploadedAt?: string;
   verified: boolean;
 };
 
@@ -521,6 +576,8 @@ type ProviderBulkDownloadJob = {
     chunkPauseMs: number;
     chunkSize: number;
     delayMs: number;
+    fallbackFormat: ProviderDownloadFallbackFormat;
+    fallbackQuality?: string;
     format: string;
     quality: string;
   };
@@ -571,10 +628,70 @@ const singleTrackProviderSearchLimit = 8;
 const providerDownloadPollIntervalMs = 2500;
 const maxProviderDownloadPollAttempts = 720;
 const bulkProviderJobStorageKey = "spotifybu.bulkProviderJobId";
+const defaultProviderDownloadSettings = {
+  fallbackFormat: "mp3",
+  mp3FallbackQuality: "320",
+  opusQuality: "192"
+} satisfies ProviderDownloadSettings;
+const providerDownloadFormatOptions = [
+  {
+    label: "Opus",
+    value: "opus"
+  },
+  {
+    label: "MP3 legacy",
+    value: "mp3"
+  }
+] as const;
+const providerDownloadQualityOptions = {
+  opus: [
+    {
+      label: "192 kbps",
+      value: "192"
+    },
+    {
+      label: "160 kbps",
+      value: "160"
+    },
+    {
+      label: "256 kbps",
+      value: "256"
+    }
+  ],
+  mp3: [
+    {
+      label: "320 kbps",
+      value: "320"
+    },
+    {
+      label: "128 kbps",
+      value: "128"
+    }
+  ]
+} as const;
 const mediaSourceProviders: readonly SourceProviderCatalogEntry[] =
   SOURCE_PROVIDER_CATALOG.filter(
     (provider) => downloadEnabledProviderIds.has(provider.id)
   );
+
+function defaultProviderDownloadQuality(
+  format: string,
+  settings: ProviderDownloadSettings = defaultProviderDownloadSettings
+) {
+  return format === "mp3" ? "320" : settings.opusQuality;
+}
+
+function providerDownloadQualityChoices(format: string) {
+  return format === "mp3"
+    ? providerDownloadQualityOptions.mp3
+    : providerDownloadQualityOptions.opus;
+}
+
+function providerDownloadProfileLabel(format: string, quality: string) {
+  return format === "mp3"
+    ? `MP3 legacy up to ${quality} kbps`
+    : `Opus up to ${quality} kbps`;
+}
 
 export default function Home() {
   const missingBackupActionsRef = useRef<HTMLDivElement | null>(null);
@@ -609,6 +726,10 @@ export default function Home() {
     useState<MusicLibraryIndexSummary | null>(null);
   const [libraryIndexScan, setLibraryIndexScan] =
     useState<MusicLibraryIndexScanStatus | null>(null);
+  const [musicServerScan, setMusicServerScan] =
+    useState<MusicServerScanStatus | null>(null);
+  const [musicServerScanBusy, setMusicServerScanBusy] =
+    useState<MusicServerScanMode | null>(null);
   const [libraryMatches, setLibraryMatches] = useState<LibraryMatch[]>([]);
   const [query, setQuery] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
@@ -628,6 +749,8 @@ export default function Home() {
   const [deletingLibraryTrackPath, setDeletingLibraryTrackPath] = useState<
     string | null
   >(null);
+  const [isDeletingSpotifyBuTaggedTracks, setIsDeletingSpotifyBuTaggedTracks] =
+    useState(false);
   const [libraryOrganizeProgress, setLibraryOrganizeProgress] =
     useState<string | null>(null);
   const [isCreatingMusicLibraryPlaylist, setIsCreatingMusicLibraryPlaylist] =
@@ -649,7 +772,12 @@ export default function Home() {
   );
   const [requestError, setRequestError] = useState<string | null>(null);
   const [downloadTrackPosition, setDownloadTrackPosition] = useState("");
-  const [downloadQuality, setDownloadQuality] = useState("320");
+  const [providerDownloadSettings, setProviderDownloadSettings] =
+    useState<ProviderDownloadSettings>(defaultProviderDownloadSettings);
+  const [downloadFormat, setDownloadFormat] = useState("opus");
+  const [downloadQuality, setDownloadQuality] = useState<string>(
+    defaultProviderDownloadSettings.opusQuality
+  );
   const [providerCandidates, setProviderCandidates] = useState<
     ProviderSearchCandidate[]
   >([]);
@@ -792,16 +920,39 @@ export default function Home() {
       setMusicLibraryStatus({
         configured: false,
         exists: false,
-        message: "SpotifyBU could not check the Navidrome music folder.",
+        message: "TrackKeep could not check the Navidrome music folder.",
         readable: false,
         server: {
           configured: false,
-          message: "SpotifyBU could not check the Navidrome API.",
+          message: "TrackKeep could not check the Navidrome API.",
           musicLibraryUrl: "",
           state: "error"
         },
         state: "error",
         writable: false
+      });
+    }
+  }, []);
+
+  const loadMusicServerScanStatus = useCallback(async () => {
+    try {
+      setMusicServerScan(
+        await fetchJson<MusicServerScanStatus>(
+          "/api/music-library/navidrome-scan"
+        )
+      );
+    } catch (error) {
+      setMusicServerScan({
+        configured: false,
+        count: 0,
+        elapsedSeconds: null,
+        error: errorMessage(error),
+        folderCount: 0,
+        lastScan: null,
+        message: "TrackKeep could not check Navidrome scan status.",
+        musicLibraryUrl: "",
+        running: false,
+        scanType: null
       });
     }
   }, []);
@@ -820,12 +971,29 @@ export default function Home() {
         status: {
           configured: false,
           libraries: [],
-          message: "SpotifyBU could not check Plex settings.",
+          message: "TrackKeep could not check Plex settings.",
           serverUrl: "",
           state: "error"
         },
         tokenConfigured: false
       });
+    }
+  }, []);
+
+  const loadProviderDownloadSettings = useCallback(async () => {
+    try {
+      const response = await fetchJson<ProviderDownloadSettingsResponse>(
+        "/api/providers/download/settings"
+      );
+
+      setProviderDownloadSettings(response.providerDownload);
+      setDownloadQuality((current) =>
+        current === defaultProviderDownloadSettings.opusQuality
+          ? response.providerDownload.opusQuality
+          : current
+      );
+    } catch {
+      setProviderDownloadSettings(defaultProviderDownloadSettings);
     }
   }, []);
 
@@ -943,6 +1111,66 @@ export default function Home() {
       tracks
     ]
   );
+
+  const deleteSpotifyBuTaggedLibraryTracks = useCallback(async () => {
+    const deleteCount = spotifyBuTaggedLibraryMatchCount(libraryMatches);
+
+    if (!deleteCount || isDeletingSpotifyBuTaggedTracks) {
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Delete ${numberFormatter.format(
+          deleteCount
+        )} TrackKeep-tagged file${
+          deleteCount === 1 ? "" : "s"
+        } from the Navidrome music folder?\n\nThese tracks will become missing so you can redownload them as Opus.`
+      )
+    ) {
+      return;
+    }
+
+    setIsDeletingSpotifyBuTaggedTracks(true);
+    setLibraryOrganizeMessage(null);
+    setProviderDownloadMessage(null);
+    setProviderDownloadError(null);
+    setRequestError(null);
+
+    try {
+      const response = await deleteJson<LibraryTrackBulkDeleteResponse>(
+        "/api/music-library/tracks",
+        {
+          deleteSpotifyBuTagged: true,
+          tracks
+        }
+      );
+
+      applyLibraryIndexResponse({
+        index: response.index
+      });
+      applyLibraryMatches(tracks, response.libraryMatches);
+      setLibraryOrganizeMessage(
+        response.deletedCount
+          ? `Deleted ${numberFormatter.format(
+              response.deletedCount
+            )} TrackKeep-tagged file${
+              response.deletedCount === 1 ? "" : "s"
+            }. Redownload the missing tracks to get Opus files.`
+          : "No TrackKeep-tagged files needed deletion."
+      );
+    } catch (error) {
+      setRequestError(errorMessage(error));
+    } finally {
+      setIsDeletingSpotifyBuTaggedTracks(false);
+    }
+  }, [
+    applyLibraryIndexResponse,
+    applyLibraryMatches,
+    isDeletingSpotifyBuTaggedTracks,
+    libraryMatches,
+    tracks
+  ]);
 
   const closeTrackOrganizeDialog = useCallback(() => {
     setTrackOrganizeDialog(null);
@@ -1106,6 +1334,30 @@ export default function Home() {
     libraryIndex,
     refreshLibraryMatches
   ]);
+
+  const startMusicServerScanAction = useCallback(
+    async (mode: MusicServerScanMode) => {
+      setMusicServerScanBusy(mode);
+      setRequestError(null);
+
+      try {
+        const status = await postJson<MusicServerScanStatus>(
+          "/api/music-library/navidrome-scan",
+          {
+            fullScan: mode === "full"
+          }
+        );
+
+        setMusicServerScan(status);
+        void loadMusicLibraryStatus();
+      } catch (error) {
+        setRequestError(errorMessage(error));
+      } finally {
+        setMusicServerScanBusy(null);
+      }
+    },
+    [loadMusicLibraryStatus]
+  );
 
   const organizeLibraryMatches = useCallback(async (
     requestedTrackPositions?: number[]
@@ -1477,6 +1729,9 @@ export default function Home() {
                 providerCandidates,
                 downloadSource.sourceUrl
               ),
+          fallbackFormat: providerDownloadSettings.fallbackFormat,
+          fallbackQuality: providerDownloadSettings.mp3FallbackQuality,
+          format: downloadFormat,
           providerId: downloadSource.providerId,
           quality: downloadQuality,
           rightsConfirmed: downloadRightsConfirmed,
@@ -1484,7 +1739,7 @@ export default function Home() {
             ? `User entered a manual ${providerDisplayName(
                 downloadSource.providerId
               )} source URL`
-            : `User reviewed SpotifyBU provider search result (${
+            : `User reviewed TrackKeep provider search result (${
                 selectedCandidate?.title ?? downloadSource.sourceUrl
               })`,
           sourceUrl: downloadSource.sourceUrl,
@@ -1518,7 +1773,7 @@ export default function Home() {
         await refreshLibraryMatches();
       } catch (error) {
         setProviderDownloadMessage(
-          `${downloadMessage}. SpotifyBU could not refresh the match table automatically (${errorMessage(
+          `${downloadMessage}. TrackKeep could not refresh the match table automatically (${errorMessage(
             error
           )}). The file is already in the library folder; run Library Index after the server settles.`
         );
@@ -1532,6 +1787,7 @@ export default function Home() {
     }
   }, [
     downloadBulkRiskAccepted,
+    downloadFormat,
     downloadQuality,
     downloadRightsConfirmed,
     downloadTrackPosition,
@@ -1539,6 +1795,7 @@ export default function Home() {
     manualProviderSourceUrl,
     markDownloadedTrackInLibrary,
     providerCandidates,
+    providerDownloadSettings,
     refreshLibraryMatches,
     selectedProviderCandidateId,
     tracks
@@ -1651,7 +1908,9 @@ export default function Home() {
       void loadLibraryIndex();
       void loadSession();
       void loadMusicLibraryStatus();
+      void loadMusicServerScanStatus();
       void loadPlexSettingsStatus();
+      void loadProviderDownloadSettings();
     }
 
     void loadAuthenticatedStartupData();
@@ -1663,7 +1922,9 @@ export default function Home() {
     loadAppInfo,
     loadLibraryIndex,
     loadMusicLibraryStatus,
+    loadMusicServerScanStatus,
     loadPlexSettingsStatus,
+    loadProviderDownloadSettings,
     loadSession,
     loadSpotifyAuthConfig
   ]);
@@ -1694,7 +1955,7 @@ export default function Home() {
 
         if (response.scan?.state === "failed") {
           setRequestError(
-            response.scan.error ?? "SpotifyBU could not scan the Navidrome folder."
+            response.scan.error ?? "TrackKeep could not scan the Navidrome folder."
           );
         }
       } catch (error) {
@@ -1724,6 +1985,57 @@ export default function Home() {
     libraryIndexScan?.state,
     refreshLibraryMatches
   ]);
+
+  useEffect(() => {
+    if (!musicServerScan?.running) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function pollMusicServerScan() {
+      try {
+        const status = await fetchJson<MusicServerScanStatus>(
+          "/api/music-library/navidrome-scan"
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        setMusicServerScan(status);
+
+        if (!status.running) {
+          void loadMusicLibraryStatus();
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setRequestError(errorMessage(error));
+          setMusicServerScan((current) =>
+            current
+              ? {
+                  ...current,
+                  error: errorMessage(error),
+                  message: "TrackKeep could not refresh Navidrome scan status.",
+                  running: false
+                }
+              : current
+          );
+        }
+      }
+    }
+
+    const intervalId = window.setInterval(() => {
+      void pollMusicServerScan();
+    }, 3000);
+
+    void pollMusicServerScan();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [loadMusicLibraryStatus, musicServerScan?.running]);
 
   useEffect(() => {
     if (session?.authenticated && sourceKind === "playlist") {
@@ -1885,11 +2197,30 @@ export default function Home() {
     ? musicLibraryStatusMessage(musicLibraryStatus)
     : "Checking library target";
   const musicServerStatusLabel = musicLibraryStatus?.server.message;
+  const musicServerScanRunning = Boolean(musicServerScan?.running);
+  const musicServerScanControlsDisabled =
+    musicServerScanBusy !== null ||
+    musicServerScanRunning ||
+    !musicServerApiReady;
+  const musicServerScanLabel =
+    musicServerScan?.message ??
+    musicLibraryStatus?.server.message ??
+    "Checking Navidrome scan status";
+  const musicServerScanDetailLabel = musicServerScan
+    ? musicServerScanDetails(musicServerScan)
+    : "";
+  const musicServerScanProgressLabel = musicServerScan
+    ? navidromeScanTypeLabel(musicServerScan.scanType)
+    : "Scan";
   const libraryMatchesByPosition = useMemo(
     () =>
       new Map(
         libraryMatches.map((match) => [match.trackPosition, match] as const)
       ),
+    [libraryMatches]
+  );
+  const spotifyBuTaggedDeleteCount = useMemo(
+    () => spotifyBuTaggedLibraryMatchCount(libraryMatches),
     [libraryMatches]
   );
   const hasUsableLibraryIndex = Boolean(libraryIndex && !libraryIndex.stale);
@@ -1991,6 +2322,15 @@ export default function Home() {
     isOrganizingLibrary ||
     organizingTrackPositions.length > 0 ||
     organizeIgnoreTrackPositions.length > 0;
+  const canDeleteSpotifyBuTaggedTracks =
+    hasUsableLibraryIndex &&
+    spotifyBuTaggedDeleteCount > 0 &&
+    !deletingLibraryTrackPath &&
+    !isDeletingSpotifyBuTaggedTracks &&
+    !isAnyOrganizationRunning &&
+    !isSearchingProvider &&
+    !isDownloadingProvider &&
+    !isDownloadingBulkProvider;
   const canCreateMusicLibraryPlaylist =
     sourceKind === "playlist" &&
     Boolean(selectedPlaylistId) &&
@@ -2179,6 +2519,9 @@ export default function Home() {
         "/api/providers/download/bulk",
         {
           bulkRiskAccepted: downloadBulkRiskAccepted,
+          fallbackFormat: providerDownloadSettings.fallbackFormat,
+          fallbackQuality: providerDownloadSettings.mp3FallbackQuality,
+          format: downloadFormat,
           items,
           quality: downloadQuality,
           rightsConfirmed: downloadRightsConfirmed
@@ -2204,8 +2547,10 @@ export default function Home() {
     applyBulkProviderJob,
     bulkCandidatePreview,
     downloadBulkRiskAccepted,
+    downloadFormat,
     downloadQuality,
-    downloadRightsConfirmed
+    downloadRightsConfirmed,
+    providerDownloadSettings
   ]);
 
   const cancelBulkProviderJob = useCallback(async () => {
@@ -2348,7 +2693,7 @@ export default function Home() {
       setBulkDownloadMessage(
         `${providerBulkJobResultMessage(
           bulkDownloadJob
-        )} SpotifyBU could not refresh the match table automatically (${errorMessage(
+        )} TrackKeep could not refresh the match table automatically (${errorMessage(
           error
         )}). Run Library Index after the server settles.`
       );
@@ -2376,7 +2721,7 @@ export default function Home() {
       ? "Library Index running in the background."
       : libraryIndexScan?.state === "failed"
         ? `Library Index failed: ${
-            libraryIndexScan.error ?? "SpotifyBU could not scan the library."
+            libraryIndexScan.error ?? "TrackKeep could not scan the library."
           }`
         : libraryIndexScan?.state === "succeeded"
           ? "Library Index completed."
@@ -2427,10 +2772,10 @@ export default function Home() {
         <div className="brand">
           <div className="brand-mark" aria-hidden="true">
             <span className="brand-orbit" />
-            <span className="brand-note">BU</span>
+            <span className="brand-note">TK</span>
           </div>
           <div>
-            <p className="eyebrow">SpotifyBU</p>
+            <p className="eyebrow">TrackKeep</p>
             <h1>Spotify Backup</h1>
           </div>
         </div>
@@ -3081,7 +3426,7 @@ export default function Home() {
                           {unresolvedSpotifyLocalTracks.length === 1
                             ? ""
                             : "s"}{" "}
-                          as local files, so SpotifyBU will not search or
+                          as local files, so TrackKeep will not search or
                           download provider sources for them.
                         </p>
                       </div>
@@ -3089,9 +3434,43 @@ export default function Home() {
                   ) : null}
                   <div className="provider-throttle-grid compact backup-workflow-settings">
                     <label className="provider-field">
-                      <span>Quality</span>
+                      <span>Format</span>
                       <select
-                        disabled={isDownloadingProvider || isDownloadingBulkProvider}
+                        disabled={
+                          isDownloadingProvider || isDownloadingBulkProvider
+                        }
+                        onChange={(event) => {
+                          const nextFormat = event.target.value;
+
+                          setDownloadFormat(nextFormat);
+                          setDownloadQuality(
+                            defaultProviderDownloadQuality(
+                              nextFormat,
+                              providerDownloadSettings
+                            )
+                          );
+                          setDownloadRightsConfirmed(false);
+                          setDownloadBulkRiskAccepted(false);
+                          setProviderDownloadMessage(null);
+                          setProviderDownloadError(null);
+                          setBulkDownloadMessage(null);
+                          setBulkDownloadProgress(null);
+                        }}
+                        value={downloadFormat}
+                      >
+                        {providerDownloadFormatOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="provider-field">
+                      <span>Quality Cap</span>
+                      <select
+                        disabled={
+                          isDownloadingProvider || isDownloadingBulkProvider
+                        }
                         onChange={(event) => {
                           setDownloadQuality(event.target.value);
                           setDownloadRightsConfirmed(false);
@@ -3103,8 +3482,13 @@ export default function Home() {
                         }}
                         value={downloadQuality}
                       >
-                        <option value="128">128 kbps</option>
-                        <option value="320">320 kbps</option>
+                        {providerDownloadQualityChoices(downloadFormat).map(
+                          (option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          )
+                        )}
                       </select>
                     </label>
                   </div>
@@ -3356,7 +3740,12 @@ export default function Home() {
                         >
                           <div className="download-progress-meta">
                             <span>Downloading</span>
-                            <span>MP3 {downloadQuality} kbps</span>
+                            <span>
+                              {providerDownloadProfileLabel(
+                                downloadFormat,
+                                downloadQuality
+                              )}
+                            </span>
                           </div>
                           <div
                             aria-label="Provider download in progress"
@@ -3615,11 +4004,31 @@ export default function Home() {
               ) : activeSource ? (
                 <>
                   <div className="section-heading track-table-heading">
-                    <span className="stat-label">Track backup status</span>
-                    <p>
-                      Every Spotify track in the selected source, with its current
-                      Navidrome match status.
-                    </p>
+                    <div>
+                      <span className="stat-label">Track backup status</span>
+                      <p>
+                        Every Spotify track in the selected source, with its
+                        current Navidrome match status.
+                      </p>
+                    </div>
+                    {spotifyBuTaggedDeleteCount ? (
+                      <button
+                        className="command secondary danger compact"
+                        disabled={!canDeleteSpotifyBuTaggedTracks}
+                        onClick={() =>
+                          void deleteSpotifyBuTaggedLibraryTracks()
+                        }
+                        title="Delete TrackKeep-tagged files from this source so they can be redownloaded"
+                        type="button"
+                      >
+                        {isDeletingSpotifyBuTaggedTracks ? (
+                          <Loader2 className="spin" size={16} />
+                        ) : (
+                          <Trash2 size={16} />
+                        )}
+                        Delete TrackKeep Files
+                      </button>
+                    ) : null}
                   </div>
                   <div className="track-table">
                     <div className="track-row track-head">
@@ -3776,6 +4185,93 @@ export default function Home() {
                   </span>
                 </div>
               ) : null}
+              <div className="provider-row with-action index-row navidrome-scan-row">
+                <span
+                  className={`provider-icon ${
+                    musicServerScanRunning
+                      ? "green"
+                      : musicServerApiReady
+                        ? "teal"
+                        : "amber"
+                  }`}
+                >
+                  {musicServerScanRunning ? (
+                    <RefreshCw className="spin" size={18} />
+                  ) : (
+                    <Server size={18} />
+                  )}
+                </span>
+                <span className="provider-content">
+                  <h3>Navidrome scan</h3>
+                  <p>{musicServerScanLabel}</p>
+                  {musicServerScanDetailLabel ? (
+                    <p>{musicServerScanDetailLabel}</p>
+                  ) : null}
+                  {musicServerScan?.error &&
+                  musicServerScan.error !== musicServerScan.message ? (
+                    <p>{musicServerScan.error}</p>
+                  ) : null}
+                  <div className="navidrome-scan-actions">
+                    <button
+                      className="icon-command index-command"
+                      disabled={musicServerScanControlsDisabled}
+                      onClick={() => void startMusicServerScanAction("quick")}
+                      title="Start quick Navidrome scan"
+                      type="button"
+                    >
+                      {musicServerScanBusy === "quick" ? (
+                        <Loader2 className="spin" size={18} />
+                      ) : (
+                        <RefreshCw size={18} />
+                      )}
+                      Quick
+                    </button>
+                    <button
+                      className="icon-command index-command"
+                      disabled={musicServerScanControlsDisabled}
+                      onClick={() => void startMusicServerScanAction("full")}
+                      title="Start full Navidrome scan"
+                      type="button"
+                    >
+                      {musicServerScanBusy === "full" ? (
+                        <Loader2 className="spin" size={18} />
+                      ) : (
+                        <Search size={18} />
+                      )}
+                      Full
+                    </button>
+                  </div>
+                  {musicServerScanRunning ? (
+                    <div
+                      aria-live="polite"
+                      className="download-progress navidrome-scan-progress"
+                      role="status"
+                    >
+                      <div className="download-progress-meta">
+                        <span>{musicServerScanProgressLabel}</span>
+                        <span>
+                          {numberFormatter.format(musicServerScan?.count ?? 0)}{" "}
+                          files
+                        </span>
+                      </div>
+                      <div
+                        aria-label="Navidrome scan in progress"
+                        className="download-progress-bar"
+                        role="progressbar"
+                      >
+                        <span className="download-progress-fill indeterminate" />
+                      </div>
+                      <p className="download-progress-note">
+                        {musicServerScan?.elapsedSeconds != null
+                          ? `${formatDurationSeconds(
+                              musicServerScan.elapsedSeconds
+                            )} elapsed`
+                          : "Waiting for Navidrome scan progress."}
+                      </p>
+                    </div>
+                  ) : null}
+                </span>
+              </div>
               {plexSettings?.enabled ? (
                 <div className="provider-row">
                   <span
@@ -3840,7 +4336,7 @@ export default function Home() {
                 <span>
                   <h3>External media providers</h3>
                   <p>
-                    No provider account connection is needed here. SpotifyBU
+                    No provider account connection is needed here. TrackKeep
                     searches YouTube first, then JioSaavn; you review the match
                     before downloading. Bulk jobs can trigger provider blocking.
                   </p>
@@ -4023,7 +4519,7 @@ export default function Home() {
                 className="command"
                 disabled={isAnyOrganizationRunning}
                 onClick={() => void autoOrganizeDialogTrack()}
-                title="Move this file into the SpotifyBU organize scheme"
+                title="Move this file into the TrackKeep organize scheme"
                 type="button"
               >
                 {isAnyOrganizationRunning ? (
@@ -4042,7 +4538,7 @@ export default function Home() {
                     "ignore"
                   )
                 }
-                title="Keep this file where SpotifyBU found it"
+                title="Keep this file where TrackKeep found it"
                 type="button"
               >
                 {isAnyOrganizationRunning ? (
@@ -4057,7 +4553,7 @@ export default function Home() {
         </div>
       ) : null}
       <footer className="app-footer">
-        <span>SpotifyBU</span>
+        <span>TrackKeep</span>
         <span>v{appInfo?.version ?? "..."}</span>
         <span>{appInfo?.branch ?? "..."} branch</span>
       </footer>
@@ -4083,15 +4579,15 @@ function spotifyAuthErrorMessage(error: string) {
   }
 
   if (error === "missing_oauth_state") {
-    return "Spotify returned without the saved login state. Open SpotifyBU from the redirect URI host shown below, then connect again.";
+    return "Spotify returned without the saved login state. Open TrackKeep from the redirect URI host shown below, then connect again.";
   }
 
   if (error === "oauth_state_mismatch") {
-    return "Spotify returned a different login state than the one SpotifyBU started. Try Connect Spotify again from this tab.";
+    return "Spotify returned a different login state than the one TrackKeep started. Try Connect Spotify again from this tab.";
   }
 
   if (error === "token_exchange_failed") {
-    return "Spotify approved the login, but SpotifyBU could not exchange the callback code for a session.";
+    return "Spotify approved the login, but TrackKeep could not exchange the callback code for a session.";
   }
 
   return error.replace(/_/g, " ");
@@ -4190,7 +4686,7 @@ async function postProviderBulkPreviewStream(
       return;
     }
 
-    throw new Error(event.error || "SpotifyBU could not preview candidates.");
+    throw new Error(event.error || "TrackKeep could not preview candidates.");
   };
 
   while (true) {
@@ -4279,7 +4775,7 @@ function parseProviderBulkPreviewStreamEvent(
       error:
         typeof parsed.error === "string"
           ? parsed.error
-          : "SpotifyBU could not preview candidates.",
+          : "TrackKeep could not preview candidates.",
       type: "error"
     };
   }
@@ -4578,6 +5074,22 @@ function playlistMissingBackupTitle(missingTrackCount: number) {
   return `${numberFormatter.format(missingTrackCount)} ${trackLabel} not backed up`;
 }
 
+function spotifyBuTaggedLibraryMatchCount(matches: LibraryMatch[]) {
+  const relativePaths = new Set<string>();
+
+  for (const match of matches) {
+    const relativePath = match.matchedTrack?.relativePath;
+
+    if (!relativePath || !match.matchedTrack?.spotifybuIdentityVersion) {
+      continue;
+    }
+
+    relativePaths.add(normalizeRelativePath(relativePath).toLowerCase());
+  }
+
+  return relativePaths.size;
+}
+
 function renderLibraryMatch(
   track: BackupTrack,
   match: LibraryMatch | undefined,
@@ -4653,7 +5165,7 @@ function renderLibraryMatch(
             className="track-status exists actionable"
             disabled={options.organizeDisabled || options.isUpdatingOrganizeIgnore}
             onClick={options.onClearOrganizeIgnore}
-            title="Undo manual organization and let SpotifyBU organize this file again"
+            title="Undo manual organization and let TrackKeep organize this file again"
             type="button"
           >
             {options.isUpdatingOrganizeIgnore ? (
@@ -4758,6 +5270,77 @@ function formatShortDate(value: string) {
     minute: "2-digit",
     month: "short"
   }).format(parsedDate);
+}
+
+function musicServerScanDetails(status: MusicServerScanStatus) {
+  const parts: string[] = [];
+
+  if (status.scanType) {
+    parts.push(navidromeScanTypeLabel(status.scanType));
+  }
+
+  if (status.running || status.count > 0) {
+    parts.push(`${numberFormatter.format(status.count)} files`);
+  }
+
+  if (status.folderCount > 0) {
+    parts.push(`${numberFormatter.format(status.folderCount)} folders`);
+  }
+
+  if (status.elapsedSeconds != null) {
+    parts.push(`${formatDurationSeconds(status.elapsedSeconds)} elapsed`);
+  }
+
+  if (status.lastScan && !status.running) {
+    parts.push(`Last ${formatShortDate(status.lastScan)}`);
+  }
+
+  return parts.join(" - ");
+}
+
+function navidromeScanTypeLabel(scanType: string | null) {
+  if (!scanType) {
+    return "Scan";
+  }
+
+  const normalized = scanType.toLowerCase();
+
+  if (normalized === "quick") {
+    return "Quick scan";
+  }
+
+  if (normalized === "full") {
+    return "Full scan";
+  }
+
+  if (normalized === "quick-selective") {
+    return "Quick selective scan";
+  }
+
+  if (normalized === "full-selective") {
+    return "Full selective scan";
+  }
+
+  return scanType;
+}
+
+function formatDurationSeconds(value: number) {
+  const seconds = Math.max(0, Math.floor(value));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+
+  if (hours > 0) {
+    return `${numberFormatter.format(hours)}h ${numberFormatter.format(minutes)}m`;
+  }
+
+  if (minutes > 0) {
+    return `${numberFormatter.format(minutes)}m ${numberFormatter.format(
+      remainingSeconds
+    )}s`;
+  }
+
+  return `${numberFormatter.format(remainingSeconds)}s`;
 }
 
 function musicLibraryStatusMessage(status: MusicLibraryStatus) {
@@ -5034,7 +5617,7 @@ function buildBulkDownloadItems(preview: ProviderBulkCandidatePreview | null) {
         item.candidate?.url
       ),
       providerId: item.candidate?.providerId ?? "",
-      selectedReason: `SpotifyBU dry-run bulk preview selected ${
+      selectedReason: `TrackKeep dry-run bulk preview selected ${
         item.candidate?.title ?? "provider candidate"
       } (${item.candidate?.score.overall ?? 0}% match)`,
       sourceUrl: item.candidate?.url ?? "",
@@ -5068,7 +5651,7 @@ function buildProviderFallbackSources(
       candidateScore: candidate.score.overall,
       candidateTitle: candidate.title,
       providerId: candidate.providerId,
-      selectedReason: `SpotifyBU automatically retried fallback provider candidate ${candidate.title} (${candidate.score.overall}% match)`,
+      selectedReason: `TrackKeep automatically retried fallback provider candidate ${candidate.title} (${candidate.score.overall}% match)`,
       sourceUrl: candidate.url
     });
   }

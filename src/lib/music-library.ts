@@ -52,12 +52,29 @@ export type MusicServerStatus = {
   message: string;
   musicLibraryUrl: string;
   scanCount?: number;
+  scanElapsedSeconds?: number;
+  scanFolderCount?: number;
+  scanLastScan?: string;
+  scanType?: string;
   scanning?: boolean;
   state: MusicServerState;
 };
 
 export type MusicServerScanResult = MusicServerStatus & {
   requested: boolean;
+};
+
+export type MusicServerScanStatus = {
+  configured: boolean;
+  count: number;
+  elapsedSeconds: number | null;
+  error: string | null;
+  folderCount: number;
+  lastScan: string | null;
+  message: string;
+  musicLibraryUrl: string;
+  running: boolean;
+  scanType: string | null;
 };
 
 export type MusicLibraryStatus = {
@@ -473,7 +490,7 @@ export async function getMusicLibraryStatus() {
         configured: true,
         exists: true,
         libraryPath,
-        message: "SpotifyBU cannot read the configured Navidrome music path.",
+        message: "TrackKeep cannot read the configured Navidrome music path.",
         musicLibraryUrl,
         readable,
         server,
@@ -487,7 +504,7 @@ export async function getMusicLibraryStatus() {
         configured: true,
         exists: true,
         libraryPath,
-        message: "SpotifyBU cannot write into the configured Navidrome music path.",
+        message: "TrackKeep cannot write into the configured Navidrome music path.",
         musicLibraryUrl,
         readable,
         server,
@@ -526,7 +543,7 @@ export async function getMusicLibraryStatus() {
       configured: true,
       exists: false,
       libraryPath,
-      message: "SpotifyBU could not inspect the configured Navidrome music path.",
+      message: "TrackKeep could not inspect the configured Navidrome music path.",
       musicLibraryUrl,
       readable: false,
       server,
@@ -543,7 +560,7 @@ export async function getMusicServerStatus(): Promise<MusicServerStatus> {
     return {
       configured: false,
       message:
-        "Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD to let SpotifyBU ask Navidrome to rescan. MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD are also accepted.",
+        "Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD to let TrackKeep ask Navidrome to rescan. MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD are also accepted.",
       musicLibraryUrl,
       state: "not_configured"
     };
@@ -563,6 +580,10 @@ export async function getMusicServerStatus(): Promise<MusicServerStatus> {
         : "Connected to Navidrome API.",
       musicLibraryUrl,
       scanCount: scanStatus?.count,
+      scanElapsedSeconds: scanStatus?.elapsedSeconds ?? undefined,
+      scanFolderCount: scanStatus?.folderCount,
+      scanLastScan: scanStatus?.lastScan ?? undefined,
+      scanType: scanStatus?.scanType ?? undefined,
       scanning: scanStatus?.scanning,
       state: "ready"
     };
@@ -583,7 +604,7 @@ async function requestMusicServerScan(): Promise<MusicServerScanResult> {
     return {
       configured: false,
       message:
-        "SpotifyBU indexed the mounted Navidrome folder. Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD to also request a Navidrome scan. MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD are also accepted.",
+        "TrackKeep indexed the mounted Navidrome folder. Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD to also request a Navidrome scan. MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD are also accepted.",
       musicLibraryUrl,
       requested: false,
       state: "not_configured"
@@ -591,7 +612,9 @@ async function requestMusicServerScan(): Promise<MusicServerScanResult> {
   }
 
   try {
-    await musicServerApiRequest("startScan");
+    await musicServerApiRequest("startScan", {
+      fullScan: "false"
+    });
     const scanStatusResponse = await musicServerApiRequest("getScanStatus").catch(
       () => null
     );
@@ -599,17 +622,21 @@ async function requestMusicServerScan(): Promise<MusicServerScanResult> {
 
     return {
       configured: true,
-      message: "SpotifyBU indexed the mounted Navidrome folder and requested a Navidrome scan.",
+      message: "TrackKeep indexed the mounted Navidrome folder and requested a Navidrome scan.",
       musicLibraryUrl,
       requested: true,
       scanCount: scanStatus?.count,
+      scanElapsedSeconds: scanStatus?.elapsedSeconds ?? undefined,
+      scanFolderCount: scanStatus?.folderCount,
+      scanLastScan: scanStatus?.lastScan ?? undefined,
+      scanType: scanStatus?.scanType ?? undefined,
       scanning: scanStatus?.scanning,
       state: "scan_requested"
     };
   } catch (error) {
     return {
       configured: true,
-      message: `SpotifyBU indexed the mounted Navidrome folder, but could not request a Navidrome scan: ${errorMessage(
+      message: `TrackKeep indexed the mounted Navidrome folder, but could not request a Navidrome scan: ${errorMessage(
         error
       )}`,
       musicLibraryUrl,
@@ -617,6 +644,73 @@ async function requestMusicServerScan(): Promise<MusicServerScanResult> {
       state: isMusicLibraryAuthError(error) ? "auth_failed" : "error"
     };
   }
+}
+
+export async function getMusicServerScanStatus(): Promise<MusicServerScanStatus> {
+  const musicLibraryUrl = getMusicLibraryUrl();
+
+  if (!getMusicServerApiCredentials()) {
+    return emptyMusicServerScanStatus({
+      configured: false,
+      message:
+        "Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD to trigger Navidrome scans from TrackKeep.",
+      musicLibraryUrl
+    });
+  }
+
+  try {
+    const scanStatusResponse = await musicServerApiRequest("getScanStatus");
+    const scanStatus = readMusicLibraryScanStatus(scanStatusResponse);
+
+    return musicServerScanStatusFromScanStatus({
+      configured: true,
+      message: scanStatus?.scanning
+        ? "Navidrome scan is running."
+        : "Navidrome scan is idle.",
+      musicLibraryUrl,
+      scanStatus
+    });
+  } catch (error) {
+    return {
+      ...emptyMusicServerScanStatus({
+        configured: true,
+        message: errorMessage(error),
+        musicLibraryUrl
+      }),
+      error: errorMessage(error)
+    };
+  }
+}
+
+export async function startMusicServerScan({
+  fullScan
+}: {
+  fullScan: boolean;
+}): Promise<MusicServerScanStatus> {
+  const musicLibraryUrl = getMusicLibraryUrl();
+
+  if (!getMusicServerApiCredentials()) {
+    throw new Error(
+      "Set NAVIDROME_USERNAME and NAVIDROME_PASSWORD, or MUSIC_LIBRARY_USERNAME and MUSIC_LIBRARY_PASSWORD."
+    );
+  }
+
+  const scanRequestResponse = await musicServerApiRequest("startScan", {
+    fullScan: fullScan ? "true" : "false"
+  });
+  const scanStatus =
+    readMusicLibraryScanStatus(scanRequestResponse) ??
+    readMusicLibraryScanStatus(
+      await musicServerApiRequest("getScanStatus").catch(() => null)
+    );
+  const scanLabel = fullScan ? "full" : "quick";
+
+  return musicServerScanStatusFromScanStatus({
+    configured: true,
+    message: `Requested a ${scanLabel} Navidrome scan.`,
+    musicLibraryUrl,
+    scanStatus
+  });
 }
 
 export async function ensureMusicLibraryTargetDirectory(segments: string[]) {
@@ -1148,7 +1242,7 @@ export async function ignoreMusicLibraryTrackOrganization(
   );
 
   if (!rawMatch?.matchedTrack) {
-    throw new Error("SpotifyBU could not find the matched Navidrome file to ignore.");
+    throw new Error("TrackKeep could not find the matched Navidrome file to ignore.");
   }
 
   if (!rawMatch.needsMove || !rawMatch.recommendedRelativePath) {
@@ -1262,7 +1356,7 @@ function musicLibraryTrackOrganizationIgnoreKey(track: BackupTrack) {
   const identityKey = spotifyBuIdentityKeyForTrack(track);
 
   if (!identityKey) {
-    throw new Error("SpotifyBU cannot ignore organization for an unresolved Spotify local track.");
+    throw new Error("TrackKeep cannot ignore organization for an unresolved Spotify local track.");
   }
 
   return identityKey;
@@ -1831,7 +1925,7 @@ export async function createOrUpdateMusicLibraryPlaylistFromSpotify(
 
   if (!songIds.length) {
     throw new Error(
-      "No backed-up tracks could be resolved to Navidrome songs. Scan SpotifyBU and Navidrome first."
+      "No backed-up tracks could be resolved to Navidrome songs. Scan TrackKeep and Navidrome first."
     );
   }
 
@@ -2813,7 +2907,7 @@ function arrayFrom<T>(value: T[] | T | undefined) {
 }
 
 const musicServerApiVersion = "1.16.1";
-const musicServerApiClient = "SpotifyBU";
+const musicServerApiClient = "TrackKeep";
 
 type MusicLibrarySubsonicResponse = {
   "subsonic-response"?: {
@@ -2826,7 +2920,12 @@ type MusicLibrarySubsonicResponse = {
       playlist?: MusicServerApiPlaylist[] | MusicServerApiPlaylist;
     };
     scanStatus?: {
-      count?: number;
+      count?: number | string;
+      elapsedTime?: number | string;
+      error?: string;
+      folderCount?: number | string;
+      lastScan?: string;
+      scanType?: string;
       scanning?: boolean;
     };
     searchResult3?: {
@@ -2957,12 +3056,85 @@ function readMusicLibraryScanStatus(
   }
 
   return {
-    count:
-      typeof response.scanStatus.count === "number"
-        ? response.scanStatus.count
-        : undefined,
-    scanning: Boolean(response.scanStatus.scanning)
+    count: nonnegativeInteger(response.scanStatus.count),
+    elapsedSeconds: nonnegativeIntegerOrNull(response.scanStatus.elapsedTime),
+    error: stringValue(response.scanStatus.error),
+    folderCount: nonnegativeInteger(response.scanStatus.folderCount),
+    lastScan: navidromeLastScanValue(response.scanStatus.lastScan),
+    scanning: Boolean(response.scanStatus.scanning),
+    scanType: stringValue(response.scanStatus.scanType)
   };
+}
+
+function musicServerScanStatusFromScanStatus({
+  configured,
+  message,
+  musicLibraryUrl,
+  scanStatus
+}: {
+  configured: boolean;
+  message: string;
+  musicLibraryUrl: string;
+  scanStatus: ReturnType<typeof readMusicLibraryScanStatus>;
+}) {
+  return {
+    configured,
+    count: scanStatus?.count ?? 0,
+    elapsedSeconds: scanStatus?.elapsedSeconds ?? null,
+    error: scanStatus?.error || null,
+    folderCount: scanStatus?.folderCount ?? 0,
+    lastScan: scanStatus?.lastScan ?? null,
+    message,
+    musicLibraryUrl,
+    running: Boolean(scanStatus?.scanning),
+    scanType: scanStatus?.scanType || null
+  } satisfies MusicServerScanStatus;
+}
+
+function emptyMusicServerScanStatus({
+  configured,
+  message,
+  musicLibraryUrl
+}: {
+  configured: boolean;
+  message: string;
+  musicLibraryUrl: string;
+}) {
+  return {
+    configured,
+    count: 0,
+    elapsedSeconds: null,
+    error: null,
+    folderCount: 0,
+    lastScan: null,
+    message,
+    musicLibraryUrl,
+    running: false,
+    scanType: null
+  } satisfies MusicServerScanStatus;
+}
+
+function nonnegativeInteger(value: number | string | undefined) {
+  const parsed =
+    typeof value === "number" ? value : Number.parseInt(value ?? "", 10);
+
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : undefined;
+}
+
+function nonnegativeIntegerOrNull(value: number | string | undefined) {
+  return nonnegativeInteger(value) ?? null;
+}
+
+function stringValue(value?: string) {
+  const trimmedValue = value?.trim();
+
+  return trimmedValue || undefined;
+}
+
+function navidromeLastScanValue(value?: string) {
+  const lastScan = stringValue(value);
+
+  return lastScan && !lastScan.startsWith("0001-") ? lastScan : undefined;
 }
 
 function isMusicLibraryAuthError(error: unknown) {
@@ -3204,7 +3376,15 @@ async function probeAudioFile(filePath: string) {
   try {
     const { stdout } = await execFileAsync(
       "ffprobe",
-      ["-v", "quiet", "-print_format", "json", "-show_format", filePath],
+      [
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
+        "-show_format",
+        "-show_streams",
+        filePath
+      ],
       {
         maxBuffer: 1024 * 1024,
         timeout: 10000
@@ -3215,11 +3395,18 @@ async function probeAudioFile(filePath: string) {
         duration?: string;
         tags?: Record<string, string | number>;
       };
+      streams?: Array<{
+        codec_type?: string;
+        tags?: Record<string, string | number>;
+      }>;
     };
+    const audioStreamTags = parsed.streams?.find(
+      (stream) => stream.codec_type === "audio"
+    )?.tags;
 
     return {
       durationMs: secondsToMilliseconds(parsed.format?.duration),
-      tags: normalizeTagMap(parsed.format?.tags)
+      tags: normalizeTagMap(parsed.format?.tags, audioStreamTags)
     };
   } catch {
     return null;
@@ -3323,14 +3510,16 @@ function inferTrackNumbersFromFileName(value: string) {
   };
 }
 
-function normalizeTagMap(tags?: Record<string, string | number>) {
+function normalizeTagMap(...tagRecords: Array<Record<string, string | number> | undefined>) {
   const tagMap = new Map<string, string>();
 
-  for (const [key, value] of Object.entries(tags ?? {})) {
-    tagMap.set(
-      key.toLowerCase().replace(/[-\s]+/g, "_"),
-      String(value).trim()
-    );
+  for (const tags of tagRecords) {
+    for (const [key, value] of Object.entries(tags ?? {})) {
+      tagMap.set(
+        key.toLowerCase().replace(/[-\s]+/g, "_"),
+        String(value).trim()
+      );
+    }
   }
 
   return tagMap;

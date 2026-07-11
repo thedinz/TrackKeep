@@ -1,6 +1,6 @@
-# SpotifyBU 1.1.8
+# TrackKeep 1.1.8
 
-SpotifyBU 1.1.8 handles Spotify's 2026 playlist API limits more clearly and
+TrackKeep 1.1.8 handles Spotify's 2026 playlist API limits more clearly and
 adds a fallback for followed playlists that Spotify refuses to expose through
 the playlist item API.
 

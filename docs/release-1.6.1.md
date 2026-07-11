@@ -1,6 +1,6 @@
-# SpotifyBU 1.6.1
+# TrackKeep 1.6.1
 
-SpotifyBU 1.6.1 restores compatibility between Navidrome-named environment
+TrackKeep 1.6.1 restores compatibility between Navidrome-named environment
 variables and the generic music-library aliases added around 1.6.0.
 
 ## Fixed

@@ -1,6 +1,6 @@
-# SpotifyBU 1.2.0
+# TrackKeep 1.2.0
 
-SpotifyBU 1.2.0 adds the next backup workflow layer: durable metadata
+TrackKeep 1.2.0 adds the next backup workflow layer: durable metadata
 snapshots, safer bulk provider jobs, explicit music library playlist sync modes,
 and a real browser tab icon.
 
