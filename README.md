@@ -10,7 +10,7 @@ Existing Docker image names, `SPOTIFYBU_*` environment variables, and `.spotifyb
 data paths retain their original identifiers for backward compatibility. The
 product name shown in the app and documentation is TrackKeep.
 
-Download the latest stable release from GitHub: https://github.com/thedinz/SpotifyBU/releases/latest
+Download the latest stable release from GitHub: https://github.com/thedinz/TrackKeep/releases/latest
 
 TrackKeep can source audio from files already present in the mounted Navidrome music folder and can search YouTube first, then JioSaavn, for missing Spotify tracks. Single-track backup lets the user review provider candidates before downloading. Bulk playlist backup now starts with a dry-run candidate preview, then runs as a resumable background job with cancel and retry controls. Provider downloads show authorization and bulk-risk warnings, preserve provenance, and stage files only into the configured Navidrome music folder.
 
