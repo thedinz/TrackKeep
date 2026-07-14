@@ -654,8 +654,7 @@ export default function SettingsPage() {
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark" aria-hidden="true">
-            <span className="brand-orbit" />
-            <span className="brand-note">TK</span>
+            <img alt="" src="/icon.svg" />
           </div>
           <div>
             <p className="eyebrow">TrackKeep</p>
