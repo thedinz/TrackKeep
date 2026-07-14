@@ -91,8 +91,7 @@ export default function LoginPage() {
       <section className="auth-panel">
         <div className="brand auth-brand">
           <div className="brand-mark" aria-hidden="true">
-            <span className="brand-orbit" />
-            <span className="brand-note">TK</span>
+            <img alt="" src="/icon.svg" />
           </div>
           <div>
             <p className="eyebrow">TrackKeep</p>
