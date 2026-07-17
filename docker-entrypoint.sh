@@ -1,12 +1,16 @@
 #!/bin/sh
 set -eu
 
-config_dir="${SPOTIFYBU_CONFIG_DIR:-/app/.spotifybu}"
+config_dir="${TRACKKEEP_CONFIG_DIR:-${SPOTIFYBU_CONFIG_DIR:-/config}}"
 music_dir="${MUSIC_LIBRARY_PATH:-/music}"
 runtime_uid="${PUID:-1000}"
 runtime_gid="${PGID:-1000}"
 runtime_user="spotifybu"
 runtime_group="spotifybu"
+chown_music="${TRACKKEEP_CHOWN_MUSIC:-${SPOTIFYBU_CHOWN_MUSIC:-false}}"
+
+export TRACKKEEP_CHOWN_MUSIC="$chown_music"
+export TRACKKEEP_CONFIG_DIR="$config_dir"
 
 if [ "$(id -u)" = "0" ]; then
   case "$runtime_uid" in
@@ -48,7 +52,7 @@ if [ "$(id -u)" = "0" ]; then
   chown -R "$runtime_uid:$runtime_gid" "$config_dir"
   chmod -R u+rwX "$config_dir"
 
-  if [ "${SPOTIFYBU_CHOWN_MUSIC:-false}" = "true" ]; then
+  if [ "$chown_music" = "true" ]; then
     mkdir -p "$music_dir"
     chown -R "$runtime_uid:$runtime_gid" "$music_dir"
   fi

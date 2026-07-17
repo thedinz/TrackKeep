@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { getAppBaseUrl } from "./app-url";
 import { shouldUseSecureCookies } from "./cookies";
+import { getTrackKeepEnvironmentValue } from "./trackkeep-env";
 import {
   OAUTH_STATE_COOKIE,
   PKCE_VERIFIER_COOKIE,
@@ -52,7 +53,7 @@ export function spotifyAuthValueFingerprint(value?: string | null) {
 }
 
 function secureCookieOverrideState() {
-  const configuredValue = process.env.SPOTIFYBU_SECURE_COOKIES?.trim();
+  const configuredValue = getTrackKeepEnvironmentValue("SECURE_COOKIES")?.trim();
 
   if (!configuredValue) {
     return "unset";

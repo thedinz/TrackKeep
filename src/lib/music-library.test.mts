@@ -33,8 +33,10 @@ import {
 } from "./providers/tagging.ts";
 import {
   spotifyBuIdentityCommentPrefix,
+  spotifyBuLegacyIdentityCommentPrefix,
   spotifyBuIdentityTags,
-  spotifyBuIdentityVersion
+  spotifyBuIdentityVersion,
+  trackKeepIdentityTags
 } from "./spotify-identity-tags.ts";
 import type { BackupTrack } from "./spotify.ts";
 
@@ -239,11 +241,11 @@ test("library index parser reads TrackKeep identity tags", () => {
   const spotifyAlbumId = "0sNOF9WDwhWunNAHPD3Baj";
   const identity = parseMusicLibraryIndexedTrackIdentityTags(
     new Map([
-      [spotifyBuIdentityTags.trackId, spotifyTrackId],
-      [spotifyBuIdentityTags.trackUri, `spotify:track:${spotifyTrackId}`],
-      [spotifyBuIdentityTags.albumId, spotifyAlbumId],
-      [spotifyBuIdentityTags.isrc, "usrc17607839"],
-      [spotifyBuIdentityTags.identityVersion, spotifyBuIdentityVersion]
+      [trackKeepIdentityTags.trackId, spotifyTrackId],
+      [trackKeepIdentityTags.trackUri, `spotify:track:${spotifyTrackId}`],
+      [trackKeepIdentityTags.albumId, spotifyAlbumId],
+      [trackKeepIdentityTags.isrc, "usrc17607839"],
+      [trackKeepIdentityTags.identityVersion, spotifyBuIdentityVersion]
     ])
   );
 
@@ -262,11 +264,11 @@ test("library index parser reads TrackKeep identity from M4A artwork comment fal
       [
         "comment",
         `${spotifyBuIdentityCommentPrefix}${JSON.stringify({
-          [spotifyBuIdentityTags.trackId]: spotifyTrackId,
-          [spotifyBuIdentityTags.trackUri]: `spotify:track:${spotifyTrackId}`,
-          [spotifyBuIdentityTags.albumId]: spotifyAlbumId,
-          [spotifyBuIdentityTags.isrc]: "usrc17607839",
-          [spotifyBuIdentityTags.identityVersion]: spotifyBuIdentityVersion
+          [trackKeepIdentityTags.trackId]: spotifyTrackId,
+          [trackKeepIdentityTags.trackUri]: `spotify:track:${spotifyTrackId}`,
+          [trackKeepIdentityTags.albumId]: spotifyAlbumId,
+          [trackKeepIdentityTags.isrc]: "usrc17607839",
+          [trackKeepIdentityTags.identityVersion]: spotifyBuIdentityVersion
         })}`
       ]
     ])
@@ -276,6 +278,46 @@ test("library index parser reads TrackKeep identity from M4A artwork comment fal
   assert.equal(identity.spotifyTrackUri, `spotify:track:${spotifyTrackId}`);
   assert.equal(identity.spotifyAlbumId, spotifyAlbumId);
   assert.equal(identity.spotifyIsrc, "USRC17607839");
+  assert.equal(identity.spotifybuIdentityVersion, spotifyBuIdentityVersion);
+});
+
+test("library index parser keeps reading legacy SpotifyBU identity tags", () => {
+  const spotifyTrackId = "6rqhFgbbKwnb9MLmUQDhG6";
+  const spotifyAlbumId = "0sNOF9WDwhWunNAHPD3Baj";
+  const identity = parseMusicLibraryIndexedTrackIdentityTags(
+    new Map([
+      [spotifyBuIdentityTags.trackId, spotifyTrackId],
+      [spotifyBuIdentityTags.trackUri, `spotify:track:${spotifyTrackId}`],
+      [spotifyBuIdentityTags.albumId, spotifyAlbumId],
+      [spotifyBuIdentityTags.isrc, "usrc17607839"],
+      [spotifyBuIdentityTags.identityVersion, spotifyBuIdentityVersion]
+    ])
+  );
+
+  assert.equal(identity.spotifyTrackId, spotifyTrackId);
+  assert.equal(identity.spotifyTrackUri, `spotify:track:${spotifyTrackId}`);
+  assert.equal(identity.spotifyAlbumId, spotifyAlbumId);
+  assert.equal(identity.spotifyIsrc, "USRC17607839");
+  assert.equal(identity.spotifybuIdentityVersion, spotifyBuIdentityVersion);
+});
+
+test("library index parser keeps reading legacy SpotifyBU M4A comments", () => {
+  const spotifyTrackId = "6rqhFgbbKwnb9MLmUQDhG6";
+  const identity = parseMusicLibraryIndexedTrackIdentityTags(
+    new Map([
+      [
+        "comment",
+        `${spotifyBuLegacyIdentityCommentPrefix}${JSON.stringify({
+          [spotifyBuIdentityTags.trackId]: spotifyTrackId,
+          [spotifyBuIdentityTags.trackUri]: `spotify:track:${spotifyTrackId}`,
+          [spotifyBuIdentityTags.identityVersion]: spotifyBuIdentityVersion
+        })}`
+      ]
+    ])
+  );
+
+  assert.equal(identity.spotifyTrackId, spotifyTrackId);
+  assert.equal(identity.spotifyTrackUri, `spotify:track:${spotifyTrackId}`);
   assert.equal(identity.spotifybuIdentityVersion, spotifyBuIdentityVersion);
 });
 

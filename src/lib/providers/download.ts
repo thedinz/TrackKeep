@@ -21,6 +21,7 @@ import {
   type MusicLibraryIndexSummary
 } from "@/lib/music-library";
 import { getSpotifyBuDatabase } from "@/lib/database";
+import { getTrackKeepEnvironmentValue } from "@/lib/trackkeep-env";
 import {
   isUnresolvedSpotifyLocalBackupTrack,
   unresolvedSpotifyLocalTrackMessage,
@@ -1962,7 +1963,9 @@ async function searchJioSaavnCandidates(
 }
 
 async function runYtDlpSearch(searchUrl: string) {
-  const timeoutMs = Number(process.env.SPOTIFYBU_PROVIDER_SEARCH_TIMEOUT_MS);
+  const timeoutMs = Number(
+    getTrackKeepEnvironmentValue("PROVIDER_SEARCH_TIMEOUT_MS")
+  );
   let stdout: Buffer | string;
 
   try {
@@ -2520,7 +2523,9 @@ async function runYtDlp({
   outputTemplate: string;
   quality: DownloadQuality;
 }) {
-  const timeoutMs = Number(process.env.SPOTIFYBU_PROVIDER_DOWNLOAD_TIMEOUT_MS);
+  const timeoutMs = Number(
+    getTrackKeepEnvironmentValue("PROVIDER_DOWNLOAD_TIMEOUT_MS")
+  );
   const formatSelector = `bestaudio[abr<=${quality}]/bestaudio/best`;
   let stdout: Buffer | string;
 
@@ -2758,7 +2763,9 @@ function formatFfmpegError(error: unknown) {
 }
 
 function ytDlpJsRuntimeArgs() {
-  const configuredRuntime = process.env.SPOTIFYBU_YTDLP_JS_RUNTIME?.trim();
+  const configuredRuntime = getTrackKeepEnvironmentValue(
+    "YTDLP_JS_RUNTIME"
+  )?.trim();
   const runtime =
     configuredRuntime === "none"
       ? ""

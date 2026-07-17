@@ -7,7 +7,8 @@ import {
   spotifyBuIdentityCommentPrefix,
   spotifyBuIdentityMetadataEntries,
   spotifyBuIdentityMetadataForTrack,
-  spotifyBuIdentityTags
+  spotifyBuIdentityTags,
+  trackKeepIdentityTags
 } from "@/lib/spotify-identity-tags";
 import type { BackupTrack } from "@/lib/spotify";
 
@@ -295,7 +296,10 @@ function mp4ArtworkIdentityFallbackArgs(
   const metadata = metadataMapFromArgs(metadataArgs);
   const identityMetadata: Record<string, string> = {};
 
-  for (const key of Object.values(spotifyBuIdentityTags)) {
+  for (const key of [
+    ...Object.values(trackKeepIdentityTags),
+    ...Object.values(spotifyBuIdentityTags)
+  ]) {
     const value = metadata.get(key);
 
     if (value) {

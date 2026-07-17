@@ -1,5 +1,6 @@
 import { appendFile, mkdir } from "fs/promises";
 import path from "path";
+import { getTrackKeepEnvironmentValue } from "./trackkeep-env";
 
 type DiagnosticDetails = Record<string, unknown>;
 
@@ -49,7 +50,7 @@ function getDiagnosticLogPath() {
 }
 
 function getConfigDirectory() {
-  const configuredDirectory = process.env.SPOTIFYBU_CONFIG_DIR?.trim();
+  const configuredDirectory = getTrackKeepEnvironmentValue("CONFIG_DIR")?.trim();
 
   if (configuredDirectory) {
     return path.resolve(/* turbopackIgnore: true */ configuredDirectory);

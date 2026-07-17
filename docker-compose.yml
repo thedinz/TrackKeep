@@ -1,13 +1,13 @@
 services:
-  spotifybu:
-    image: ${SPOTIFYBU_IMAGE:-ghcr.io/thedinz/spotifybu:dev}
+  trackkeep:
+    image: ${TRACKKEEP_IMAGE:-${SPOTIFYBU_IMAGE:-ghcr.io/thedinz/spotifybu:dev}}
     pull_policy: always
-    container_name: spotifybu
+    container_name: trackkeep
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "${SPOTIFYBU_PORT:-3000}:3000"
+      - "${TRACKKEEP_PORT:-${SPOTIFYBU_PORT:-3000}}:3000"
     environment:
       MUSIC_LIBRARY_PATH: /music
       MUSIC_LIBRARY_URL: ${MUSIC_LIBRARY_URL:-${NAVIDROME_URL:-http://host.docker.internal:4533}}
@@ -22,11 +22,12 @@ services:
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-}
       PGID: ${PGID:-1000}
       PUID: ${PUID:-1000}
-      SPOTIFYBU_APP_SECRET: ${SPOTIFYBU_APP_SECRET:?Set SPOTIFYBU_APP_SECRET in .env before starting TrackKeep}
-      SPOTIFYBU_AUTH_MODE: ${SPOTIFYBU_AUTH_MODE:-internal}
-      SPOTIFYBU_CHOWN_MUSIC: ${SPOTIFYBU_CHOWN_MUSIC:-false}
-      SPOTIFYBU_CONFIG_DIR: /config
-      SPOTIFYBU_SECURE_COOKIES: ${SPOTIFYBU_SECURE_COOKIES:-false}
+      TRACKKEEP_APP_SECRET: ${TRACKKEEP_APP_SECRET:-${SPOTIFYBU_APP_SECRET:?Set TRACKKEEP_APP_SECRET in .env before starting TrackKeep}}
+      TRACKKEEP_AUTH_MODE: ${TRACKKEEP_AUTH_MODE:-${SPOTIFYBU_AUTH_MODE:-internal}}
+      TRACKKEEP_CHOWN_MUSIC: ${TRACKKEEP_CHOWN_MUSIC:-${SPOTIFYBU_CHOWN_MUSIC:-false}}
+      TRACKKEEP_CONFIG_DIR: /config
+      TRACKKEEP_DATABASE_PATH: ${TRACKKEEP_DATABASE_PATH:-${SPOTIFYBU_DATABASE_PATH:-}}
+      TRACKKEEP_SECURE_COOKIES: ${TRACKKEEP_SECURE_COOKIES:-${SPOTIFYBU_SECURE_COOKIES:-false}}
       SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
     volumes:
       - spotifybu_config:/config

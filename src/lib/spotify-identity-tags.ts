@@ -2,6 +2,15 @@ import type { BackupTrack } from "./spotify";
 
 export const spotifyBuIdentityVersion = "1";
 export const spotifyBuIdentityCommentPrefix = "TrackKeep identity ";
+export const spotifyBuLegacyIdentityCommentPrefix = "SpotifyBU identity ";
+
+export const trackKeepIdentityTags = {
+  albumId: "trackkeep:album_id",
+  identityVersion: "trackkeep:identity_version",
+  isrc: "trackkeep:isrc",
+  trackId: "trackkeep:track_id",
+  trackUri: "trackkeep:track_uri"
+} as const;
 
 export const spotifyBuIdentityTags = {
   albumId: "spotifybu:album_id",
@@ -12,11 +21,11 @@ export const spotifyBuIdentityTags = {
 } as const;
 
 export const spotifyBuIdentityTagAliases = {
-  albumId: tagAliases(spotifyBuIdentityTags.albumId),
-  identityVersion: tagAliases(spotifyBuIdentityTags.identityVersion),
-  isrc: tagAliases(spotifyBuIdentityTags.isrc),
-  trackId: tagAliases(spotifyBuIdentityTags.trackId),
-  trackUri: tagAliases(spotifyBuIdentityTags.trackUri)
+  albumId: identityTagAliases("albumId"),
+  identityVersion: identityTagAliases("identityVersion"),
+  isrc: identityTagAliases("isrc"),
+  trackId: identityTagAliases("trackId"),
+  trackUri: identityTagAliases("trackUri")
 } as const;
 
 export type SpotifyBuIdentityMetadata = {
@@ -59,13 +68,25 @@ export function spotifyBuIdentityMetadataForTrack(
 export function spotifyBuIdentityMetadataEntries(
   metadata: SpotifyBuIdentityMetadata
 ) {
-  return [
-    [spotifyBuIdentityTags.trackId, metadata.spotifyTrackId],
-    [spotifyBuIdentityTags.trackUri, metadata.spotifyTrackUri],
-    [spotifyBuIdentityTags.albumId, metadata.spotifyAlbumId],
-    [spotifyBuIdentityTags.isrc, metadata.spotifyIsrc],
-    [spotifyBuIdentityTags.identityVersion, metadata.spotifybuIdentityVersion]
-  ].filter(
+  const identityValues = {
+    albumId: metadata.spotifyAlbumId,
+    identityVersion: metadata.spotifybuIdentityVersion,
+    isrc: metadata.spotifyIsrc,
+    trackId: metadata.spotifyTrackId,
+    trackUri: metadata.spotifyTrackUri
+  } as const;
+
+  const entries: Array<[string, string | undefined]> = [
+    trackKeepIdentityTags,
+    spotifyBuIdentityTags
+  ].flatMap((tags) =>
+    (Object.keys(identityValues) as Array<keyof typeof identityValues>).map(
+      (key) =>
+        [tags[key], identityValues[key]] as [string, string | undefined]
+    )
+  );
+
+  return entries.filter(
     (entry): entry is [string, string] =>
       typeof entry[1] === "string" && entry[1].length > 0
   );
@@ -79,29 +100,29 @@ export function spotifyBuIdentityMetadataFromTagLookup(
   );
   const spotifyTrackUri = normalizeSpotifyTrackUri(
     tagLookup(spotifyBuIdentityTagAliases.trackUri) ??
-      commentMetadata[spotifyBuIdentityTags.trackUri]
+      identityCommentValue(commentMetadata, "trackUri")
   );
   const spotifyTrackId =
     normalizeSpotifyId(
       tagLookup(spotifyBuIdentityTagAliases.trackId) ??
-        commentMetadata[spotifyBuIdentityTags.trackId]
+        identityCommentValue(commentMetadata, "trackId")
     ) ??
     spotifyTrackIdFromUri(spotifyTrackUri);
 
   return {
     spotifyAlbumId: normalizeSpotifyId(
       tagLookup(spotifyBuIdentityTagAliases.albumId) ??
-        commentMetadata[spotifyBuIdentityTags.albumId]
+        identityCommentValue(commentMetadata, "albumId")
     ),
     spotifyIsrc: normalizeIdentityValue(
       tagLookup(spotifyBuIdentityTagAliases.isrc) ??
-        commentMetadata[spotifyBuIdentityTags.isrc]
+        identityCommentValue(commentMetadata, "isrc")
     ),
     spotifyTrackId,
     spotifyTrackUri,
     spotifybuIdentityVersion: normalizeIdentityValue(
       tagLookup(spotifyBuIdentityTagAliases.identityVersion) ??
-        commentMetadata[spotifyBuIdentityTags.identityVersion]
+        identityCommentValue(commentMetadata, "identityVersion")
     )
   };
 }
@@ -171,16 +192,36 @@ function tagAliases(tagName: string) {
   ];
 }
 
+function identityTagAliases(key: keyof typeof spotifyBuIdentityTags) {
+  return [
+    ...tagAliases(trackKeepIdentityTags[key]),
+    ...tagAliases(spotifyBuIdentityTags[key])
+  ];
+}
+
+function identityCommentValue(
+  commentMetadata: Record<string, string>,
+  key: keyof typeof spotifyBuIdentityTags
+) {
+  return identityTagAliases(key)
+    .map((alias) => commentMetadata[alias])
+    .find((value) => typeof value === "string" && value.length > 0);
+}
+
 function spotifyBuIdentityMetadataFromComment(value?: string) {
   const trimmedValue = value?.trim();
+  const commentPrefix = [
+    spotifyBuIdentityCommentPrefix,
+    spotifyBuLegacyIdentityCommentPrefix
+  ].find((prefix) => trimmedValue?.startsWith(prefix));
 
-  if (!trimmedValue?.startsWith(spotifyBuIdentityCommentPrefix)) {
+  if (!trimmedValue || !commentPrefix) {
     return {} as Record<string, string>;
   }
 
   try {
     const parsed = JSON.parse(
-      trimmedValue.slice(spotifyBuIdentityCommentPrefix.length)
+      trimmedValue.slice(commentPrefix.length)
     ) as unknown;
 
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
