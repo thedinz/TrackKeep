@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import type { NextResponse } from "next/server";
 import path from "path";
 import { shouldUseSecureCookies } from "./cookies";
+import { getTrackKeepEnvironmentValue } from "./trackkeep-env";
 
 export const APP_AUTH_COOKIE = "spotifybu_app_session";
 
@@ -314,7 +315,9 @@ function normalizeAppAuthMode(value?: string): AppAuthMode {
 }
 
 function getDefaultAppAuthMode(): AppAuthMode {
-  return normalizeAppAuthMode(process.env.SPOTIFYBU_AUTH_MODE?.trim());
+  return normalizeAppAuthMode(
+    getTrackKeepEnvironmentValue("AUTH_MODE")?.trim()
+  );
 }
 
 async function writeCredentials(credentials: StoredCredentials) {
@@ -333,7 +336,7 @@ function getCredentialPath() {
 }
 
 function getConfigDirectory() {
-  const configuredDirectory = process.env.SPOTIFYBU_CONFIG_DIR?.trim();
+  const configuredDirectory = getTrackKeepEnvironmentValue("CONFIG_DIR")?.trim();
 
   if (configuredDirectory) {
     return path.resolve(/* turbopackIgnore: true */ configuredDirectory);
@@ -344,7 +347,7 @@ function getConfigDirectory() {
 
 function getAppAuthSecret() {
   return (
-    process.env.SPOTIFYBU_APP_SECRET ||
+    getTrackKeepEnvironmentValue("APP_SECRET") ||
     "spotifybu-development-session-secret"
   );
 }

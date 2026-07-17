@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAppUrl } from "@/lib/app-url";
+import { getTrackKeepEnvironmentValue } from "@/lib/trackkeep-env";
 
 const appAuthCookie = "spotifybu_app_session";
 const publicPaths = new Set([
@@ -145,7 +146,7 @@ async function signPayload(payload: string) {
 
 function getAppAuthSecret() {
   return (
-    process.env.SPOTIFYBU_APP_SECRET ||
+    getTrackKeepEnvironmentValue("APP_SECRET") ||
     "spotifybu-development-session-secret"
   );
 }

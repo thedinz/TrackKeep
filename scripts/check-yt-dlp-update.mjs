@@ -17,7 +17,8 @@ console.log(
 console.log(`yt-dlp installed: ${installedVersion ?? "not found on PATH"}`);
 
 if (
-  process.env.SPOTIFYBU_YTDLP_CHECK_FAIL_ON_STALE === "1" &&
+  (process.env.TRACKKEEP_YTDLP_CHECK_FAIL_ON_STALE ??
+    process.env.SPOTIFYBU_YTDLP_CHECK_FAIL_ON_STALE) === "1" &&
   installedVersion &&
   latestRelease?.version &&
   installedVersion !== latestRelease.version

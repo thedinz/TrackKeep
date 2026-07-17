@@ -6,9 +6,10 @@ The point is not to replace Navidrome search. Navidrome already tells you what f
 
 Current stable release: `1.7.0`. It includes the web UI, local or external-proxy app auth, Spotify OAuth diagnostics, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, Navidrome folder checks, TrackKeep organize naming, library indexing, durable Spotify identity tags for downloaded files, matched-file organization, Navidrome and Plex playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
-Existing Docker image names, `SPOTIFYBU_*` environment variables, and `.spotifybu`
-data paths retain their original identifiers for backward compatibility. The
-product name shown in the app and documentation is TrackKeep.
+The existing Docker image name and `.spotifybu` data paths retain their original
+identifiers so upgrades keep using the same image and persisted data. New
+configuration uses `TRACKKEEP_*` environment variables; matching `SPOTIFYBU_*`
+names remain supported as legacy fallbacks.
 
 Download the latest stable release from GitHub: https://github.com/thedinz/TrackKeep/releases/latest
 
@@ -78,10 +79,10 @@ For stable installs:
 
 ```yaml
 services:
-  spotifybu:
+  trackkeep:
     image: ghcr.io/thedinz/spotifybu:latest
     pull_policy: always
-    container_name: spotifybu
+    container_name: trackkeep
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -95,10 +96,10 @@ services:
       NEXT_PUBLIC_APP_URL: http://127.0.0.1:3000
       PGID: "1000"
       PUID: "1000"
-      SPOTIFYBU_APP_SECRET: change-this-to-a-long-random-value
-      SPOTIFYBU_AUTH_MODE: internal
-      SPOTIFYBU_CHOWN_MUSIC: "false"
-      SPOTIFYBU_CONFIG_DIR: /config
+      TRACKKEEP_APP_SECRET: change-this-to-a-long-random-value
+      TRACKKEEP_AUTH_MODE: internal
+      TRACKKEEP_CHOWN_MUSIC: "false"
+      TRACKKEEP_CONFIG_DIR: /config
       SPOTIFY_CLIENT_ID: your-spotify-client-id
     volumes:
       - spotifybu_config:/config
@@ -145,16 +146,16 @@ Set these values before starting the app:
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `SPOTIFYBU_IMAGE` | No | Docker image tag to run. The checked-in Docker example defaults to `ghcr.io/thedinz/spotifybu:dev` for testing. Use `ghcr.io/thedinz/spotifybu:latest` for stable installs. |
-| `SPOTIFYBU_PORT` | No | Host port for the web UI. Defaults to `3000`. |
+| `TRACKKEEP_IMAGE` | No | Docker image tag to run. The checked-in Docker example defaults to `ghcr.io/thedinz/spotifybu:dev` for testing. Use `ghcr.io/thedinz/spotifybu:latest` for stable installs. |
+| `TRACKKEEP_PORT` | No | Host port for the web UI. Defaults to `3000`. |
 | `NEXT_PUBLIC_APP_URL` | No | Public URL for TrackKeep. Set this for reverse-proxy installs. If blank, TrackKeep derives it from `X-Forwarded-Host`/`X-Forwarded-Proto` or the request host. |
-| `SPOTIFYBU_APP_SECRET` | Yes | Long random value used to sign TrackKeep's own login sessions. This is not your Spotify app Client Secret. |
-| `SPOTIFYBU_DATABASE_PATH` | No | Optional SQLite path. Defaults to `<SPOTIFYBU_CONFIG_DIR>/spotifybu.sqlite`. |
+| `TRACKKEEP_APP_SECRET` | Yes | Long random value used to sign TrackKeep's own login sessions. This is not your Spotify app Client Secret. |
+| `TRACKKEEP_DATABASE_PATH` | No | Optional SQLite path. Defaults to `<TRACKKEEP_CONFIG_DIR>/spotifybu.sqlite`. |
 | `PUID` | No | User ID used by the TrackKeep process inside the container. Defaults to `1000` for compatibility with older images. On Unraid, set this to match NaviClean/Navidrome, commonly `99`. |
 | `PGID` | No | Group ID used by the TrackKeep process inside the container. Defaults to `1000` for compatibility with older images. On Unraid, set this to match NaviClean/Navidrome, commonly `100`. |
-| `SPOTIFYBU_CHOWN_MUSIC` | No | Advanced opt-in repair switch. Set `true` only if you intentionally want container startup to recursively chown the mounted music library to `PUID:PGID`. Defaults to `false`. |
-| `SPOTIFYBU_SECURE_COOKIES` | No | Set `true` for HTTPS reverse-proxy installs. Defaults to `false` in the Docker example for Unraid-style HTTP installs. |
-| `SPOTIFYBU_AUTH_MODE` | No | Set `external` when Authentik or another trusted reverse proxy protects TrackKeep. Defaults to `internal`, which keeps the built-in login page enabled. |
+| `TRACKKEEP_CHOWN_MUSIC` | No | Advanced opt-in repair switch. Set `true` only if you intentionally want container startup to recursively chown the mounted music library to `PUID:PGID`. Defaults to `false`. |
+| `TRACKKEEP_SECURE_COOKIES` | No | Set `true` for HTTPS reverse-proxy installs. Defaults to `false` in the Docker example for Unraid-style HTTP installs. |
+| `TRACKKEEP_AUTH_MODE` | No | Set `external` when Authentik or another trusted reverse proxy protects TrackKeep. Defaults to `internal`, which keeps the built-in login page enabled. |
 | `NAVIDROME_MUSIC_PATH` | Yes | Host path to the Navidrome music folder. |
 | `MUSIC_LIBRARY_HOST_PATH` | No | Generic equivalent accepted by the checked-in Compose file. |
 | `SPOTIFY_CLIENT_ID` | Yes | Spotify app Client ID. TrackKeep uses Authorization Code with PKCE, so it does not use or ask for the Spotify Client Secret. |
@@ -167,6 +168,11 @@ Set these values before starting the app:
 | `MUSIC_LIBRARY_URL` | No | Generic equivalent for `NAVIDROME_URL`. |
 | `MUSIC_LIBRARY_USERNAME` | No | Generic equivalent for `NAVIDROME_USERNAME`. |
 | `MUSIC_LIBRARY_PASSWORD` | No | Generic equivalent for `NAVIDROME_PASSWORD`. |
+
+Every documented `TRACKKEEP_*` setting also accepts the matching legacy
+`SPOTIFYBU_*` name. If both are set, `TRACKKEEP_*` takes precedence. This lets
+existing Unraid and Compose installs upgrade without editing their current
+configuration while new installs use the TrackKeep names.
 
 TrackKeep is Navidrome-first, but it still accepts the generic
 `MUSIC_LIBRARY_*` names for existing installs and for anyone pointing the same
@@ -182,13 +188,13 @@ Inside the container:
   route failures and unusual Spotify playlist payloads.
 - `/music` is the mounted Navidrome music folder.
 - `MUSIC_LIBRARY_PATH` is set to `/music`.
-- `SPOTIFYBU_CONFIG_DIR` is set to `/config`.
+- `TRACKKEEP_CONFIG_DIR` is set to `/config`.
 
 At startup, the container creates `/config`, makes it writable by `PUID:PGID`,
 then runs the app as that UID/GID. Existing installs that do not set `PUID` or
 `PGID` keep the previous `1000:1000` behavior. TrackKeep does not recursively
 change ownership of `/music` by default. On large libraries, that can be slow and
-risky, so `SPOTIFYBU_CHOWN_MUSIC=true` is an explicit repair option only.
+risky, so `TRACKKEEP_CHOWN_MUSIC=true` is an explicit repair option only.
 
 ### Unraid Shared Library Permissions
 
@@ -203,7 +209,7 @@ If NaviClean creates or moves folders as `99:100` while TrackKeep runs as
 `1000:1000`, TrackKeep may still read and index the files but fail to rename or
 move them during Organize. In the UI this shows up as files that "could not be
 moved." Matching `PUID`/`PGID` lets both apps create and move files with the
-same ownership model. Keep `SPOTIFYBU_CHOWN_MUSIC=false` unless you have
+same ownership model. Keep `TRACKKEEP_CHOWN_MUSIC=false` unless you have
 intentionally decided TrackKeep should take ownership of the whole mounted
 library at startup.
 
@@ -219,7 +225,7 @@ For a normal Unraid/LAN install, use an HTTPS URL for TrackKeep:
 
 ```text
 NEXT_PUBLIC_APP_URL=https://spotifybu.example.com
-SPOTIFYBU_SECURE_COOKIES=true
+TRACKKEEP_SECURE_COOKIES=true
 ```
 
 For reverse-proxy installs, setting `NEXT_PUBLIC_APP_URL` is recommended. You
@@ -233,7 +239,7 @@ If your reverse proxy also handles user authentication, open Settings and set
 Authentication Provider to `External proxy auth`, or start the container with:
 
 ```text
-SPOTIFYBU_AUTH_MODE=external
+TRACKKEEP_AUTH_MODE=external
 ```
 
 External auth mode disables TrackKeep's built-in login form and treats requests
@@ -251,7 +257,7 @@ literal rather than `localhost`:
 
 ```text
 NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000
-SPOTIFYBU_SECURE_COOKIES=false
+TRACKKEEP_SECURE_COOKIES=false
 ```
 
 Then add the Spotify redirect URI shown on TrackKeep's Connect Spotify screen.
@@ -363,16 +369,19 @@ fails, leftover staging files stay on the mounted music volume rather than the
 container filesystem. After 10 minutes of provider-download idleness, TrackKeep
 removes stale staging files older than 10 minutes old.
 
-Newly tagged TrackKeep provider downloads also include Spotify identity metadata
-such as `spotifybu:track_id`, `spotifybu:track_uri`, `spotifybu:album_id`,
-`spotifybu:isrc`, and `spotifybu:identity_version`. Opus downloads store these
-as normal Vorbis comments alongside title, artist, album artist, album, track,
-disc, release date, ISRC, compilation, and embedded artwork. Library indexing
-reads these tags first so a file can still reconnect to its Spotify track after
-another organizer moves or renames it. Playlist membership is not written into
-audio files; it continues to come from TrackKeep playlist backup snapshots and
-the local database. Settings includes a maintenance action to add these identity
-tags to already matched backups from saved playlist snapshots.
+Newly tagged TrackKeep provider downloads include Spotify identity metadata in
+both the current `trackkeep:*` namespace and the legacy `spotifybu:*` namespace,
+including `track_id`, `track_uri`, `album_id`, `isrc`, and `identity_version`.
+Dual-writing keeps existing NaviClean releases able to exclude TrackKeep-managed
+files, while TrackKeep reads either namespace (including underscore, iTunes, and
+legacy M4A comment forms). Opus downloads store these as normal Vorbis comments
+alongside title, artist, album artist, album, track, disc, release date, ISRC,
+compilation, and embedded artwork. Library indexing reads these tags first so a
+file can still reconnect to its Spotify track after another organizer moves or
+renames it. Playlist membership is not written into audio files; it continues
+to come from TrackKeep playlist backup snapshots and the local database.
+Settings includes a maintenance action to add these identity tags to already
+matched backups from saved playlist snapshots.
 
 Navidrome still needs read access to the same host folder and a scan/watch configuration that sees new files.
 
@@ -451,7 +460,7 @@ Set at least:
 SPOTIFY_CLIENT_ID=
 NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000
 NAVIDROME_LIBRARY_PATH=/path/to/navidrome/music
-SPOTIFYBU_APP_SECRET=change-this-to-a-long-random-value
+TRACKKEEP_APP_SECRET=change-this-to-a-long-random-value
 NAVIDROME_USERNAME=
 NAVIDROME_PASSWORD=
 ```
@@ -483,8 +492,8 @@ docker run --rm -p 3000:3000 \
   -e NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000 \
   -e PUID=1000 \
   -e PGID=1000 \
-  -e SPOTIFYBU_APP_SECRET=change-this-to-a-long-random-value \
-  -e SPOTIFYBU_CHOWN_MUSIC=false \
+  -e TRACKKEEP_APP_SECRET=change-this-to-a-long-random-value \
+  -e TRACKKEEP_CHOWN_MUSIC=false \
   -e SPOTIFY_CLIENT_ID=your-spotify-client-id \
   -e MUSIC_LIBRARY_PATH=/music \
   -e NAVIDROME_USERNAME=your-navidrome-username \
@@ -497,7 +506,7 @@ docker run --rm -p 3000:3000 \
 ## Architecture
 
 - `src/lib/app-auth.ts` owns internal/external app auth mode, local TrackKeep web login, session cookie signing, and persisted credential updates.
-- `src/lib/database.ts` opens the local SQLite database under `SPOTIFYBU_CONFIG_DIR`.
+- `src/lib/database.ts` opens the local SQLite database under `TRACKKEEP_CONFIG_DIR`.
 - `src/lib/backup-store.ts` persists deduplicated playlist metadata backup snapshots.
 - `src/lib/spotify.ts` owns Spotify API calls and export shaping.
 - `src/lib/music-library.ts` owns Navidrome music path checks, safe target directory creation, folder planning, library indexing, local matching, matched-file organization, album-folder logging, and Navidrome playlist replace, append, and full-sync modes.

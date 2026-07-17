@@ -1,7 +1,11 @@
+import { getTrackKeepEnvironmentValue } from "./trackkeep-env";
+
 type CookieRequest = Pick<Request, "headers" | "url">;
 
 export function shouldUseSecureCookies(request?: CookieRequest) {
-  const configuredValue = process.env.SPOTIFYBU_SECURE_COOKIES?.trim().toLowerCase();
+  const configuredValue = getTrackKeepEnvironmentValue("SECURE_COOKIES")
+    ?.trim()
+    .toLowerCase();
 
   if (configuredValue) {
     return ["1", "true", "yes", "on"].includes(configuredValue);

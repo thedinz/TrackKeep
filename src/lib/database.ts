@@ -1,6 +1,7 @@
 import { mkdirSync } from "fs";
 import path from "path";
 import { DatabaseSync } from "node:sqlite";
+import { getTrackKeepEnvironmentValue } from "./trackkeep-env";
 
 let database: DatabaseSync | null = null;
 
@@ -57,13 +58,13 @@ export function getSpotifyBuDatabase() {
 
 export function getSpotifyBuDatabasePath() {
   return (
-    process.env.SPOTIFYBU_DATABASE_PATH?.trim() ||
+    getTrackKeepEnvironmentValue("DATABASE_PATH")?.trim() ||
     path.join(getConfigDirectory(), "spotifybu.sqlite")
   );
 }
 
 function getConfigDirectory() {
-  const configuredDirectory = process.env.SPOTIFYBU_CONFIG_DIR?.trim();
+  const configuredDirectory = getTrackKeepEnvironmentValue("CONFIG_DIR")?.trim();
 
   if (configuredDirectory) {
     return path.resolve(/* turbopackIgnore: true */ configuredDirectory);

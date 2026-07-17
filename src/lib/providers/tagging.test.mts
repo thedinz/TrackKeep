@@ -13,8 +13,10 @@ import {
   tagDownloadedFile
 } from "./tagging.ts";
 import {
+  spotifyBuIdentityCommentPrefix,
   spotifyBuIdentityTags,
-  spotifyBuIdentityVersion
+  spotifyBuIdentityVersion,
+  trackKeepIdentityTags
 } from "../spotify-identity-tags.ts";
 import type { BackupTrack } from "../spotify.ts";
 
@@ -33,6 +35,25 @@ test("tagDownloadedFile metadata arguments include TrackKeep identity tags", () 
     })
   );
 
+  assert.ok(
+    metadataValues.includes(`${trackKeepIdentityTags.trackId}=${spotifyTrackId}`)
+  );
+  assert.ok(
+    metadataValues.includes(
+      `${trackKeepIdentityTags.trackUri}=spotify:track:${spotifyTrackId}`
+    )
+  );
+  assert.ok(
+    metadataValues.includes(`${trackKeepIdentityTags.albumId}=${spotifyAlbumId}`)
+  );
+  assert.ok(
+    metadataValues.includes(`${trackKeepIdentityTags.isrc}=USRC17607839`)
+  );
+  assert.ok(
+    metadataValues.includes(
+      `${trackKeepIdentityTags.identityVersion}=${spotifyBuIdentityVersion}`
+    )
+  );
   assert.ok(
     metadataValues.includes(`${spotifyBuIdentityTags.trackId}=${spotifyTrackId}`)
   );
@@ -342,6 +363,11 @@ test("writes Opus audio tags and artwork with discrete TrackKeep identity tags",
   assert.equal(tags.releasedate, "2012-08-07");
   assert.equal(tags.isrc, "USRC17607839");
   assert.equal(tags.compilation, "1");
+  assert.equal(tags[trackKeepIdentityTags.trackId], spotifyTrackId);
+  assert.equal(tags[trackKeepIdentityTags.trackUri], `spotify:track:${spotifyTrackId}`);
+  assert.equal(tags[trackKeepIdentityTags.albumId], spotifyAlbumId);
+  assert.equal(tags[trackKeepIdentityTags.isrc], "USRC17607839");
+  assert.equal(tags[trackKeepIdentityTags.identityVersion], spotifyBuIdentityVersion);
   assert.equal(tags[spotifyBuIdentityTags.trackId], spotifyTrackId);
   assert.equal(tags[spotifyBuIdentityTags.trackUri], `spotify:track:${spotifyTrackId}`);
   assert.equal(tags[spotifyBuIdentityTags.albumId], spotifyAlbumId);
@@ -404,6 +430,70 @@ test("writes Opus artwork without passing large picture blocks through argv", as
   assert.equal(probe.hasAttachedPicture, true);
   assert.equal(probe.tags.title, "Fuck You All The Time - Shlohmo Remix");
   assert.equal(probe.tags.album, "Late Nights With Jeremih");
+});
+
+test("writes dual identity namespaces to the M4A artwork comment fallback", async (t) => {
+  if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
+    t.skip("ffmpeg and ffprobe are required for M4A tagging coverage.");
+    return;
+  }
+
+  const directory = await mkdtemp(path.join(tmpdir(), "trackkeep-m4a-tagging-"));
+  const coverServer = await startCoverServer();
+  t.after(async () => {
+    await closeServer(coverServer.server);
+    await rm(directory, {
+      force: true,
+      recursive: true
+    });
+  });
+
+  const filePath = path.join(directory, "provider-source.m4a");
+  const spotifyTrackId = "4uLU6hMCjMI75M1A2tKUQC";
+  const spotifyAlbumId = "0ETFjACtuP2ADo6LFhL6HN";
+
+  await execFileAsync(
+    "ffmpeg",
+    [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "anullsrc=r=44100:cl=stereo",
+      "-t",
+      "0.1",
+      "-c:a",
+      "aac",
+      filePath
+    ],
+    {
+      timeout: 60000
+    }
+  );
+
+  await tagDownloadedFile(filePath, {
+    ...exampleTrack,
+    albumId: spotifyAlbumId,
+    albumImageUrl: coverServer.url,
+    id: spotifyTrackId,
+    isrc: "USRC17607839",
+    spotifyUri: `spotify:track:${spotifyTrackId}`
+  } satisfies BackupTrack);
+
+  const probe = await readAudioProbe(filePath);
+  const comment = probe.tags.comment;
+
+  assert.equal(probe.hasAttachedPicture, true);
+  assert.ok(comment?.startsWith(spotifyBuIdentityCommentPrefix));
+
+  const identity = JSON.parse(
+    comment.slice(spotifyBuIdentityCommentPrefix.length)
+  ) as Record<string, string>;
+
+  assert.equal(identity[trackKeepIdentityTags.trackId], spotifyTrackId);
+  assert.equal(identity[trackKeepIdentityTags.albumId], spotifyAlbumId);
+  assert.equal(identity[spotifyBuIdentityTags.trackId], spotifyTrackId);
+  assert.equal(identity[spotifyBuIdentityTags.albumId], spotifyAlbumId);
 });
 
 test("fails instead of silently skipping expected Spotify artwork", async (t) => {

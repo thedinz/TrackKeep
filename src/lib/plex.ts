@@ -1,6 +1,7 @@
 import { randomBytes } from "crypto";
 import { mkdir, readFile, rename, writeFile } from "fs/promises";
 import path from "path";
+import { getTrackKeepEnvironmentValue } from "./trackkeep-env";
 import {
   matchMusicLibraryTracks,
   type MusicLibraryIndexedTrack,
@@ -1397,7 +1398,7 @@ function getPlexSettingsPath() {
 }
 
 function getConfigDirectory() {
-  const configuredDirectory = process.env.SPOTIFYBU_CONFIG_DIR?.trim();
+  const configuredDirectory = getTrackKeepEnvironmentValue("CONFIG_DIR")?.trim();
 
   if (configuredDirectory) {
     return path.resolve(/* turbopackIgnore: true */ configuredDirectory);
