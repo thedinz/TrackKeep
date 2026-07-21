@@ -381,13 +381,21 @@ file can still reconnect to its Spotify track after another organizer moves or
 renames it. Playlist membership is not written into audio files; it continues
 to come from TrackKeep playlist backup snapshots and the local database.
 Settings includes a maintenance action to add these identity tags to already
-matched backups from saved playlist snapshots.
+matched backups from saved playlist snapshots. TrackKeep also records downloaded
+and organized files in `/music/.spotifybu/managed-tracks.json`, allowing that
+maintenance action to restore tags even when a file did not come from a saved
+playlist snapshot. Existing provider-download history remains supported.
 
 Navidrome still needs read access to the same host folder and a scan/watch configuration that sees new files.
 
 ### Organize Matched Files
 
 After a library scan, the Organize action compares matched local files against the same naming scheme used for new TrackKeep downloads. It moves or renames loose files, older TrackKeep folder layouts, and other matched tracks that are not exactly in the expected structure. The rendered Spotify-derived target path is canonical, so a different year, folder name, or filename is treated as organization work instead of being accepted as close enough.
+
+Before moving a matched file, Organize writes the same dual TrackKeep and legacy
+SpotifyBU identity tags used by provider downloads. If tagging fails, TrackKeep
+leaves the file at its original path and reports the failure instead of moving an
+untagged file that NaviClean could process again.
 
 Running Organize before backing up missing files is recommended, but not required. It gives TrackKeep a clean Navidrome-folder view first, can repair older organize runs, and reduces the chance of downloading a track that already exists under a messy path. If you skip it, new provider downloads still stage into the active organize layout.
 

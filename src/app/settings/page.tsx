@@ -1024,8 +1024,9 @@ export default function SettingsPage() {
             <div className="auth-note">
               <Fingerprint size={18} />
               <span>
-                Add TrackKeep identity, release date, and compilation tags to
-                matched files from saved playlist snapshots.
+                Restore TrackKeep identity, release date, and compilation tags
+                on files TrackKeep downloaded or organized, plus matched files
+                from saved playlist snapshots.
               </span>
             </div>
 
@@ -1400,7 +1401,7 @@ function identityBackfillSummary(
 
   return `Metadata backfill checked ${numberFormatter.format(
     backfill.trackCount
-  )} tracks from ${numberFormatter.format(
+  )} managed or matched tracks using TrackKeep history and ${numberFormatter.format(
     backfill.snapshotCount
   )} snapshots: ${parts.join(", ")}.`;
 }

@@ -306,6 +306,7 @@ type LibraryMatchesResponse = {
 type MusicLibraryMoveFailure = {
   code?: string;
   message: string;
+  stage?: "move" | "tag";
   sourcePath: string;
   sourceRelativePath: string;
   targetPath: string;
@@ -315,11 +316,13 @@ type MusicLibraryMoveFailure = {
 };
 
 type LibraryOrganizeResponse = LibraryIndexResponse & LibraryMatchesResponse & {
+  alreadyTaggedCount: number;
   attemptedCount: number;
   moveFailures: MusicLibraryMoveFailure[];
   movedCount: number;
   remainingMoveCount: number;
   skippedCount: number;
+  taggedCount: number;
 };
 
 type LibraryOrganizeIgnoreResponse =
@@ -1384,8 +1387,10 @@ export default function Home() {
       const attemptedTrackPositions = new Set<number>();
       let latestLibraryMatches = libraryMatches;
       const moveFailures: MusicLibraryMoveFailure[] = [];
+      let totalAlreadyTaggedCount = 0;
       let totalMovedCount = 0;
       let totalSkippedCount = 0;
+      let totalTaggedCount = 0;
       const initialMoveCount = latestLibraryMatches.filter(
         (match) =>
           match.needsMove &&
@@ -1433,8 +1438,10 @@ export default function Home() {
           }
         );
 
+        totalAlreadyTaggedCount += response.alreadyTaggedCount ?? 0;
         totalMovedCount += response.movedCount;
         totalSkippedCount += response.skippedCount;
+        totalTaggedCount += response.taggedCount ?? 0;
         moveFailures.push(...(response.moveFailures ?? []));
         latestLibraryMatches = response.libraryMatches;
         setLibraryIndex(response.index);
@@ -1451,8 +1458,18 @@ export default function Home() {
         ).length;
         setLibraryOrganizeMessage(
           `Organized ${numberFormatter.format(totalMovedCount)} files${
+            totalTaggedCount || totalAlreadyTaggedCount
+              ? `; wrote TrackKeep tags to ${numberFormatter.format(
+                  totalTaggedCount
+                )}, ${numberFormatter.format(
+                  totalAlreadyTaggedCount
+                )} already tagged`
+              : ""
+          }${
             totalSkippedCount
-              ? `; ${numberFormatter.format(totalSkippedCount)} could not be moved`
+              ? `; ${numberFormatter.format(
+                  totalSkippedCount
+                )} could not be tagged or moved`
               : ""
           }${
             remainingMoveCount
@@ -4968,8 +4985,9 @@ function errorMessage(error: unknown) {
 
 function formatMoveFailure(failure: MusicLibraryMoveFailure) {
   const code = failure.code ? `${failure.code}: ` : "";
+  const action = failure.stage === "tag" ? "Tagging failed" : "Move failed";
 
-  return `${failure.trackPosition}. ${failure.trackName} - ${code}${failure.message} Source: ${failure.sourcePath} Target: ${failure.targetPath}`;
+  return `${failure.trackPosition}. ${failure.trackName} - ${action}: ${code}${failure.message} Source: ${failure.sourcePath} Target: ${failure.targetPath}`;
 }
 
 function parseMusicLibraryPlaylistSyncMode(

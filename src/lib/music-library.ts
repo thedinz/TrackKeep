@@ -196,6 +196,27 @@ type MusicLibraryOrganizeIgnoreStore = {
   version: 1;
 };
 
+type MusicLibraryManagedTrack = {
+  managedAt: string;
+  relativePath: string;
+  source: "download" | "organize";
+  track: BackupTrack;
+};
+
+type MusicLibraryManagedTrackStore = {
+  tracks: Record<string, MusicLibraryManagedTrack>;
+  updatedAt: string;
+  version: 1;
+};
+
+type LegacyProviderDownloadLogEntry = {
+  album?: string;
+  artists?: string[];
+  relativePath?: string;
+  trackId?: string;
+  trackName?: string;
+};
+
 export type MusicLibraryIndexSummary = {
   generatedAt?: string;
   libraryPath?: string;
@@ -243,6 +264,7 @@ export type MusicLibraryTrackMatchMethod =
   | "spotify_identity";
 
 export type MusicLibraryTrackOrganizationResult = {
+  alreadyTaggedCount: number;
   attemptedCount: number;
   libraryMatches: MusicLibraryTrackMatch[];
   moveFailures: MusicLibraryTrackMoveFailure[];
@@ -250,6 +272,7 @@ export type MusicLibraryTrackOrganizationResult = {
   remainingMoveCount: number;
   skippedCount: number;
   summary: MusicLibraryIndexSummary;
+  taggedCount: number;
 };
 
 export type MusicLibraryTrackOrganizationIgnoreResult = {
@@ -262,6 +285,7 @@ export type MusicLibraryTrackOrganizationIgnoreResult = {
 export type MusicLibraryTrackMoveFailure = {
   code?: string;
   message: string;
+  stage?: "move" | "tag";
   sourcePath: string;
   sourceRelativePath: string;
   targetPath: string;
@@ -362,6 +386,8 @@ type MusicLibraryIdentityTagBackfillJobRecord =
 const albumFolderLogSegments = [".spotifybu", "album-folders.json"];
 const libraryIndexSegments = [".spotifybu", "library-index.json"];
 const organizeIgnoresSegments = [".spotifybu", "organize-ignores.json"];
+const managedTracksSegments = [".spotifybu", "managed-tracks.json"];
+const providerDownloadLogSegments = [".spotifybu", "provider-downloads.json"];
 const defaultOrganizeMoveLimit = 15;
 const organizeMoveFailureLimit = 10;
 const indexValidationConcurrency = 64;
@@ -395,6 +421,7 @@ const audioFileExtensions = new Set([
 ]);
 const execFileAsync = promisify(execFile);
 let activeLibraryIndexScan: Promise<void> | null = null;
+let managedTrackStoreWriteQueue = Promise.resolve();
 let lastLibraryIndexSummary: MusicLibraryIndexSummary | null = null;
 let libraryIndexScanStatus: MusicLibraryIndexScanStatus = {
   state: "idle"
@@ -975,6 +1002,212 @@ async function writeMusicLibraryOrganizeIgnores(
   );
 }
 
+export function recordMusicLibraryManagedTrack({
+  previousRelativePath,
+  relativePath,
+  source,
+  track
+}: {
+  previousRelativePath?: string;
+  relativePath: string;
+  source: MusicLibraryManagedTrack["source"];
+  track: BackupTrack;
+}) {
+  return updateMusicLibraryManagedTrackStore((store) => {
+    const normalizedRelativePath = normalizeRelativePath(relativePath);
+    const relativePathKey = normalizeRelativePathKey(normalizedRelativePath);
+
+    if (previousRelativePath) {
+      delete store.tracks[normalizeRelativePathKey(previousRelativePath)];
+    }
+
+    store.tracks[relativePathKey] = {
+      managedAt: new Date().toISOString(),
+      relativePath: normalizedRelativePath,
+      source,
+      track
+    };
+  });
+}
+
+async function removeMusicLibraryManagedTrack(relativePath: string) {
+  await updateMusicLibraryManagedTrackStore((store) => {
+    delete store.tracks[normalizeRelativePathKey(relativePath)];
+  });
+}
+
+function updateMusicLibraryManagedTrackStore(
+  update: (store: MusicLibraryManagedTrackStore) => void
+) {
+  const pendingUpdate = managedTrackStoreWriteQueue.then(async () => {
+    const store = await readMusicLibraryManagedTrackStore();
+
+    update(store);
+    store.updatedAt = new Date().toISOString();
+    await writeMusicLibraryManagedTrackStore(store);
+  });
+
+  managedTrackStoreWriteQueue = pendingUpdate.catch(() => undefined);
+
+  return pendingUpdate;
+}
+
+async function readMusicLibraryManagedTrackStore(): Promise<MusicLibraryManagedTrackStore> {
+  const libraryPath = getMusicLibraryPath();
+
+  if (!libraryPath) {
+    return emptyMusicLibraryManagedTrackStore();
+  }
+
+  try {
+    const contents = await readFile(
+      path.join(/* turbopackIgnore: true */ libraryPath, ...managedTracksSegments),
+      "utf8"
+    );
+    const parsed = JSON.parse(contents) as Partial<MusicLibraryManagedTrackStore>;
+
+    if (parsed.version !== 1 || !parsed.tracks) {
+      return emptyMusicLibraryManagedTrackStore();
+    }
+
+    return {
+      tracks: Object.fromEntries(
+        Object.entries(parsed.tracks).filter(
+          (entry): entry is [string, MusicLibraryManagedTrack] =>
+            isMusicLibraryManagedTrack(entry[1])
+        )
+      ),
+      updatedAt:
+        typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date(0).toISOString(),
+      version: 1
+    } satisfies MusicLibraryManagedTrackStore;
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return emptyMusicLibraryManagedTrackStore();
+    }
+
+    throw error;
+  }
+}
+
+async function writeMusicLibraryManagedTrackStore(
+  store: MusicLibraryManagedTrackStore
+) {
+  const storeDirectory = await ensureMusicLibraryTargetDirectory([".spotifybu"]);
+  const storePath = path.join(
+    /* turbopackIgnore: true */ storeDirectory,
+    "managed-tracks.json"
+  );
+  const tempPath = path.join(
+    /* turbopackIgnore: true */ storeDirectory,
+    "managed-tracks.tmp.json"
+  );
+
+  await writeFile(tempPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+  await rename(tempPath, storePath);
+}
+
+function emptyMusicLibraryManagedTrackStore(): MusicLibraryManagedTrackStore {
+  return {
+    tracks: {},
+    updatedAt: new Date(0).toISOString(),
+    version: 1
+  } satisfies MusicLibraryManagedTrackStore;
+}
+
+function isMusicLibraryManagedTrack(
+  value: unknown
+): value is MusicLibraryManagedTrack {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Partial<MusicLibraryManagedTrack>;
+  const track = record.track as Partial<BackupTrack> | undefined;
+
+  return Boolean(
+    typeof record.managedAt === "string" &&
+      typeof record.relativePath === "string" &&
+      (record.source === "download" || record.source === "organize") &&
+      track &&
+      typeof track.album === "string" &&
+      typeof track.albumArtist === "string" &&
+      Array.isArray(track.artists) &&
+      typeof track.name === "string"
+  );
+}
+
+async function readLegacyProviderManagedTracks(index: MusicLibraryIndex) {
+  const libraryPath = getMusicLibraryPath();
+
+  if (!libraryPath) {
+    return [];
+  }
+
+  try {
+    const contents = await readFile(
+      path.join(
+        /* turbopackIgnore: true */ libraryPath,
+        ...providerDownloadLogSegments
+      ),
+      "utf8"
+    );
+    const parsed = JSON.parse(contents) as {
+      downloads?: LegacyProviderDownloadLogEntry[];
+      version?: number;
+    };
+
+    if (parsed.version !== 1 || !Array.isArray(parsed.downloads)) {
+      return [];
+    }
+
+    const indexedTracksByPath = new Map(
+      index.tracks.map((track) => [normalizeRelativePathKey(track.relativePath), track])
+    );
+
+    return parsed.downloads.flatMap((entry, entryIndex) => {
+      const id = entry.trackId?.trim();
+      const name = entry.trackName?.trim();
+      const album = entry.album?.trim();
+      const artists = entry.artists?.map((artist) => artist.trim()).filter(Boolean);
+
+      if (!id || !name || !album || !artists?.length) {
+        return [];
+      }
+
+      const indexedTrack = entry.relativePath
+        ? indexedTracksByPath.get(normalizeRelativePathKey(entry.relativePath))
+        : undefined;
+
+      return [
+        {
+          album,
+          albumArtist: indexedTrack?.albumArtist || artists[0],
+          albumArtistIds: [],
+          albumReleaseDate: indexedTrack?.releaseDate,
+          artists,
+          artistIds: [],
+          discNumber: indexedTrack?.discNumber,
+          durationMs: indexedTrack?.durationMs ?? 0,
+          explicit: false,
+          id,
+          isrc: indexedTrack?.isrc,
+          name,
+          position: entryIndex + 1,
+          spotifyUri: `spotify:track:${id}`,
+          trackNumber: indexedTrack?.trackNumber
+        } satisfies BackupTrack
+      ];
+    });
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  }
+}
+
 export async function readCurrentMusicLibraryIndex() {
   const libraryPath = getMusicLibraryPath();
   const index = await readMusicLibraryIndex();
@@ -1180,6 +1413,12 @@ export async function deleteMusicLibraryTrack(relativePath: string) {
 
   await rm(targetPath, {
     force: true
+  });
+  await removeMusicLibraryManagedTrack(normalizedRelativePath).catch((error) => {
+    console.warn("[trackkeep.music-library] could not remove managed track", {
+      error: errorMessage(error),
+      relativePath: normalizedRelativePath
+    });
   });
 
   const naming = await loadOrganizeNamingSettings();
@@ -1524,8 +1763,14 @@ export async function backfillMusicLibrarySpotifyIdentityTags(
   }
 
   const snapshots = Object.values(getLatestPlaylistBackupSnapshots());
+  const managedTrackStore = await readMusicLibraryManagedTrackStore();
+  const legacyProviderTracks = await readLegacyProviderManagedTracks(index);
   const tracks = uniqueBackupTracksWithSpotifyIdentity(
-    snapshots.flatMap((snapshot) => snapshot.tracks)
+    [
+      ...snapshots.flatMap((snapshot) => snapshot.tracks),
+      ...Object.values(managedTrackStore.tracks).map((entry) => entry.track),
+      ...legacyProviderTracks
+    ]
   );
   const matches = matchMusicLibraryTracksWithIndexUsingSettings(
     tracks,
@@ -1739,13 +1984,16 @@ export async function organizeMusicLibraryMatchedTracks(
   );
   const occupiedRelativePaths = new Set(tracksByRelativePath.keys());
   const moveFailures: MusicLibraryTrackMoveFailure[] = [];
+  let alreadyTaggedCount = 0;
   let movedCount = 0;
   let skippedCount = 0;
+  let taggedCount = 0;
 
   for (const match of batchCandidates) {
     const matchedTrack = match.matchedTrack;
+    const backupTrack = backupTracksByPosition.get(match.trackPosition);
 
-    if (!matchedTrack || !match.recommendedRelativePath) {
+    if (!matchedTrack || !match.recommendedRelativePath || !backupTrack) {
       continue;
     }
 
@@ -1764,10 +2012,62 @@ export async function organizeMusicLibraryMatchedTracks(
 
     await ensureMusicLibraryTargetDirectory(relativePathSegments(targetDirectory));
 
+    await recordMusicLibraryManagedTrack({
+      relativePath: indexedTrack.relativePath,
+      source: "organize",
+      track: backupTrack
+    }).catch((error) => {
+      console.warn("[trackkeep.music-library] could not record organized track", {
+        error: errorMessage(error),
+        relativePath: indexedTrack.relativePath
+      });
+    });
+
+    let taggedIndexedTrack = indexedTrack;
+    const identityMetadata = spotifyBuIdentityMetadataForTrack(backupTrack);
+
+    if (indexedTrackNeedsSpotifyBackfill(indexedTrack, backupTrack, identityMetadata)) {
+      try {
+        await tagAudioFileWithSpotifyBackfillMetadata(sourcePath, backupTrack);
+        taggedIndexedTrack = await indexAudioFile(libraryPath, sourcePath);
+        taggedCount += 1;
+      } catch (error) {
+        skippedCount += 1;
+
+        if (moveFailures.length < organizeMoveFailureLimit) {
+          moveFailures.push(
+            musicLibraryMoveFailureFromError({
+              error,
+              match,
+              sourcePath,
+              sourceRelativePath: indexedTrack.relativePath,
+              stage: "tag",
+              targetPath,
+              targetRelativePath,
+              trackName: backupTrack.name
+            })
+          );
+        }
+
+        continue;
+      }
+    } else {
+      alreadyTaggedCount += 1;
+    }
+
+    if (taggedIndexedTrack !== indexedTrack) {
+      updatedTracks = updatedTracks.map((track) =>
+        normalizeRelativePathKey(track.relativePath) === sourceRelativePathKey
+          ? taggedIndexedTrack
+          : track
+      );
+      tracksByRelativePath.set(sourceRelativePathKey, taggedIndexedTrack);
+    }
+
     try {
       await rename(sourcePath, targetPath);
       const movedTrack = {
-        ...indexedTrack,
+        ...taggedIndexedTrack,
         fileName: path.posix.basename(targetRelativePath),
         relativeDirectory: targetDirectory,
         relativePath: targetRelativePath
@@ -1783,6 +2083,18 @@ export async function organizeMusicLibraryMatchedTracks(
       occupiedRelativePaths.delete(sourceRelativePathKey);
       occupiedRelativePaths.add(targetRelativePathKey);
       movedCount += 1;
+
+      await recordMusicLibraryManagedTrack({
+        previousRelativePath: indexedTrack.relativePath,
+        relativePath: targetRelativePath,
+        source: "organize",
+        track: backupTrack
+      }).catch((error) => {
+        console.warn("[trackkeep.music-library] could not update organized track", {
+          error: errorMessage(error),
+          relativePath: targetRelativePath
+        });
+      });
     } catch (error) {
       skippedCount += 1;
 
@@ -1793,11 +2105,10 @@ export async function organizeMusicLibraryMatchedTracks(
             match,
             sourcePath,
             sourceRelativePath: indexedTrack.relativePath,
+            stage: "move",
             targetPath,
             targetRelativePath,
-            trackName:
-              backupTracksByPosition.get(match.trackPosition)?.name ??
-              `Track ${match.trackPosition}`
+            trackName: backupTrack.name
           })
         );
       }
@@ -1822,6 +2133,7 @@ export async function organizeMusicLibraryMatchedTracks(
   );
 
   return {
+    alreadyTaggedCount,
     attemptedCount: batchCandidates.length,
     libraryMatches,
     moveFailures,
@@ -1832,7 +2144,8 @@ export async function organizeMusicLibraryMatchedTracks(
       updatedIndex,
       libraryPath,
       organizeNamingSettingsKey(naming)
-    )
+    ),
+    taggedCount
   } satisfies MusicLibraryTrackOrganizationResult;
 }
 
@@ -1841,6 +2154,7 @@ function musicLibraryMoveFailureFromError({
   match,
   sourcePath,
   sourceRelativePath,
+  stage,
   targetPath,
   targetRelativePath,
   trackName
@@ -1849,6 +2163,7 @@ function musicLibraryMoveFailureFromError({
   match: MusicLibraryTrackMatch;
   sourcePath: string;
   sourceRelativePath: string;
+  stage: MusicLibraryTrackMoveFailure["stage"];
   targetPath: string;
   targetRelativePath: string;
   trackName: string;
@@ -1859,6 +2174,7 @@ function musicLibraryMoveFailureFromError({
         ? error.code
         : undefined,
     message: error instanceof Error ? error.message : "Unknown move error.",
+    stage,
     sourcePath,
     sourceRelativePath,
     targetPath,

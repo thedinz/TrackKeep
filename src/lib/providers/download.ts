@@ -17,6 +17,7 @@ import {
   getMusicLibraryPath,
   prepareMusicLibraryTrackFileDestination,
   recordMusicLibraryAlbumFolders,
+  recordMusicLibraryManagedTrack,
   upsertMusicLibraryIndexTrack,
   type MusicLibraryIndexSummary
 } from "@/lib/music-library";
@@ -1248,6 +1249,17 @@ async function downloadAuthorizedProviderTrackInner(
       sourceUrl: source.sourceUrl,
       trackId: request.track.id,
       trackName: request.track.name
+    });
+    await recordMusicLibraryManagedTrack({
+      relativePath,
+      source: "download",
+      track: request.track
+    }).catch((error) => {
+      console.warn("[trackkeep.provider-download] could not record managed track", {
+        diagnosticId,
+        error: errorMessage(error),
+        relativePath
+      });
     });
 
     await recordProviderDownloadAttempt({

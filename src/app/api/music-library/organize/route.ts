@@ -36,13 +36,15 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       {
+        alreadyTaggedCount: result.alreadyTaggedCount,
         attemptedCount: result.attemptedCount,
         index: result.summary,
         libraryMatches: result.libraryMatches,
         moveFailures: result.moveFailures,
         movedCount: result.movedCount,
         remainingMoveCount: result.remainingMoveCount,
-        skippedCount: result.skippedCount
+        skippedCount: result.skippedCount,
+        taggedCount: result.taggedCount
       },
       {
         headers: {
