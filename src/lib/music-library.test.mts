@@ -1162,6 +1162,155 @@ test("organization ignores are reversible and skipped by organize", async (t) =>
   });
 });
 
+test("organize tags moved files and settings backfill restores managed tags", async (t) => {
+  if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
+    t.skip("ffmpeg and ffprobe are required for organize tagging coverage.");
+    return;
+  }
+
+  await withDefaultOrganizeSettings(t, async () => {
+    const libraryPath = await mkdtemp(
+      path.join(tmpdir(), "spotifybu-library-")
+    );
+    const spotifyTrack = {
+      ...exampleTrack,
+      albumId: "0sNOF9WDwhWunNAHPD3Baj",
+      durationMs: 100,
+      id: "6rqhFgbbKwnb9MLmUQDhG6",
+      isrc: "USABC1234567",
+      spotifyUri: "spotify:track:6rqhFgbbKwnb9MLmUQDhG6"
+    } satisfies BackupTrack;
+    const looseRelativePath = "Loose/Example Artist - Opening.mp3";
+    const loosePath = path.join(libraryPath, ...looseRelativePath.split("/"));
+
+    t.after(async () => {
+      await rm(libraryPath, {
+        force: true,
+        recursive: true
+      });
+    });
+
+    await withEnvironment(t, { MUSIC_LIBRARY_PATH: libraryPath }, async () => {
+      await mkdir(path.dirname(loosePath), {
+        recursive: true
+      });
+      await writeSilentMp3(loosePath, [
+        "title=Opening",
+        "artist=Example Artist",
+        "album_artist=Example Artist",
+        "album=Example Record",
+        "track=1"
+      ]);
+      await scanMusicLibraryIndex();
+
+      const organizeResult = await organizeMusicLibraryMatchedTracks([
+        spotifyTrack
+      ]);
+      const organizedRelativePath =
+        organizeResult.libraryMatches[0].matchedTrack?.relativePath;
+
+      assert.equal(organizeResult.movedCount, 1);
+      assert.equal(organizeResult.taggedCount, 1);
+      assert.equal(organizeResult.alreadyTaggedCount, 0);
+      assert.ok(organizedRelativePath);
+
+      const organizedPath = path.join(
+        libraryPath,
+        ...organizedRelativePath.split("/")
+      );
+      const organizedTags = await readAudioTags(organizedPath);
+      const organizedIndex = await readCurrentMusicLibraryIndex();
+      const organizedTrack = organizedIndex?.tracks.find(
+        (track) => track.relativePath === organizedRelativePath
+      );
+
+      assert.equal(
+        organizedTags[trackKeepIdentityTags.trackId],
+        spotifyTrack.id
+      );
+      assert.equal(
+        organizedTags[spotifyBuIdentityTags.trackId],
+        spotifyTrack.id
+      );
+      assert.equal(organizedTrack?.spotifyTrackId, spotifyTrack.id);
+      assert.equal(
+        organizedTrack?.spotifybuIdentityVersion,
+        spotifyBuIdentityVersion
+      );
+
+      await writeSilentMp3(organizedPath, [
+        "title=Opening",
+        "artist=Example Artist",
+        "album_artist=Example Artist",
+        "album=Example Record",
+        "track=1"
+      ]);
+      await scanMusicLibraryIndex();
+
+      const strippedIndex = await readCurrentMusicLibraryIndex();
+      assert.equal(strippedIndex?.tracks[0].spotifybuIdentityVersion, undefined);
+
+      const backfillResult = await backfillMusicLibrarySpotifyIdentityTags();
+      const restoredIndex = await readCurrentMusicLibraryIndex();
+
+      assert.equal(backfillResult.snapshotCount, 0);
+      assert.equal(backfillResult.trackCount, 1);
+      assert.equal(backfillResult.taggedCount, 1);
+      assert.equal(
+        restoredIndex?.tracks[0].spotifybuIdentityVersion,
+        spotifyBuIdentityVersion
+      );
+    });
+  });
+});
+
+test("organize leaves a file in place when TrackKeep tagging fails", async (t) => {
+  await withDefaultOrganizeSettings(t, async () => {
+    const libraryPath = await mkdtemp(
+      path.join(tmpdir(), "spotifybu-library-")
+    );
+    const spotifyTrack = {
+      ...exampleTrack,
+      id: "6rqhFgbbKwnb9MLmUQDhG6",
+      spotifyUri: "spotify:track:6rqhFgbbKwnb9MLmUQDhG6"
+    } satisfies BackupTrack;
+    const looseRelativePath = "Loose/Example Artist - Opening.mp3";
+    const loosePath = path.join(libraryPath, ...looseRelativePath.split("/"));
+
+    t.after(async () => {
+      await rm(libraryPath, {
+        force: true,
+        recursive: true
+      });
+    });
+
+    await withEnvironment(t, { MUSIC_LIBRARY_PATH: libraryPath }, async () => {
+      await mkdir(path.dirname(loosePath), {
+        recursive: true
+      });
+      await writeFile(loosePath, "not real audio", "utf8");
+      await scanMusicLibraryIndex();
+
+      const [initialMatch] = await matchMusicLibraryTracks([spotifyTrack]);
+      const targetRelativePath = initialMatch.recommendedRelativePath;
+
+      assert.ok(targetRelativePath);
+
+      const organizeResult = await organizeMusicLibraryMatchedTracks([
+        spotifyTrack
+      ]);
+
+      assert.equal(organizeResult.movedCount, 0);
+      assert.equal(organizeResult.skippedCount, 1);
+      assert.equal(organizeResult.moveFailures[0]?.stage, "tag");
+      await stat(loosePath);
+      await assert.rejects(
+        stat(path.join(libraryPath, ...targetRelativePath.split("/")))
+      );
+    });
+  });
+});
+
 test("metadata backfill upgrades existing identity-tagged backups with release tags", async (t) => {
   if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
     t.skip("ffmpeg and ffprobe are required for metadata backfill coverage.");

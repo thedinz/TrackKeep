@@ -94,6 +94,27 @@ test("provider downloads request Opus/192K and write tagged .opus files by defau
       assert.ok(result.relativePath?.endsWith(".opus"));
       await stat(result.destinationPath);
 
+      const managedTrackStore = JSON.parse(
+        await readFile(
+          path.join(libraryPath, ".spotifybu", "managed-tracks.json"),
+          "utf8"
+        )
+      ) as {
+        tracks: Record<
+          string,
+          {
+            relativePath: string;
+            source: string;
+            track: BackupTrack;
+          }
+        >;
+      };
+      const managedTrack = Object.values(managedTrackStore.tracks)[0];
+
+      assert.equal(managedTrack.source, "download");
+      assert.equal(managedTrack.relativePath, result.relativePath);
+      assert.equal(managedTrack.track.id, "4uLU6hMCjMI75M1A2tKUQC");
+
       const ytDlpInvocation = JSON.parse(
         await readFile(argsPath, "utf8")
       ) as FakeYtDlpInvocation;
