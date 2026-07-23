@@ -207,6 +207,13 @@ export type BackupPayload = {
 export const SPOTIFY_AUTHORIZE_URL = "https://accounts.spotify.com/authorize";
 const spotifyTokenUrl = "https://accounts.spotify.com/api/token";
 const spotifyApiBaseUrl = "https://api.spotify.com/v1";
+const spotifyMaxRateLimitRetries = 3;
+// Development Mode search is limited to 10 results per request. Broaden
+// difficult local-track matches progressively without exhausting shared quota.
+// https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide
+const spotifySearchPageSize = 10;
+const spotifySearchResultsPerQuery = 30;
+const spotifySearchResultsTotal = 60;
 
 export const SPOTIFY_SCOPES = [
   "user-read-email",
@@ -236,14 +243,21 @@ const playlistMetadataFields = [
   "public"
 ].join(",");
 
-const playlistSummaryFields = [
+const playlistSummaryFields = [playlistMetadataFields, "items(total)"].join(",");
+
+const legacyPlaylistSummaryFields = [
   playlistMetadataFields,
-  "items(total)",
   "tracks(total)"
 ].join(",");
 
 const userPlaylistsFields = [
   `items(${playlistSummaryFields})`,
+  "next",
+  "total"
+].join(",");
+
+const legacyUserPlaylistsFields = [
+  `items(${legacyPlaylistSummaryFields})`,
   "next",
   "total"
 ].join(",");
@@ -345,10 +359,7 @@ export async function getCurrentUser(tokenSet: SpotifyTokenSet) {
 }
 
 export async function getUserPlaylists(tokenSet: SpotifyTokenSet) {
-  const playlists = await getAllPages<SpotifyPlaylistObject>(
-    tokenSet,
-    `/me/playlists?limit=50&fields=${encodeURIComponent(userPlaylistsFields)}`
-  );
+  const playlists = await fetchUserPlaylists(tokenSet);
   const hydratedPlaylists = await hydrateMissingPlaylistTotals(
     tokenSet,
     playlists
@@ -501,20 +512,57 @@ async function resolveLocalSpotifyTrack(
 
   try {
     const searchResults: SpotifyTrackObject[] = [];
+    let fetchedResultCount = 0;
 
     for (const query of searchQueries) {
-      const response = await spotifyFetch<SpotifySearchResponse>(
-        tokenSet,
-        `/search?type=track&limit=50&q=${encodeURIComponent(query)}`
+      const remainingResultCount =
+        spotifySearchResultsTotal - fetchedResultCount;
+      const queryResultLimit = Math.min(
+        spotifySearchResultsPerQuery,
+        remainingResultCount
       );
-      const candidates = response.tracks?.items ?? [];
 
-      searchResults.push(
-        ...candidates.filter(
+      if (queryResultLimit <= 0) {
+        break;
+      }
+
+      for (
+        let offset = 0;
+        offset < queryResultLimit;
+        offset += spotifySearchPageSize
+      ) {
+        const response = await spotifyFetch<SpotifySearchResponse>(
+          tokenSet,
+          `/search?type=track&limit=${spotifySearchPageSize}&offset=${offset}&q=${encodeURIComponent(
+            query
+          )}`
+        );
+        const candidates = (response.tracks?.items ?? []).filter(
           (candidate): candidate is SpotifyTrackObject =>
             candidate?.type === "track"
-        )
-      );
+        );
+
+        searchResults.push(...candidates);
+        fetchedResultCount += candidates.length;
+
+        const uniqueCandidates = uniqueSpotifyTracks(searchResults);
+        const match = rankSpotifyTrackSearchMatches(
+          track,
+          uniqueCandidates
+        ).find(isConfidentSpotifyTrackSearchMatch);
+
+        if (match) {
+          return match;
+        }
+
+        if (
+          candidates.length < spotifySearchPageSize ||
+          !response.tracks?.next ||
+          fetchedResultCount >= spotifySearchResultsTotal
+        ) {
+          break;
+        }
+      }
     }
 
     const uniqueCandidates = uniqueSpotifyTracks(searchResults);
@@ -709,6 +757,16 @@ export async function getTrack(tokenSet: SpotifyTokenSet, trackId: string) {
 
 export async function getTracks(tokenSet: SpotifyTokenSet, trackIds: string[]) {
   const trackObjects = await getTracksByIds(tokenSet, trackIds);
+  const failedTrackCount = trackObjects.filter((track) => !track).length;
+
+  if (failedTrackCount) {
+    const resolvedTrackCount = trackObjects.length - failedTrackCount;
+
+    throw new Error(
+      `Spotify returned metadata for ${resolvedTrackCount} of ${trackObjects.length} songs. Try again; if this continues, verify the song URLs or wait for Spotify's request limit to recover.`
+    );
+  }
+
   const tracks: BackupTrack[] = [];
 
   trackObjects.forEach((track, index) => {
@@ -850,21 +908,50 @@ async function spotifyFetch<T>(
   headers.set("Accept", "application/json");
   headers.set("Authorization", `Bearer ${tokenSet.access_token}`);
 
-  const response = await fetch(url, {
-    ...init,
-    cache: "no-store",
-    headers
-  });
+  for (
+    let attempt = 0;
+    attempt <= spotifyMaxRateLimitRetries;
+    attempt += 1
+  ) {
+    const response = await fetch(url, {
+      ...init,
+      cache: "no-store",
+      headers
+    });
 
-  if (!response.ok) {
+    if (response.ok) {
+      return (await response.json()) as T;
+    }
+
+    const retryAfterSeconds = parseRetryAfterSeconds(
+      response.headers.get("Retry-After")
+    );
+
+    if (response.status === 429 && attempt < spotifyMaxRateLimitRetries) {
+      const retryDelayMs = spotifyRateLimitRetryDelayMs(
+        retryAfterSeconds,
+        attempt
+      );
+
+      await appendDiagnosticLog("spotify.rate_limit.retry", {
+        attempt: attempt + 1,
+        retryAfterSeconds,
+        retryDelayMs,
+        url
+      });
+      await wait(retryDelayMs);
+      continue;
+    }
+
     throw new SpotifyApiError(
       await responseErrorMessage(response),
       response.status,
-      url
+      url,
+      retryAfterSeconds
     );
   }
 
-  return (await response.json()) as T;
+  throw new Error("Spotify request retry loop ended unexpectedly.");
 }
 
 async function getAllPages<T>(tokenSet: SpotifyTokenSet, path: string) {
@@ -899,6 +986,30 @@ function mapPlaylist(playlist: SpotifyPlaylistObject) {
     public: playlist.public ?? null,
     tracksTotal: playlist.items?.total ?? playlist.tracks?.total ?? 0
   } satisfies PlaylistSummary;
+}
+
+async function fetchUserPlaylists(tokenSet: SpotifyTokenSet) {
+  try {
+    return await getAllPages<SpotifyPlaylistObject>(
+      tokenSet,
+      `/me/playlists?limit=50&fields=${encodeURIComponent(userPlaylistsFields)}`
+    );
+  } catch (error) {
+    if (!isSpotifyApiStatus(error, 400)) {
+      throw error;
+    }
+
+    await appendDiagnosticLog("spotify.playlists.legacy_fields_fallback", {
+      endpoint: "/me/playlists"
+    });
+
+    return getAllPages<SpotifyPlaylistObject>(
+      tokenSet,
+      `/me/playlists?limit=50&fields=${encodeURIComponent(
+        legacyUserPlaylistsFields
+      )}`
+    );
+  }
 }
 
 async function hydrateMissingPlaylistTotals(
@@ -989,12 +1100,29 @@ async function fetchPlaylistSummaryWithTrackTotal(
   tokenSet: SpotifyTokenSet,
   playlistId: string
 ) {
-  return spotifyFetch<SpotifyPlaylistObject>(
-    tokenSet,
-    `/playlists/${encodeURIComponent(playlistId)}?fields=${encodeURIComponent(
-      playlistSummaryFields
-    )}`
-  );
+  try {
+    return await spotifyFetch<SpotifyPlaylistObject>(
+      tokenSet,
+      `/playlists/${encodeURIComponent(playlistId)}?fields=${encodeURIComponent(
+        playlistSummaryFields
+      )}`
+    );
+  } catch (error) {
+    if (!isSpotifyApiStatus(error, 400)) {
+      throw error;
+    }
+
+    await appendDiagnosticLog("spotify.playlist.legacy_fields_fallback", {
+      playlistId
+    });
+
+    return spotifyFetch<SpotifyPlaylistObject>(
+      tokenSet,
+      `/playlists/${encodeURIComponent(playlistId)}?fields=${encodeURIComponent(
+        legacyPlaylistSummaryFields
+      )}`
+    );
+  }
 }
 
 async function mapWithConcurrency<T, R>(
@@ -1412,11 +1540,42 @@ async function responseErrorMessage(response: Response) {
   }
 }
 
+function parseRetryAfterSeconds(value: string | null) {
+  if (value === null) {
+    return undefined;
+  }
+
+  const seconds = Number(value);
+
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
+}
+
+function spotifyRateLimitRetryDelayMs(
+  retryAfterSeconds: number | undefined,
+  attempt: number
+) {
+  const fallbackDelayMs = 1000 * 2 ** attempt;
+  const requestedDelayMs =
+    retryAfterSeconds === undefined
+      ? fallbackDelayMs
+      : Math.ceil(retryAfterSeconds * 1000);
+  const jitterMs = requestedDelayMs > 0 ? Math.floor(Math.random() * 250) : 0;
+
+  return requestedDelayMs + jitterMs;
+}
+
+function wait(delayMs: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
+}
+
 class SpotifyApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
-    readonly url: string
+    readonly url: string,
+    readonly retryAfterSeconds?: number
   ) {
     super(message);
     this.name = "SpotifyApiError";

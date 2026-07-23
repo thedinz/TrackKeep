@@ -292,6 +292,14 @@ Your proxy should forward the original host and scheme. For most proxies, that m
 Spotify's official PKCE flow docs are here: https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow
 Spotify's redirect URI requirements are here: https://developer.spotify.com/documentation/web-api/concepts/redirect_uri
 
+Spotify Development Mode requires the app owner to have Spotify Premium and
+limits each app to five authorized users. Add every Spotify account that will
+connect to TrackKeep in the app's **Users Management** settings. New
+Development Mode apps also receive Spotify's reduced 2026 endpoint and response
+set. TrackKeep uses the replacement playlist item endpoints, fetches removed
+batch metadata endpoints one item at a time, paginates search in groups of 10,
+and honors Spotify's `Retry-After` response when a request is rate limited.
+
 ### Followed Playlists And Track Lists
 
 TrackKeep always tries to read a selected playlist through Spotify's official

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   getPlaylistTracks,
+  getTracks,
+  getUserPlaylists,
   pickBestSpotifyTrackSearchMatch,
   spotifyLocalTrackSearchQueries,
   spotifyTrackNeedsCatalogResolution,
@@ -278,6 +280,247 @@ test("marks unresolved local playlist tracks as not safe to download", async () 
   }
 });
 
+test("paginates Spotify search ten results at a time and stops after a confident match", async () => {
+  const originalFetch = globalThis.fetch;
+  const searchUrls: URL[] = [];
+
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = new URL(String(input));
+
+    if (url.pathname.endsWith("/playlists/playlist-id/items")) {
+      return jsonResponse({
+        items: [
+          {
+            added_at: "2018-09-01T00:00:00Z",
+            item: spotifyTrack({
+              album: spotifyAlbum("ClipConverter.cc"),
+              artists: [spotifyArtist("Jeremih")],
+              duration_ms: 250_000,
+              is_local: true,
+              name: "Fuck You All The Time (Shlohmo Remix) (video clip)"
+            })
+          }
+        ],
+        next: null
+      });
+    }
+
+    if (url.pathname.endsWith("/search")) {
+      searchUrls.push(url);
+      const offset = Number(url.searchParams.get("offset"));
+
+      if (offset === 0) {
+        return jsonResponse({
+          tracks: {
+            items: Array.from({ length: 10 }, (_, index) =>
+              spotifyTrack({
+                album: spotifyAlbum("Different Album"),
+                artists: [spotifyArtist("Different Artist")],
+                duration_ms: 180_000,
+                id: `weak-${index}`,
+                name: `Different Song ${index}`
+              })
+            ),
+            next: "https://api.spotify.com/v1/search?offset=10"
+          }
+        });
+      }
+
+      if (offset === 10) {
+        return jsonResponse({
+          tracks: {
+            items: [
+              spotifyTrack({
+                album: spotifyAlbum("Late Nights with Jeremih"),
+                artists: [spotifyArtist("Jeremih")],
+                duration_ms: 248_000,
+                id: "spotify-original",
+                name: "Fuck U All the Time",
+                uri: "spotify:track:spotify-original"
+              })
+            ],
+            next: null
+          }
+        });
+      }
+    }
+
+    throw new Error(`Unexpected Spotify test request: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const tracks = await getPlaylistTracks(
+      {
+        access_token: "token",
+        expires_at: Date.now() + 60_000,
+        token_type: "Bearer"
+      },
+      "playlist-id"
+    );
+
+    assert.equal(tracks[0].id, "spotify-original");
+    assert.equal(tracks[0].metadataStatus, "spotify-local-resolved");
+    assert.deepEqual(
+      searchUrls.map((url) => ({
+        limit: url.searchParams.get("limit"),
+        offset: url.searchParams.get("offset")
+      })),
+      [
+        { limit: "10", offset: "0" },
+        { limit: "10", offset: "10" }
+      ]
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("retries Spotify rate limits using Retry-After", async () => {
+  const originalFetch = globalThis.fetch;
+  let playlistRequestCount = 0;
+
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+
+    if (!url.includes("/playlists/playlist-id/items")) {
+      throw new Error(`Unexpected Spotify test request: ${url}`);
+    }
+
+    playlistRequestCount += 1;
+
+    if (playlistRequestCount === 1) {
+      return jsonResponse(
+        { error: { message: "Too many requests" } },
+        {
+          headers: { "Retry-After": "0" },
+          status: 429
+        }
+      );
+    }
+
+    return jsonResponse({
+      items: [
+        {
+          item: spotifyTrack({
+            album: spotifyAlbum("Example Album"),
+            artists: [spotifyArtist("Example Artist")],
+            duration_ms: 180_000,
+            id: "spotify-track-id",
+            name: "Example Song",
+            uri: "spotify:track:spotify-track-id"
+          })
+        }
+      ],
+      next: null
+    });
+  }) as typeof fetch;
+
+  try {
+    const tracks = await getPlaylistTracks(
+      {
+        access_token: "token",
+        expires_at: Date.now() + 60_000,
+        token_type: "Bearer"
+      },
+      "playlist-id"
+    );
+
+    assert.equal(playlistRequestCount, 2);
+    assert.equal(tracks[0].id, "spotify-track-id");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("rejects a partially resolved pasted Spotify track list", async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+
+    if (url.endsWith("/tracks/good-track")) {
+      return jsonResponse(
+        spotifyTrack({
+          artists: [spotifyArtist("Example Artist")],
+          duration_ms: 180_000,
+          id: "good-track",
+          name: "Example Song"
+        })
+      );
+    }
+
+    if (url.endsWith("/tracks/missing-track")) {
+      return jsonResponse(
+        { error: { message: "Not found" } },
+        { status: 404 }
+      );
+    }
+
+    throw new Error(`Unexpected Spotify test request: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      getTracks(
+        {
+          access_token: "token",
+          expires_at: Date.now() + 60_000,
+          token_type: "Bearer"
+        },
+        ["good-track", "missing-track"]
+      ),
+      /Spotify returned metadata for 1 of 2 songs/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("falls back to legacy playlist total fields when Spotify rejects items", async () => {
+  const originalFetch = globalThis.fetch;
+  const requestedFields: string[] = [];
+
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = new URL(String(input));
+    const fields = url.searchParams.get("fields") ?? "";
+
+    requestedFields.push(fields);
+
+    if (fields.includes("items(total)")) {
+      return jsonResponse(
+        { error: { message: "Invalid fields" } },
+        { status: 400 }
+      );
+    }
+
+    return jsonResponse({
+      items: [
+        {
+          id: "playlist-id",
+          name: "Legacy Playlist",
+          tracks: { total: 12 }
+        }
+      ],
+      next: null
+    });
+  }) as typeof fetch;
+
+  try {
+    const playlists = await getUserPlaylists({
+      access_token: "token",
+      expires_at: Date.now() + 60_000,
+      token_type: "Bearer"
+    });
+
+    assert.equal(requestedFields.length, 2);
+    assert.ok(requestedFields[0].includes("items(total)"));
+    assert.ok(requestedFields[1].includes("tracks(total)"));
+    assert.equal(playlists[0].tracksTotal, 12);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 function spotifyTrack(track: Partial<SpotifyTrackObject>): SpotifyTrackObject {
   return {
     type: "track",
@@ -297,11 +540,14 @@ function spotifyArtist(name: string) {
   };
 }
 
-function jsonResponse(body: unknown) {
+function jsonResponse(body: unknown, init: ResponseInit = {}) {
+  const headers = new Headers(init.headers);
+
+  headers.set("Content-Type", "application/json");
+
   return new Response(JSON.stringify(body), {
-    headers: {
-      "Content-Type": "application/json"
-    },
-    status: 200
+    ...init,
+    headers,
+    status: init.status ?? 200
   });
 }
