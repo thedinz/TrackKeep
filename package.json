@@ -8,7 +8,7 @@
     "build": "next build",
     "check:yt-dlp": "node scripts/check-yt-dlp-update.mjs",
     "start": "next start",
-    "test": "tsx --test src/lib/trackkeep-env.test.mts src/lib/providers/scoring.test.mts src/lib/providers/search-query.test.mts src/lib/providers/tagging.test.mts src/lib/providers/download.test.mts src/lib/spotify.test.mts src/lib/music-library-auto-scan.test.mts src/lib/provider-download-settings.test.mts src/lib/music-library.test.mts src/lib/organize-settings.test.mts src/lib/plex.test.mts",
+    "test": "tsx --test src/lib/trackkeep-env.test.mts src/lib/providers/scoring.test.mts src/lib/providers/search-query.test.mts src/lib/providers/spotify-metadata.test.mts src/lib/providers/tagging.test.mts src/lib/providers/download.test.mts src/lib/spotify.test.mts src/lib/music-library-auto-scan.test.mts src/lib/provider-download-settings.test.mts src/lib/music-library.test.mts src/lib/organize-settings.test.mts src/lib/plex.test.mts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

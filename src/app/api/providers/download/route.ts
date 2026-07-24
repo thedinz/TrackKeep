@@ -3,26 +3,42 @@ import {
   startProviderDownloadJob,
   type AuthorizedProviderDownloadRequest
 } from "@/lib/providers/download";
+import { refreshProviderDownloadTrackFromSpotify } from "@/lib/providers/spotify-metadata";
+import { getSpotifySession, withSessionCookie } from "@/lib/server-session";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 900;
 
 export async function POST(request: NextRequest) {
+  const session = await getSpotifySession();
+
+  if (!session.ok) {
+    return withSessionCookie(
+      NextResponse.json({ error: session.message }, { status: session.status }),
+      session,
+      request
+    );
+  }
+
   const body = (await request.json().catch(() => null)) as
     | Partial<AuthorizedProviderDownloadRequest>
     | null;
   const diagnosticId = providerDownloadDiagnosticId();
 
   if (!body) {
-    return NextResponse.json(
-      {
-        diagnosticId,
-        error: "Send a selected provider download request."
-      },
-      {
-        status: 400
-      }
+    return withSessionCookie(
+      NextResponse.json(
+        {
+          diagnosticId,
+          error: "Send a selected provider download request."
+        },
+        {
+          status: 400
+        }
+      ),
+      session,
+      request
     );
   }
 
@@ -33,6 +49,10 @@ export async function POST(request: NextRequest) {
   });
 
   try {
+    const track = await refreshProviderDownloadTrackFromSpotify(
+      session.token,
+      body.track as AuthorizedProviderDownloadRequest["track"]
+    );
     const job = startProviderDownloadJob({
       bulkRiskAccepted: Boolean(body.bulkRiskAccepted),
       diagnosticId,
@@ -47,7 +67,7 @@ export async function POST(request: NextRequest) {
       rightsConfirmed: Boolean(body.rightsConfirmed),
       selectedReason: body.selectedReason,
       sourceUrl: String(body.sourceUrl ?? ""),
-      track: body.track as AuthorizedProviderDownloadRequest["track"]
+      track
     });
 
     console.info("[spotifybu.provider-download] request queued", {
@@ -56,17 +76,21 @@ export async function POST(request: NextRequest) {
       ...summary
     });
 
-    return NextResponse.json(
-      {
-        diagnosticId,
-        job
-      },
-      {
-        status: 202,
-        headers: {
-          "Cache-Control": "no-store"
+    return withSessionCookie(
+      NextResponse.json(
+        {
+          diagnosticId,
+          job
+        },
+        {
+          status: 202,
+          headers: {
+            "Cache-Control": "no-store"
+          }
         }
-      }
+      ),
+      session,
+      request
     );
   } catch (error) {
     const message =
@@ -79,14 +103,18 @@ export async function POST(request: NextRequest) {
       ...summary
     });
 
-    return NextResponse.json(
-      {
-        diagnosticId,
-        error: message
-      },
-      {
-        status: 400
-      }
+    return withSessionCookie(
+      NextResponse.json(
+        {
+          diagnosticId,
+          error: message
+        },
+        {
+          status: 400
+        }
+      ),
+      session,
+      request
     );
   }
 }

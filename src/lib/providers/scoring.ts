@@ -37,6 +37,8 @@ const albumEditionTokens = new Set([
   "remaster",
   "remastered"
 ]);
+const remixTokens = new Set(["remix", "remixed"]);
+const remixTitleMismatchPenalty = 35;
 
 export function scoreProviderCandidate(
   track: ProviderTrackMetadata,
@@ -209,12 +211,24 @@ function titleSimilarity(
       )
     : 0;
 
-  return Math.max(
+  const similarity = Math.max(
     ...trackTokenSets.map((trackTokens) =>
       bestTitleSegmentScore(trackTokens, candidateTitle)
     ),
     contextualScore
   );
+
+  return Math.max(
+    0,
+    similarity - remixMismatchPenalty(trackTitle, candidateTitle)
+  );
+}
+
+function remixMismatchPenalty(trackTitle: string, candidateTitle: string) {
+  const trackIsRemix = hasAnyToken(trackTitle, remixTokens);
+  const candidateIsRemix = hasAnyToken(candidateTitle, remixTokens);
+
+  return trackIsRemix === candidateIsRemix ? 0 : remixTitleMismatchPenalty;
 }
 
 function bestTitleSegmentScore(
@@ -356,6 +370,12 @@ function tokenSet(value: string, ignoredTokens = new Set<string>()) {
   }
 
   return new Set(tokens);
+}
+
+function hasAnyToken(value: string, expectedTokens: Set<string>) {
+  const valueTokens = tokenSet(value);
+
+  return [...expectedTokens].some((token) => valueTokens.has(token));
 }
 
 function albumEditionTokensIn(value: string | undefined) {
