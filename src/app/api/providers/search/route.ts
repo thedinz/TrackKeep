@@ -3,26 +3,42 @@ import {
   searchProviderCandidates,
   type ProviderSearchRequest
 } from "@/lib/providers/download";
+import { refreshProviderDownloadTrackFromSpotify } from "@/lib/providers/spotify-metadata";
+import { getSpotifySession, withSessionCookie } from "@/lib/server-session";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
+  const session = await getSpotifySession();
+
+  if (!session.ok) {
+    return withSessionCookie(
+      NextResponse.json({ error: session.message }, { status: session.status }),
+      session,
+      request
+    );
+  }
+
   const body = (await request.json().catch(() => null)) as
     | Partial<ProviderSearchRequest>
     | null;
   const diagnosticId = providerSearchDiagnosticId();
 
   if (!body?.track) {
-    return NextResponse.json(
-      {
-        diagnosticId,
-        error: "Send a Spotify track before searching providers."
-      },
-      {
-        status: 400
-      }
+    return withSessionCookie(
+      NextResponse.json(
+        {
+          diagnosticId,
+          error: "Send a Spotify track before searching providers."
+        },
+        {
+          status: 400
+        }
+      ),
+      session,
+      request
     );
   }
 
@@ -33,12 +49,16 @@ export async function POST(request: NextRequest) {
   });
 
   try {
+    const track = await refreshProviderDownloadTrackFromSpotify(
+      session.token,
+      body.track as ProviderSearchRequest["track"]
+    );
     const search = await searchProviderCandidates({
       limit: Number(body.limit ?? 5),
       providerIds: Array.isArray(body.providerIds)
         ? body.providerIds.map(String)
         : undefined,
-      track: body.track as ProviderSearchRequest["track"]
+      track
     });
 
     console.info("[spotifybu.provider-search] request completed", {
@@ -49,16 +69,20 @@ export async function POST(request: NextRequest) {
       ...summary
     });
 
-    return NextResponse.json(
-      {
-        diagnosticId,
-        search
-      },
-      {
-        headers: {
-          "Cache-Control": "no-store"
+    return withSessionCookie(
+      NextResponse.json(
+        {
+          diagnosticId,
+          search
+        },
+        {
+          headers: {
+            "Cache-Control": "no-store"
+          }
         }
-      }
+      ),
+      session,
+      request
     );
   } catch (error) {
     const message =
@@ -71,14 +95,18 @@ export async function POST(request: NextRequest) {
       ...summary
     });
 
-    return NextResponse.json(
-      {
-        diagnosticId,
-        error: message
-      },
-      {
-        status: 400
-      }
+    return withSessionCookie(
+      NextResponse.json(
+        {
+          diagnosticId,
+          error: message
+        },
+        {
+          status: 400
+        }
+      ),
+      session,
+      request
     );
   }
 }

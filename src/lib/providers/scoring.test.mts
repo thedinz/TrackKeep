@@ -103,6 +103,28 @@ test("keeps recording qualifiers meaningful", () => {
   assert.ok(liveScore.overall > remixScore.overall);
 });
 
+test("does not treat a remix as the original recording", () => {
+  const track = {
+    album: "False Idols",
+    artists: ["Theis Thaws"],
+    durationMs: 247_000,
+    name: "Where Are You Lately"
+  };
+  const originalScore = scoreProviderCandidate(track, {
+    artists: ["Theis Thaws"],
+    durationMs: 247_000,
+    title: "Theis Thaws - Where Are You Lately [False Idols]"
+  });
+  const remixScore = scoreProviderCandidate(track, {
+    artists: ["Theis Thaws"],
+    durationMs: 247_000,
+    title: "Where Are You Lately (Batu Remix)"
+  });
+
+  assert.ok(originalScore.titleScore >= remixScore.titleScore + 30);
+  assert.ok(originalScore.overall >= remixScore.overall + 15);
+});
+
 test("prefers the album-matching featured artist recording over a same-title cover", () => {
   const track = {
     album: "Church Moments",
