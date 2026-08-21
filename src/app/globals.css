@@ -860,6 +860,55 @@ button {
   margin-bottom: 16px;
 }
 
+.folder-plan-disclosure {
+  align-items: center;
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 12px 14px;
+  text-align: left;
+  width: 100%;
+}
+
+.folder-plan-disclosure:hover {
+  border-color: rgba(37, 230, 109, 0.4);
+}
+
+.folder-plan-disclosure:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.folder-plan-heading-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.folder-plan-description {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.folder-plan-disclosure-state {
+  align-items: center;
+  color: var(--spotify-bright);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  font-weight: 850;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.folder-plan-disclosure + div {
+  margin-top: 10px;
+}
+
 .folder-plan-list {
   display: grid;
   gap: 10px;
@@ -1988,6 +2037,18 @@ button.folder-plan-status.organize:hover:not(:disabled) {
 
   .folder-plan {
     grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .folder-plan-disclosure {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .folder-plan-disclosure-state {
+    justify-content: space-between;
+    white-space: normal;
+    width: 100%;
   }
 
   .folder-plan-state {
