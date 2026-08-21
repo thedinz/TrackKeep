@@ -4139,17 +4139,8 @@ export default function Home() {
               </div>
             </div>
             <div className="ops-body">
-              <div className="ops-column">
-              <div className="provider-row">
-                <span className="provider-icon green">
-                  <CheckCircle2 size={18} />
-                </span>
-                <span>
-                  <h3>Spotify metadata</h3>
-                  <p>Reads playlists, albums, songs, and export manifests</p>
-                </span>
-              </div>
-              <div className="provider-row with-action index-row navidrome-scan-row">
+              <div className="ops-column ops-scan-column">
+                <div className="provider-row with-action index-row navidrome-scan-row">
                 <span
                   className={`provider-icon ${
                     musicServerScanRunning
@@ -4235,55 +4226,10 @@ export default function Home() {
                     </div>
                   ) : null}
                 </span>
-              </div>
-              {musicLibraryStatus?.libraryPath ? (
-                <div className="path-readout">
-                  <span className="stat-label">Music folder</span>
-                  <span>{musicLibraryStatus.libraryPath}</span>
                 </div>
-              ) : null}
               </div>
 
-              <div className="ops-column">
-              <div className="provider-row">
-                <span
-                  className={`provider-icon ${
-                    musicLibraryReady ? "green" : "amber"
-                  }`}
-                >
-                  {musicLibraryReady ? (
-                    <CheckCircle2 size={18} />
-                  ) : (
-                    <HardDrive size={18} />
-                  )}
-                </span>
-                <span>
-                  <h3>Navidrome folder</h3>
-                  <p>{musicLibraryStatusLabel}</p>
-                </span>
-              </div>
-              {plexSettings?.enabled ? (
-                <div className="provider-row">
-                  <span
-                    className={`provider-icon ${
-                      plexSettings.status.state === "ready" ? "green" : "amber"
-                    }`}
-                  >
-                    {plexSettings.status.state === "ready" ? (
-                      <CheckCircle2 size={18} />
-                    ) : (
-                      <Server size={18} />
-                    )}
-                  </span>
-                  <span>
-                    <h3>Plex API</h3>
-                    <p>{plexSettings.status.message}</p>
-                  </span>
-                </div>
-              ) : null}
-              </div>
-
-              <div className="ops-column">
+              <div className="ops-column ops-library-column">
               <div className="provider-row with-action index-row">
                 <span
                   className={`provider-icon ${
@@ -4320,6 +4266,45 @@ export default function Home() {
                     />
                     Run Index
                   </button>
+                </span>
+              </div>
+              {plexSettings?.enabled ? (
+                <div className="provider-row">
+                  <span
+                    className={`provider-icon ${
+                      plexSettings.status.state === "ready" ? "green" : "amber"
+                    }`}
+                  >
+                    {plexSettings.status.state === "ready" ? (
+                      <CheckCircle2 size={18} />
+                    ) : (
+                      <Server size={18} />
+                    )}
+                  </span>
+                  <span>
+                    <h3>Plex API</h3>
+                    <p>{plexSettings.status.message}</p>
+                  </span>
+                </div>
+              ) : null}
+              </div>
+
+              <div className="ops-column ops-nav-column">
+              <div className="provider-row">
+                <span
+                  className={`provider-icon ${
+                    musicLibraryReady ? "green" : "amber"
+                  }`}
+                >
+                  {musicLibraryReady ? (
+                    <CheckCircle2 size={18} />
+                  ) : (
+                    <HardDrive size={18} />
+                  )}
+                </span>
+                <span>
+                  <h3>Navidrome folder</h3>
+                  <p>{musicLibraryStatusLabel}</p>
                 </span>
               </div>
               {musicServerStatusLabel ? (
