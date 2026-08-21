@@ -713,6 +713,8 @@ export default function Home() {
   const [resolvedSource, setResolvedSource] = useState<ResolvedSource | null>(null);
   const [tracks, setTracks] = useState<BackupTrack[]>([]);
   const [folderPlans, setFolderPlans] = useState<FolderPlan[]>([]);
+  const [isFolderPlanSectionExpanded, setIsFolderPlanSectionExpanded] =
+    useState(false);
   const [showAllFolderPlans, setShowAllFolderPlans] = useState(false);
   const [libraryIndex, setLibraryIndex] =
     useState<MusicLibraryIndexSummary | null>(null);
@@ -1826,6 +1828,8 @@ export default function Home() {
       setResolvedSource(response.source);
       setTracks(response.tracks);
       setFolderPlans(response.folderPlans);
+      setIsFolderPlanSectionExpanded(false);
+      setShowAllFolderPlans(false);
       setLibraryMatches(response.libraryMatches);
     } catch (error) {
       setRequestError(errorMessage(error));
@@ -1844,6 +1848,7 @@ export default function Home() {
     setResolvedSource(null);
     setTracks([]);
     setFolderPlans([]);
+    setIsFolderPlanSectionExpanded(false);
     setShowAllFolderPlans(false);
     setLibraryMatches([]);
     setSelectedPlaylist(null);
@@ -1861,6 +1866,7 @@ export default function Home() {
         setSelectedPlaylist(null);
         setTracks([]);
         setFolderPlans([]);
+        setIsFolderPlanSectionExpanded(false);
         setShowAllFolderPlans(false);
         setLibraryMatches([]);
         setSelectedMetadataBackup(null);
@@ -2059,6 +2065,7 @@ export default function Home() {
       setSelectedMetadataBackup(null);
       setTracks([]);
       setFolderPlans([]);
+      setIsFolderPlanSectionExpanded(false);
       setShowAllFolderPlans(false);
       setLibraryMatches([]);
       setMusicLibraryPlaylistMessage(null);
@@ -2081,6 +2088,7 @@ export default function Home() {
       setSelectedMetadataBackup(null);
       setTracks([]);
       setFolderPlans([]);
+      setIsFolderPlanSectionExpanded(false);
       setShowAllFolderPlans(false);
       setLibraryMatches([]);
 
@@ -2268,6 +2276,12 @@ export default function Home() {
       ),
     [folderPlans, hasUsableLibraryIndex, libraryMatchesByPosition, tracks]
   );
+  const allFolderPlansOrganized =
+    folderPlanSummaries.length > 0 &&
+    folderPlanSummaries.every((plan) => plan.status === "ready");
+  const folderPlansNeedingAttention = folderPlanSummaries.filter(
+    (plan) => plan.status !== "ready"
+  ).length;
   const visibleFolderPlans = showAllFolderPlans
     ? folderPlanSummaries
     : folderPlanSummaries.slice(0, folderPlanPreviewLimit);
@@ -3304,91 +3318,120 @@ export default function Home() {
                 </span>
               </div>
 
-              {folderPlanSummaries.length ? (
+              {folderPlanSummaries.length && !allFolderPlansOrganized ? (
                 <div className="folder-plan-section">
-                  <div className="section-heading">
-                    <span className="stat-label">Album organization targets</span>
-                    <p>
-                      Existing backups, files to organize, and download
-                      destinations by Navidrome album folder.
-                    </p>
-                  </div>
-                  <div className="folder-plan-list">
-                    {visibleFolderPlans.map((plan) => (
-                      <div
-                        className={`folder-plan ${plan.status}`}
-                        key={plan.key}
-                      >
-                        <HardDrive size={18} />
-                        <span>
-                          <span className="folder-plan-name">
-                            {plan.folderName}
-                          </span>
-                          <span className="folder-plan-path">
-                            {plan.absolutePath ?? plan.relativePath}
-                          </span>
-                        </span>
-                        <span className="folder-plan-state">
-                          {plan.status === "organize" ? (
-                            <button
-                              className={`folder-plan-status ${plan.status}`}
-                              disabled={isAnyOrganizationRunning}
-                              onClick={() =>
-                                void organizeLibraryMatches(
-                                  plan.organizeTrackPositions
-                                )
-                              }
-                              title={`Organize files into ${plan.relativePath}`}
-                              type="button"
-                            >
-                              {plan.organizeTrackPositions.some((position) =>
-                                organizingTrackPositionSet.has(position)
-                              ) ? (
-                                <Loader2 className="spin" size={14} />
-                              ) : (
-                                renderFolderPlanStatusIcon(plan.status)
-                              )}
-                              {plan.organizeTrackPositions.some((position) =>
-                                organizingTrackPositionSet.has(position)
-                              )
-                                ? "Organizing"
-                                : plan.statusLabel}
-                            </button>
-                          ) : (
-                            <span
-                              className={`folder-plan-status ${plan.status}`}
-                            >
-                              {renderFolderPlanStatusIcon(plan.status)}
-                              {plan.statusLabel}
-                            </span>
-                          )}
-                          <span className="folder-plan-count">
-                            {plan.countLabel}
-                          </span>
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                  {folderPlanSummaries.length > folderPlanPreviewLimit ? (
-                    <button
-                      className="folder-plan-toggle"
-                      onClick={() =>
-                        setShowAllFolderPlans((current) => !current)
-                      }
-                      type="button"
-                    >
-                      {showAllFolderPlans ? (
-                        <ChevronUp size={16} />
+                  <button
+                    aria-controls="album-organization-targets"
+                    aria-expanded={isFolderPlanSectionExpanded}
+                    className="folder-plan-disclosure"
+                    onClick={() =>
+                      setIsFolderPlanSectionExpanded((current) => !current)
+                    }
+                    type="button"
+                  >
+                    <span className="folder-plan-heading-copy">
+                      <span className="stat-label">
+                        Album organization targets
+                      </span>
+                      <span className="folder-plan-description">
+                        Existing backups, files to organize, and download
+                        destinations by Navidrome album folder.
+                      </span>
+                    </span>
+                    <span className="folder-plan-disclosure-state">
+                      {folderPlansNeedingAttention === 1
+                        ? "1 target needs attention"
+                        : `${numberFormatter.format(
+                            folderPlansNeedingAttention
+                          )} targets need attention`}
+                      {isFolderPlanSectionExpanded ? (
+                        <ChevronUp size={18} />
                       ) : (
-                        <ChevronDown size={16} />
+                        <ChevronDown size={18} />
                       )}
-                      {showAllFolderPlans
-                        ? "Show fewer destinations"
-                        : `Show ${numberFormatter.format(
-                            hiddenFolderPlanCount
-                          )} more destinations`}
-                    </button>
-                  ) : null}
+                    </span>
+                  </button>
+                  <div
+                    hidden={!isFolderPlanSectionExpanded}
+                    id="album-organization-targets"
+                  >
+                    <div className="folder-plan-list">
+                      {visibleFolderPlans.map((plan) => (
+                        <div
+                          className={`folder-plan ${plan.status}`}
+                          key={plan.key}
+                        >
+                          <HardDrive size={18} />
+                          <span>
+                            <span className="folder-plan-name">
+                              {plan.folderName}
+                            </span>
+                            <span className="folder-plan-path">
+                              {plan.absolutePath ?? plan.relativePath}
+                            </span>
+                          </span>
+                          <span className="folder-plan-state">
+                            {plan.status === "organize" ? (
+                              <button
+                                className={`folder-plan-status ${plan.status}`}
+                                disabled={isAnyOrganizationRunning}
+                                onClick={() =>
+                                  void organizeLibraryMatches(
+                                    plan.organizeTrackPositions
+                                  )
+                                }
+                                title={`Organize files into ${plan.relativePath}`}
+                                type="button"
+                              >
+                                {plan.organizeTrackPositions.some((position) =>
+                                  organizingTrackPositionSet.has(position)
+                                ) ? (
+                                  <Loader2 className="spin" size={14} />
+                                ) : (
+                                  renderFolderPlanStatusIcon(plan.status)
+                                )}
+                                {plan.organizeTrackPositions.some((position) =>
+                                  organizingTrackPositionSet.has(position)
+                                )
+                                  ? "Organizing"
+                                  : plan.statusLabel}
+                              </button>
+                            ) : (
+                              <span
+                                className={`folder-plan-status ${plan.status}`}
+                              >
+                                {renderFolderPlanStatusIcon(plan.status)}
+                                {plan.statusLabel}
+                              </span>
+                            )}
+                            <span className="folder-plan-count">
+                              {plan.countLabel}
+                            </span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {folderPlanSummaries.length > folderPlanPreviewLimit ? (
+                      <button
+                        className="folder-plan-toggle"
+                        onClick={() =>
+                          setShowAllFolderPlans((current) => !current)
+                        }
+                        type="button"
+                      >
+                        {showAllFolderPlans ? (
+                          <ChevronUp size={16} />
+                        ) : (
+                          <ChevronDown size={16} />
+                        )}
+                        {showAllFolderPlans
+                          ? "Show fewer destinations"
+                          : `Show ${numberFormatter.format(
+                              hiddenFolderPlanCount
+                            )} more destinations`}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               ) : null}
 
