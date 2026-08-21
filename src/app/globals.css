@@ -541,21 +541,42 @@ button {
   align-items: stretch;
   display: grid;
   gap: 16px;
-  grid-template-columns: minmax(250px, 320px) minmax(0, 1fr) minmax(240px, 300px);
+  grid-template-areas:
+    "library operations"
+    "library detail";
+  grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   margin: 0 auto;
   max-width: 1440px;
 }
 
 .library-panel,
-.detail-panel,
-.ops-panel {
+.detail-panel {
   min-height: calc(100vh - 128px);
 }
 
 .library-panel {
   align-self: stretch;
   display: grid;
+  grid-area: library;
   grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.detail-panel {
+  grid-area: detail;
+}
+
+.ops-panel {
+  align-self: start;
+  display: grid;
+  grid-area: operations;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: auto;
+  width: 100%;
+}
+
+.ops-panel > .panel-header {
+  border-bottom: 1px solid var(--line);
 }
 
 .library-tools {
@@ -837,6 +858,55 @@ button {
 
 .folder-plan-section {
   margin-bottom: 16px;
+}
+
+.folder-plan-disclosure {
+  align-items: center;
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 12px 14px;
+  text-align: left;
+  width: 100%;
+}
+
+.folder-plan-disclosure:hover {
+  border-color: rgba(37, 230, 109, 0.4);
+}
+
+.folder-plan-disclosure:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.folder-plan-heading-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.folder-plan-description {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.folder-plan-disclosure-state {
+  align-items: center;
+  color: var(--spotify-bright);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  font-weight: 850;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.folder-plan-disclosure + div {
+  margin-top: 10px;
 }
 
 .folder-plan-list {
@@ -1283,9 +1353,65 @@ button.folder-plan-status.organize:hover:not(:disabled) {
 }
 
 .ops-body {
+  align-items: stretch;
   display: grid;
-  gap: 14px;
-  padding: 16px;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  padding: 12px;
+}
+
+.ops-column {
+  align-content: start;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ops-scan-column {
+  align-content: stretch;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.ops-status-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-areas:
+    "index folder"
+    "plex api";
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(108px, 1fr));
+  min-width: 0;
+}
+
+.ops-status-grid.without-plex {
+  grid-template-areas:
+    "index folder"
+    "index api";
+}
+
+.ops-status-grid > .ops-column {
+  display: contents;
+}
+
+.ops-index-card {
+  grid-area: index;
+}
+
+.ops-plex-card {
+  grid-area: plex;
+}
+
+.ops-folder-card {
+  grid-area: folder;
+}
+
+.ops-api-card {
+  grid-area: api;
+}
+
+.ops-scan-column > .provider-row,
+.ops-status-grid .provider-row {
+  height: 100%;
 }
 
 .provider-row {
@@ -1297,10 +1423,6 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   grid-template-columns: 34px minmax(0, 1fr);
   min-height: 64px;
   padding: 10px;
-}
-
-.provider-row-stacked {
-  align-items: flex-start;
 }
 
 .provider-row.with-action {
@@ -1409,71 +1531,6 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   color: #f6d796;
   font-size: 0.82rem;
   margin-top: 2px;
-}
-
-.provider-list {
-  display: grid;
-  gap: 10px;
-}
-
-.provider-heading {
-  align-items: flex-start;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  justify-content: space-between;
-  min-width: 0;
-}
-
-.provider-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.provider-badge {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  display: inline-flex;
-  font-size: 0.68rem;
-  font-weight: 900;
-  line-height: 1;
-  padding: 5px 7px;
-  white-space: nowrap;
-}
-
-.provider-badge.active {
-  background: rgba(37, 230, 109, 0.12);
-  border-color: rgba(37, 230, 109, 0.42);
-  color: var(--spotify-bright);
-}
-
-.provider-badge.planned {
-  background: rgba(50, 208, 176, 0.12);
-  border-color: rgba(50, 208, 176, 0.42);
-  color: var(--teal);
-}
-
-.provider-badge.requires_authorization,
-.provider-badge.risk-high {
-  background: rgba(243, 184, 75, 0.12);
-  border-color: rgba(243, 184, 75, 0.5);
-  color: #ffe5a6;
-}
-
-.provider-badge.risk-medium {
-  background: rgba(255, 122, 92, 0.1);
-  border-color: rgba(255, 122, 92, 0.42);
-  color: #ffc4b5;
-}
-
-.provider-badge.risk-low {
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--muted);
-}
-
-.provider-note {
-  color: #d7c18e;
 }
 
 .provider-download {
@@ -1901,13 +1958,8 @@ button.folder-plan-status.organize:hover:not(:disabled) {
 }
 
 @media (max-width: 1100px) {
-  .workspace-grid {
-    grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
-  }
-
-  .ops-panel {
-    grid-column: 1 / -1;
-    min-height: auto;
+  .ops-body {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -1935,6 +1987,36 @@ button.folder-plan-status.organize:hover:not(:disabled) {
     grid-template-columns: 1fr;
   }
 
+  .workspace-grid {
+    grid-template-areas:
+      "operations"
+      "library"
+      "detail";
+    grid-template-rows: auto auto auto;
+  }
+
+  .ops-body {
+    grid-template-columns: 1fr;
+  }
+
+  .ops-status-grid,
+  .ops-status-grid.without-plex {
+    grid-template-areas:
+      "index"
+      "folder"
+      "plex"
+      "api";
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+  }
+
+  .ops-status-grid.without-plex {
+    grid-template-areas:
+      "index"
+      "folder"
+      "api";
+  }
+
   .segmented-control {
     grid-template-columns: 1fr;
   }
@@ -1955,6 +2037,18 @@ button.folder-plan-status.organize:hover:not(:disabled) {
 
   .folder-plan {
     grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .folder-plan-disclosure {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .folder-plan-disclosure-state {
+    justify-content: space-between;
+    white-space: normal;
+    width: 100%;
   }
 
   .folder-plan-state {

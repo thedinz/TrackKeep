@@ -25,12 +25,7 @@ import {
   XCircle
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  SOURCE_PROVIDER_CATALOG,
-  type ProviderRiskLevel,
-  type ProviderStatus,
-  type SourceProviderCatalogEntry
-} from "@/lib/providers/types";
+import { SOURCE_PROVIDER_CATALOG } from "@/lib/providers/types";
 
 type UserProfile = {
   displayName: string;
@@ -625,7 +620,6 @@ type BulkDownloadProgress = {
 const numberFormatter = new Intl.NumberFormat("en-US");
 const libraryOrganizeBatchSize = 10;
 const folderPlanPreviewLimit = 5;
-const downloadEnabledProviderIds = new Set(["jiosaavn", "youtube"]);
 const providerSearchOrder = ["youtube", "jiosaavn"] as const;
 const singleTrackProviderSearchLimit = 8;
 const providerDownloadPollIntervalMs = 2500;
@@ -672,11 +666,6 @@ const providerDownloadQualityOptions = {
     }
   ]
 } as const;
-const mediaSourceProviders: readonly SourceProviderCatalogEntry[] =
-  SOURCE_PROVIDER_CATALOG.filter(
-    (provider) => downloadEnabledProviderIds.has(provider.id)
-  );
-
 function defaultProviderDownloadQuality(
   format: string,
   settings: ProviderDownloadSettings = defaultProviderDownloadSettings
@@ -724,6 +713,8 @@ export default function Home() {
   const [resolvedSource, setResolvedSource] = useState<ResolvedSource | null>(null);
   const [tracks, setTracks] = useState<BackupTrack[]>([]);
   const [folderPlans, setFolderPlans] = useState<FolderPlan[]>([]);
+  const [isFolderPlanSectionExpanded, setIsFolderPlanSectionExpanded] =
+    useState(false);
   const [showAllFolderPlans, setShowAllFolderPlans] = useState(false);
   const [libraryIndex, setLibraryIndex] =
     useState<MusicLibraryIndexSummary | null>(null);
@@ -1837,6 +1828,8 @@ export default function Home() {
       setResolvedSource(response.source);
       setTracks(response.tracks);
       setFolderPlans(response.folderPlans);
+      setIsFolderPlanSectionExpanded(false);
+      setShowAllFolderPlans(false);
       setLibraryMatches(response.libraryMatches);
     } catch (error) {
       setRequestError(errorMessage(error));
@@ -1855,6 +1848,7 @@ export default function Home() {
     setResolvedSource(null);
     setTracks([]);
     setFolderPlans([]);
+    setIsFolderPlanSectionExpanded(false);
     setShowAllFolderPlans(false);
     setLibraryMatches([]);
     setSelectedPlaylist(null);
@@ -1872,6 +1866,7 @@ export default function Home() {
         setSelectedPlaylist(null);
         setTracks([]);
         setFolderPlans([]);
+        setIsFolderPlanSectionExpanded(false);
         setShowAllFolderPlans(false);
         setLibraryMatches([]);
         setSelectedMetadataBackup(null);
@@ -2070,6 +2065,7 @@ export default function Home() {
       setSelectedMetadataBackup(null);
       setTracks([]);
       setFolderPlans([]);
+      setIsFolderPlanSectionExpanded(false);
       setShowAllFolderPlans(false);
       setLibraryMatches([]);
       setMusicLibraryPlaylistMessage(null);
@@ -2092,6 +2088,7 @@ export default function Home() {
       setSelectedMetadataBackup(null);
       setTracks([]);
       setFolderPlans([]);
+      setIsFolderPlanSectionExpanded(false);
       setShowAllFolderPlans(false);
       setLibraryMatches([]);
 
@@ -2279,6 +2276,12 @@ export default function Home() {
       ),
     [folderPlans, hasUsableLibraryIndex, libraryMatchesByPosition, tracks]
   );
+  const allFolderPlansOrganized =
+    folderPlanSummaries.length > 0 &&
+    folderPlanSummaries.every((plan) => plan.status === "ready");
+  const folderPlansNeedingAttention = folderPlanSummaries.filter(
+    (plan) => plan.status !== "ready"
+  ).length;
   const visibleFolderPlans = showAllFolderPlans
     ? folderPlanSummaries
     : folderPlanSummaries.slice(0, folderPlanPreviewLimit);
@@ -3315,91 +3318,120 @@ export default function Home() {
                 </span>
               </div>
 
-              {folderPlanSummaries.length ? (
+              {folderPlanSummaries.length && !allFolderPlansOrganized ? (
                 <div className="folder-plan-section">
-                  <div className="section-heading">
-                    <span className="stat-label">Album organization targets</span>
-                    <p>
-                      Existing backups, files to organize, and download
-                      destinations by Navidrome album folder.
-                    </p>
-                  </div>
-                  <div className="folder-plan-list">
-                    {visibleFolderPlans.map((plan) => (
-                      <div
-                        className={`folder-plan ${plan.status}`}
-                        key={plan.key}
-                      >
-                        <HardDrive size={18} />
-                        <span>
-                          <span className="folder-plan-name">
-                            {plan.folderName}
-                          </span>
-                          <span className="folder-plan-path">
-                            {plan.absolutePath ?? plan.relativePath}
-                          </span>
-                        </span>
-                        <span className="folder-plan-state">
-                          {plan.status === "organize" ? (
-                            <button
-                              className={`folder-plan-status ${plan.status}`}
-                              disabled={isAnyOrganizationRunning}
-                              onClick={() =>
-                                void organizeLibraryMatches(
-                                  plan.organizeTrackPositions
-                                )
-                              }
-                              title={`Organize files into ${plan.relativePath}`}
-                              type="button"
-                            >
-                              {plan.organizeTrackPositions.some((position) =>
-                                organizingTrackPositionSet.has(position)
-                              ) ? (
-                                <Loader2 className="spin" size={14} />
-                              ) : (
-                                renderFolderPlanStatusIcon(plan.status)
-                              )}
-                              {plan.organizeTrackPositions.some((position) =>
-                                organizingTrackPositionSet.has(position)
-                              )
-                                ? "Organizing"
-                                : plan.statusLabel}
-                            </button>
-                          ) : (
-                            <span
-                              className={`folder-plan-status ${plan.status}`}
-                            >
-                              {renderFolderPlanStatusIcon(plan.status)}
-                              {plan.statusLabel}
-                            </span>
-                          )}
-                          <span className="folder-plan-count">
-                            {plan.countLabel}
-                          </span>
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                  {folderPlanSummaries.length > folderPlanPreviewLimit ? (
-                    <button
-                      className="folder-plan-toggle"
-                      onClick={() =>
-                        setShowAllFolderPlans((current) => !current)
-                      }
-                      type="button"
-                    >
-                      {showAllFolderPlans ? (
-                        <ChevronUp size={16} />
+                  <button
+                    aria-controls="album-organization-targets"
+                    aria-expanded={isFolderPlanSectionExpanded}
+                    className="folder-plan-disclosure"
+                    onClick={() =>
+                      setIsFolderPlanSectionExpanded((current) => !current)
+                    }
+                    type="button"
+                  >
+                    <span className="folder-plan-heading-copy">
+                      <span className="stat-label">
+                        Album organization targets
+                      </span>
+                      <span className="folder-plan-description">
+                        Existing backups, files to organize, and download
+                        destinations by Navidrome album folder.
+                      </span>
+                    </span>
+                    <span className="folder-plan-disclosure-state">
+                      {folderPlansNeedingAttention === 1
+                        ? "1 target needs attention"
+                        : `${numberFormatter.format(
+                            folderPlansNeedingAttention
+                          )} targets need attention`}
+                      {isFolderPlanSectionExpanded ? (
+                        <ChevronUp size={18} />
                       ) : (
-                        <ChevronDown size={16} />
+                        <ChevronDown size={18} />
                       )}
-                      {showAllFolderPlans
-                        ? "Show fewer destinations"
-                        : `Show ${numberFormatter.format(
-                            hiddenFolderPlanCount
-                          )} more destinations`}
-                    </button>
-                  ) : null}
+                    </span>
+                  </button>
+                  <div
+                    hidden={!isFolderPlanSectionExpanded}
+                    id="album-organization-targets"
+                  >
+                    <div className="folder-plan-list">
+                      {visibleFolderPlans.map((plan) => (
+                        <div
+                          className={`folder-plan ${plan.status}`}
+                          key={plan.key}
+                        >
+                          <HardDrive size={18} />
+                          <span>
+                            <span className="folder-plan-name">
+                              {plan.folderName}
+                            </span>
+                            <span className="folder-plan-path">
+                              {plan.absolutePath ?? plan.relativePath}
+                            </span>
+                          </span>
+                          <span className="folder-plan-state">
+                            {plan.status === "organize" ? (
+                              <button
+                                className={`folder-plan-status ${plan.status}`}
+                                disabled={isAnyOrganizationRunning}
+                                onClick={() =>
+                                  void organizeLibraryMatches(
+                                    plan.organizeTrackPositions
+                                  )
+                                }
+                                title={`Organize files into ${plan.relativePath}`}
+                                type="button"
+                              >
+                                {plan.organizeTrackPositions.some((position) =>
+                                  organizingTrackPositionSet.has(position)
+                                ) ? (
+                                  <Loader2 className="spin" size={14} />
+                                ) : (
+                                  renderFolderPlanStatusIcon(plan.status)
+                                )}
+                                {plan.organizeTrackPositions.some((position) =>
+                                  organizingTrackPositionSet.has(position)
+                                )
+                                  ? "Organizing"
+                                  : plan.statusLabel}
+                              </button>
+                            ) : (
+                              <span
+                                className={`folder-plan-status ${plan.status}`}
+                              >
+                                {renderFolderPlanStatusIcon(plan.status)}
+                                {plan.statusLabel}
+                              </span>
+                            )}
+                            <span className="folder-plan-count">
+                              {plan.countLabel}
+                            </span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {folderPlanSummaries.length > folderPlanPreviewLimit ? (
+                      <button
+                        className="folder-plan-toggle"
+                        onClick={() =>
+                          setShowAllFolderPlans((current) => !current)
+                        }
+                        type="button"
+                      >
+                        {showAllFolderPlans ? (
+                          <ChevronUp size={16} />
+                        ) : (
+                          <ChevronDown size={16} />
+                        )}
+                        {showAllFolderPlans
+                          ? "Show fewer destinations"
+                          : `Show ${numberFormatter.format(
+                              hiddenFolderPlanCount
+                            )} more destinations`}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               ) : null}
 
@@ -4150,58 +4182,8 @@ export default function Home() {
               </div>
             </div>
             <div className="ops-body">
-              <div className="provider-row">
-                <span className="provider-icon green">
-                  <CheckCircle2 size={18} />
-                </span>
-                <span>
-                  <h3>Spotify metadata</h3>
-                  <p>Reads playlists, albums, songs, and export manifests</p>
-                </span>
-              </div>
-              <div className="provider-row">
-                <span
-                  className={`provider-icon ${
-                    musicLibraryReady ? "green" : "amber"
-                  }`}
-                >
-                  {musicLibraryReady ? (
-                    <CheckCircle2 size={18} />
-                  ) : (
-                    <HardDrive size={18} />
-                  )}
-                </span>
-                <span>
-                  <h3>Navidrome folder</h3>
-                  <p>{musicLibraryStatusLabel}</p>
-                </span>
-              </div>
-              {musicServerStatusLabel ? (
-                <div className="provider-row">
-                  <span
-                    className={`provider-icon ${
-                      musicLibraryStatus?.server.state === "ready" ||
-                      musicLibraryStatus?.server.state === "scan_requested"
-                        ? "green"
-                        : musicLibraryStatus?.server.state === "not_configured"
-                          ? "teal"
-                          : "amber"
-                    }`}
-                  >
-                    {musicLibraryStatus?.server.state === "ready" ||
-                    musicLibraryStatus?.server.state === "scan_requested" ? (
-                      <CheckCircle2 size={18} />
-                    ) : (
-                      <HardDrive size={18} />
-                    )}
-                  </span>
-                  <span>
-                    <h3>Navidrome API</h3>
-                    <p>{musicServerStatusLabel}</p>
-                  </span>
-                </div>
-              ) : null}
-              <div className="provider-row with-action index-row navidrome-scan-row">
+              <div className="ops-column ops-scan-column">
+                <div className="provider-row with-action index-row navidrome-scan-row">
                 <span
                   className={`provider-icon ${
                     musicServerScanRunning
@@ -4287,27 +4269,16 @@ export default function Home() {
                     </div>
                   ) : null}
                 </span>
-              </div>
-              {plexSettings?.enabled ? (
-                <div className="provider-row">
-                  <span
-                    className={`provider-icon ${
-                      plexSettings.status.state === "ready" ? "green" : "amber"
-                    }`}
-                  >
-                    {plexSettings.status.state === "ready" ? (
-                      <CheckCircle2 size={18} />
-                    ) : (
-                      <Server size={18} />
-                    )}
-                  </span>
-                  <span>
-                    <h3>Plex API</h3>
-                    <p>{plexSettings.status.message}</p>
-                  </span>
                 </div>
-              ) : null}
-              <div className="provider-row with-action index-row">
+              </div>
+
+              <div
+                className={`ops-status-grid ${
+                  plexSettings?.enabled ? "" : "without-plex"
+                }`}
+              >
+              <div className="ops-column ops-library-column">
+              <div className="provider-row with-action index-row ops-index-card">
                 <span
                   className={`provider-icon ${
                     libraryIndex?.trackCount ? "green" : "teal"
@@ -4345,64 +4316,72 @@ export default function Home() {
                   </button>
                 </span>
               </div>
-              <div className="provider-warning">
-                <span className="provider-icon amber">
-                  <ShieldCheck size={18} />
-                </span>
-                <span>
-                  <h3>External media providers</h3>
-                  <p>
-                    No provider account connection is needed here. TrackKeep
-                    searches YouTube first, then JioSaavn; you review the match
-                    before downloading. Bulk jobs can trigger provider blocking.
-                  </p>
-                </span>
-              </div>
-              <div className="provider-list">
-                {mediaSourceProviders.map((provider) => (
-                  <div
-                    className="provider-row provider-row-stacked"
-                    key={provider.id}
+              {plexSettings?.enabled ? (
+                <div className="provider-row ops-plex-card">
+                  <span
+                    className={`provider-icon ${
+                      plexSettings.status.state === "ready" ? "green" : "amber"
+                    }`}
                   >
-                    <span
-                      className={`provider-icon ${providerStatusTone(
-                        provider.status
-                      )}`}
-                    >
-                      {provider.status === "planned" ? (
-                        <Clock3 size={18} />
-                      ) : provider.status === "active" ? (
-                        <CheckCircle2 size={18} />
-                      ) : (
-                        <ShieldCheck size={18} />
-                      )}
-                    </span>
-                    <span>
-                      <span className="provider-heading">
-                        <h3>{provider.name}</h3>
-                        <span className="provider-badges">
-                          <span className={`provider-badge ${provider.status}`}>
-                            {providerStatusLabel(provider.status)}
-                          </span>
-                          <span
-                            className={`provider-badge risk-${provider.risk}`}
-                          >
-                            {providerRiskLabel(provider.risk)}
-                          </span>
-                        </span>
-                      </span>
-                      <p>{provider.description}</p>
-                      <p className="provider-note">{provider.bulkWarning}</p>
-                    </span>
-                  </div>
-                ))}
-              </div>
-              {musicLibraryStatus?.libraryPath ? (
-                <div className="path-readout">
-                  <span className="stat-label">Music folder</span>
-                  <span>{musicLibraryStatus.libraryPath}</span>
+                    {plexSettings.status.state === "ready" ? (
+                      <CheckCircle2 size={18} />
+                    ) : (
+                      <Server size={18} />
+                    )}
+                  </span>
+                  <span>
+                    <h3>Plex API</h3>
+                    <p>{plexSettings.status.message}</p>
+                  </span>
                 </div>
               ) : null}
+              </div>
+
+              <div className="ops-column ops-nav-column">
+              <div className="provider-row ops-folder-card">
+                <span
+                  className={`provider-icon ${
+                    musicLibraryReady ? "green" : "amber"
+                  }`}
+                >
+                  {musicLibraryReady ? (
+                    <CheckCircle2 size={18} />
+                  ) : (
+                    <HardDrive size={18} />
+                  )}
+                </span>
+                <span>
+                  <h3>Navidrome folder</h3>
+                  <p>{musicLibraryStatusLabel}</p>
+                </span>
+              </div>
+              {musicServerStatusLabel ? (
+                <div className="provider-row ops-api-card">
+                  <span
+                    className={`provider-icon ${
+                      musicLibraryStatus?.server.state === "ready" ||
+                      musicLibraryStatus?.server.state === "scan_requested"
+                        ? "green"
+                        : musicLibraryStatus?.server.state === "not_configured"
+                          ? "teal"
+                          : "amber"
+                    }`}
+                  >
+                    {musicLibraryStatus?.server.state === "ready" ||
+                    musicLibraryStatus?.server.state === "scan_requested" ? (
+                      <CheckCircle2 size={18} />
+                    ) : (
+                      <HardDrive size={18} />
+                    )}
+                  </span>
+                  <span>
+                    <h3>Navidrome API</h3>
+                    <p>{musicServerStatusLabel}</p>
+                  </span>
+                </div>
+              ) : null}
+              </div>
+              </div>
             </div>
           </aside>
         </section>
@@ -5400,30 +5379,6 @@ function sourceKindLabel(sourceKind: SourceKind) {
   return "User playlist";
 }
 
-function providerStatusTone(status: ProviderStatus) {
-  if (status === "active") {
-    return "green";
-  }
-
-  if (status === "planned") {
-    return "teal";
-  }
-
-  return "amber";
-}
-
-function providerStatusLabel(status: ProviderStatus) {
-  if (status === "active") {
-    return "Active";
-  }
-
-  if (status === "planned") {
-    return "Planned";
-  }
-
-  return "User-confirmed";
-}
-
 function renderFolderPlanStatusIcon(status: FolderPlanDisplayStatus) {
   if (status === "ready") {
     return <CheckCircle2 size={14} />;
@@ -5602,18 +5557,6 @@ function stableFolderSlug(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-}
-
-function providerRiskLabel(risk: ProviderRiskLevel) {
-  if (risk === "low") {
-    return "Low risk";
-  }
-
-  if (risk === "medium") {
-    return "Medium risk";
-  }
-
-  return "High risk";
 }
 
 function providerDisplayName(providerId: string) {
