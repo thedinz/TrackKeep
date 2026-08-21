@@ -1460,6 +1460,21 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   min-width: 0;
 }
 
+.navidrome-scan-details {
+  display: grid;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.provider-row .navidrome-scan-details p {
+  margin-top: 0;
+}
+
+.provider-row .navidrome-scan-detail-type {
+  color: var(--ink);
+  font-weight: 750;
+}
+
 .navidrome-scan-progress {
   margin-top: 10px;
 }
@@ -1795,6 +1810,10 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   border-color: rgba(37, 230, 109, 0.34);
 }
 
+.provider-preview-item.review {
+  border-color: rgba(243, 184, 75, 0.5);
+}
+
 .provider-preview-item.failed {
   border-color: rgba(255, 122, 92, 0.38);
 }
@@ -1807,9 +1826,15 @@ button.folder-plan-status.organize:hover:not(:disabled) {
 }
 
 .provider-preview-item.failed span,
-.provider-preview-item.failed strong {
+.provider-preview-item.failed strong,
+.provider-preview-item.review span,
+.provider-preview-item.review strong {
   overflow-wrap: anywhere;
   white-space: normal;
+}
+
+.provider-preview-item.review strong {
+  color: #ffe5a6;
 }
 
 .provider-preview-item strong {
