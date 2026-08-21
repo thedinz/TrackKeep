@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { scoreProviderCandidate } from "./scoring.ts";
+import {
+  isProviderBulkMatchScoreEligible,
+  providerBulkMinimumMatchScore
+} from "./types.ts";
+
+test("bulk downloads require at least 68 percent match confidence", () => {
+  assert.equal(providerBulkMinimumMatchScore, 68);
+  assert.equal(isProviderBulkMatchScoreEligible(67), false);
+  assert.equal(isProviderBulkMatchScoreEligible(68), true);
+  assert.equal(isProviderBulkMatchScoreEligible(100), true);
+  assert.equal(isProviderBulkMatchScoreEligible(undefined), false);
+  assert.equal(isProviderBulkMatchScoreEligible(Number.NaN), false);
+});
 
 test("ranks the matching Victory recording above the shorter alternate recording", () => {
   const track = {

@@ -25,7 +25,11 @@ import {
   XCircle
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SOURCE_PROVIDER_CATALOG } from "@/lib/providers/types";
+import {
+  isProviderBulkMatchScoreEligible,
+  providerBulkMinimumMatchScore,
+  SOURCE_PROVIDER_CATALOG
+} from "@/lib/providers/types";
 
 type UserProfile = {
   displayName: string;
@@ -528,6 +532,7 @@ type ProviderSearchResponse = {
 };
 
 type ProviderBulkCandidatePreviewItem = {
+  bulkEligible: boolean;
   candidate?: ProviderSearchCandidate;
   candidates: ProviderSearchCandidate[];
   errors: Array<{
@@ -542,6 +547,7 @@ type ProviderBulkCandidatePreview = {
   failedCount: number;
   generatedAt: string;
   items: ProviderBulkCandidatePreviewItem[];
+  reviewCount: number;
   totalCount: number;
 };
 
@@ -2451,9 +2457,15 @@ export default function Home() {
       setBulkCandidatePreview(preview);
       setBulkDownloadProgress(null);
       setBulkDownloadMessage(
-        `Dry run selected candidates for ${numberFormatter.format(
+        `Dry run found ${numberFormatter.format(
           preview.downloadableCount
-        )} of ${numberFormatter.format(preview.totalCount)} missing tracks.`
+        )} bulk-ready candidate${
+          preview.downloadableCount === 1 ? "" : "s"
+        } of ${numberFormatter.format(preview.totalCount)} missing tracks.${
+          preview.reviewCount
+            ? ` ${numberFormatter.format(preview.reviewCount)} below ${providerBulkMinimumMatchScore}% need manual review.`
+            : ""
+        }`
       );
     } catch (error) {
       setBulkDownloadProgress(null);
@@ -3864,16 +3876,28 @@ export default function Home() {
                               {numberFormatter.format(
                                 bulkCandidatePreview.downloadableCount
                               )}
-                              /{numberFormatter.format(
-                                bulkCandidatePreview.totalCount
-                              )} ready
+                              {" ready"}
+                              {bulkCandidatePreview.reviewCount
+                                ? ` / ${numberFormatter.format(
+                                    bulkCandidatePreview.reviewCount
+                                  )} review`
+                                : ""}
+                              {bulkCandidatePreview.failedCount
+                                ? ` / ${numberFormatter.format(
+                                    bulkCandidatePreview.failedCount
+                                  )} no match`
+                                : ""}
                             </span>
                           </div>
                           <div className="provider-preview-list">
                             {visibleBulkPreviewItems.map((item) => (
                               <div
                                 className={`provider-preview-item ${
-                                  item.candidate?.url ? "ready" : "failed"
+                                  item.bulkEligible
+                                    ? "ready"
+                                    : item.candidate?.url
+                                      ? "review"
+                                      : "failed"
                                 }`}
                                 key={`${item.track.position}-${item.track.id ?? item.track.name}`}
                               >
@@ -5579,13 +5603,19 @@ function providerDisplayName(providerId: string) {
 
 function buildBulkDownloadItems(preview: ProviderBulkCandidatePreview | null) {
   return (preview?.items ?? [])
-    .filter((item) => item.candidate?.url)
+    .filter(
+      (item) =>
+        item.bulkEligible &&
+        item.candidate?.url &&
+        isProviderBulkMatchScoreEligible(item.candidate.score.overall)
+    )
     .map((item) => ({
       candidateScore: item.candidate?.score.overall,
       candidateTitle: item.candidate?.title,
       fallbackSources: buildProviderFallbackSources(
         item.candidates,
-        item.candidate?.url
+        item.candidate?.url,
+        { requireBulkEligibility: true }
       ),
       providerId: item.candidate?.providerId ?? "",
       selectedReason: `TrackKeep dry-run bulk preview selected ${
@@ -5598,7 +5628,8 @@ function buildBulkDownloadItems(preview: ProviderBulkCandidatePreview | null) {
 
 function buildProviderFallbackSources(
   candidates: ProviderSearchCandidate[],
-  selectedSourceUrl?: string
+  selectedSourceUrl?: string,
+  options: { requireBulkEligibility?: boolean } = {}
 ) {
   const selectedSourceKey = selectedSourceUrl
     ? providerSourceKey(selectedSourceUrl)
@@ -5607,7 +5638,11 @@ function buildProviderFallbackSources(
   const fallbackSources: ProviderDownloadFallbackSource[] = [];
 
   for (const candidate of candidates) {
-    if (!candidate.url) {
+    if (
+      !candidate.url ||
+      (options.requireBulkEligibility &&
+        !isProviderBulkMatchScoreEligible(candidate.score.overall))
+    ) {
       continue;
     }
 
@@ -5727,6 +5762,12 @@ function bulkPreviewCandidateLabel(item: ProviderBulkCandidatePreviewItem) {
     return item.errors[0]
       ? `${providerDisplayName(item.errors[0].providerId)}: ${item.errors[0].error}`
       : "No candidate found";
+  }
+
+  if (!item.bulkEligible) {
+    return `Needs review - ${providerDisplayName(item.candidate.providerId)} - ${
+      item.candidate.title
+    } (${item.candidate.score.overall}%; bulk minimum ${providerBulkMinimumMatchScore}%)`;
   }
 
   return `${providerDisplayName(item.candidate.providerId)} - ${

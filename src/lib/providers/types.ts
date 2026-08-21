@@ -41,6 +41,25 @@ export type SourceCandidate = {
   verified: boolean;
 };
 
+export const providerBulkMinimumMatchScore = 68;
+
+export function isProviderBulkMatchScoreEligible(score: number | undefined) {
+  return (
+    typeof score === "number" &&
+    Number.isFinite(score) &&
+    score >= providerBulkMinimumMatchScore
+  );
+}
+
+export function isProviderBulkCandidateEligible(
+  candidate: Pick<SourceCandidate, "score" | "url"> | null | undefined
+) {
+  return Boolean(
+    candidate?.url &&
+      isProviderBulkMatchScoreEligible(candidate.score.overall)
+  );
+}
+
 export type ProviderDownloadRequest = {
   candidate: SourceCandidate;
   destinationSegments: string[];
