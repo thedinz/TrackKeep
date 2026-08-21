@@ -16,7 +16,8 @@ import test from "node:test";
 import { promisify } from "node:util";
 import {
   downloadAuthorizedProviderTrack,
-  providerDownloadFormatProfiles
+  providerDownloadFormatProfiles,
+  startProviderBulkDownloadJob
 } from "./download.ts";
 import {
   spotifyBuIdentityMetadataFromTagLookup,
@@ -40,6 +41,26 @@ test("default provider download profile is Opus 192k ahead of legacy MP3", () =>
   assert.equal(mp3.bitrate, 320000);
   assert.equal(mp3.defaultQuality, "320");
   assert.ok(opus.modernLossyRank > mp3.modernLossyRank);
+});
+
+test("bulk jobs reject candidates below the automatic confidence floor", () => {
+  assert.throws(
+    () =>
+      startProviderBulkDownloadJob({
+        bulkRiskAccepted: true,
+        items: [
+          {
+            candidateScore: 67,
+            candidateTitle: "Uncertain Opening",
+            providerId: "youtube",
+            sourceUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            track: exampleTrack
+          }
+        ],
+        rightsConfirmed: true
+      }),
+    /require at least 68% match confidence/
+  );
 });
 
 test("provider downloads request Opus/192K and write tagged .opus files by default", async (t) => {
