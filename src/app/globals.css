@@ -1304,9 +1304,10 @@ button.folder-plan-status.organize:hover:not(:disabled) {
 }
 
 .ops-body {
+  align-items: stretch;
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   padding: 12px;
 }
 
@@ -1315,6 +1316,53 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   display: grid;
   gap: 10px;
   min-width: 0;
+}
+
+.ops-scan-column {
+  align-content: stretch;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.ops-status-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-areas:
+    "index folder"
+    "plex api";
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(108px, 1fr));
+  min-width: 0;
+}
+
+.ops-status-grid.without-plex {
+  grid-template-areas:
+    "index folder"
+    "index api";
+}
+
+.ops-status-grid > .ops-column {
+  display: contents;
+}
+
+.ops-index-card {
+  grid-area: index;
+}
+
+.ops-plex-card {
+  grid-area: plex;
+}
+
+.ops-folder-card {
+  grid-area: folder;
+}
+
+.ops-api-card {
+  grid-area: api;
+}
+
+.ops-scan-column > .provider-row,
+.ops-status-grid .provider-row {
+  height: 100%;
 }
 
 .provider-row {
@@ -1862,7 +1910,7 @@ button.folder-plan-status.organize:hover:not(:disabled) {
 
 @media (max-width: 1100px) {
   .ops-body {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
 }
 
@@ -1900,6 +1948,24 @@ button.folder-plan-status.organize:hover:not(:disabled) {
 
   .ops-body {
     grid-template-columns: 1fr;
+  }
+
+  .ops-status-grid,
+  .ops-status-grid.without-plex {
+    grid-template-areas:
+      "index"
+      "folder"
+      "plex"
+      "api";
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+  }
+
+  .ops-status-grid.without-plex {
+    grid-template-areas:
+      "index"
+      "folder"
+      "api";
   }
 
   .segmented-control {

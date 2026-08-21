@@ -4229,8 +4229,13 @@ export default function Home() {
                 </div>
               </div>
 
+              <div
+                className={`ops-status-grid ${
+                  plexSettings?.enabled ? "" : "without-plex"
+                }`}
+              >
               <div className="ops-column ops-library-column">
-              <div className="provider-row with-action index-row">
+              <div className="provider-row with-action index-row ops-index-card">
                 <span
                   className={`provider-icon ${
                     libraryIndex?.trackCount ? "green" : "teal"
@@ -4269,7 +4274,7 @@ export default function Home() {
                 </span>
               </div>
               {plexSettings?.enabled ? (
-                <div className="provider-row">
+                <div className="provider-row ops-plex-card">
                   <span
                     className={`provider-icon ${
                       plexSettings.status.state === "ready" ? "green" : "amber"
@@ -4290,7 +4295,7 @@ export default function Home() {
               </div>
 
               <div className="ops-column ops-nav-column">
-              <div className="provider-row">
+              <div className="provider-row ops-folder-card">
                 <span
                   className={`provider-icon ${
                     musicLibraryReady ? "green" : "amber"
@@ -4308,7 +4313,7 @@ export default function Home() {
                 </span>
               </div>
               {musicServerStatusLabel ? (
-                <div className="provider-row">
+                <div className="provider-row ops-api-card">
                   <span
                     className={`provider-icon ${
                       musicLibraryStatus?.server.state === "ready" ||
@@ -4332,6 +4337,7 @@ export default function Home() {
                   </span>
                 </div>
               ) : null}
+              </div>
               </div>
             </div>
           </aside>
