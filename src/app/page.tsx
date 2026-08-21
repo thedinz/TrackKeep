@@ -4139,6 +4139,7 @@ export default function Home() {
               </div>
             </div>
             <div className="ops-body">
+              <div className="ops-column">
               <div className="provider-row">
                 <span className="provider-icon green">
                   <CheckCircle2 size={18} />
@@ -4148,48 +4149,6 @@ export default function Home() {
                   <p>Reads playlists, albums, songs, and export manifests</p>
                 </span>
               </div>
-              <div className="provider-row">
-                <span
-                  className={`provider-icon ${
-                    musicLibraryReady ? "green" : "amber"
-                  }`}
-                >
-                  {musicLibraryReady ? (
-                    <CheckCircle2 size={18} />
-                  ) : (
-                    <HardDrive size={18} />
-                  )}
-                </span>
-                <span>
-                  <h3>Navidrome folder</h3>
-                  <p>{musicLibraryStatusLabel}</p>
-                </span>
-              </div>
-              {musicServerStatusLabel ? (
-                <div className="provider-row">
-                  <span
-                    className={`provider-icon ${
-                      musicLibraryStatus?.server.state === "ready" ||
-                      musicLibraryStatus?.server.state === "scan_requested"
-                        ? "green"
-                        : musicLibraryStatus?.server.state === "not_configured"
-                          ? "teal"
-                          : "amber"
-                    }`}
-                  >
-                    {musicLibraryStatus?.server.state === "ready" ||
-                    musicLibraryStatus?.server.state === "scan_requested" ? (
-                      <CheckCircle2 size={18} />
-                    ) : (
-                      <HardDrive size={18} />
-                    )}
-                  </span>
-                  <span>
-                    <h3>Navidrome API</h3>
-                    <p>{musicServerStatusLabel}</p>
-                  </span>
-                </div>
-              ) : null}
               <div className="provider-row with-action index-row navidrome-scan-row">
                 <span
                   className={`provider-icon ${
@@ -4277,6 +4236,32 @@ export default function Home() {
                   ) : null}
                 </span>
               </div>
+              {musicLibraryStatus?.libraryPath ? (
+                <div className="path-readout">
+                  <span className="stat-label">Music folder</span>
+                  <span>{musicLibraryStatus.libraryPath}</span>
+                </div>
+              ) : null}
+              </div>
+
+              <div className="ops-column">
+              <div className="provider-row">
+                <span
+                  className={`provider-icon ${
+                    musicLibraryReady ? "green" : "amber"
+                  }`}
+                >
+                  {musicLibraryReady ? (
+                    <CheckCircle2 size={18} />
+                  ) : (
+                    <HardDrive size={18} />
+                  )}
+                </span>
+                <span>
+                  <h3>Navidrome folder</h3>
+                  <p>{musicLibraryStatusLabel}</p>
+                </span>
+              </div>
               {plexSettings?.enabled ? (
                 <div className="provider-row">
                   <span
@@ -4296,6 +4281,9 @@ export default function Home() {
                   </span>
                 </div>
               ) : null}
+              </div>
+
+              <div className="ops-column">
               <div className="provider-row with-action index-row">
                 <span
                   className={`provider-icon ${
@@ -4334,12 +4322,32 @@ export default function Home() {
                   </button>
                 </span>
               </div>
-              {musicLibraryStatus?.libraryPath ? (
-                <div className="path-readout">
-                  <span className="stat-label">Music folder</span>
-                  <span>{musicLibraryStatus.libraryPath}</span>
+              {musicServerStatusLabel ? (
+                <div className="provider-row">
+                  <span
+                    className={`provider-icon ${
+                      musicLibraryStatus?.server.state === "ready" ||
+                      musicLibraryStatus?.server.state === "scan_requested"
+                        ? "green"
+                        : musicLibraryStatus?.server.state === "not_configured"
+                          ? "teal"
+                          : "amber"
+                    }`}
+                  >
+                    {musicLibraryStatus?.server.state === "ready" ||
+                    musicLibraryStatus?.server.state === "scan_requested" ? (
+                      <CheckCircle2 size={18} />
+                    ) : (
+                      <HardDrive size={18} />
+                    )}
+                  </span>
+                  <span>
+                    <h3>Navidrome API</h3>
+                    <p>{musicServerStatusLabel}</p>
+                  </span>
                 </div>
               ) : null}
+              </div>
             </div>
           </aside>
         </section>
