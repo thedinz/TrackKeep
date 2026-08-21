@@ -25,12 +25,7 @@ import {
   XCircle
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  SOURCE_PROVIDER_CATALOG,
-  type ProviderRiskLevel,
-  type ProviderStatus,
-  type SourceProviderCatalogEntry
-} from "@/lib/providers/types";
+import { SOURCE_PROVIDER_CATALOG } from "@/lib/providers/types";
 
 type UserProfile = {
   displayName: string;
@@ -625,7 +620,6 @@ type BulkDownloadProgress = {
 const numberFormatter = new Intl.NumberFormat("en-US");
 const libraryOrganizeBatchSize = 10;
 const folderPlanPreviewLimit = 5;
-const downloadEnabledProviderIds = new Set(["jiosaavn", "youtube"]);
 const providerSearchOrder = ["youtube", "jiosaavn"] as const;
 const singleTrackProviderSearchLimit = 8;
 const providerDownloadPollIntervalMs = 2500;
@@ -672,11 +666,6 @@ const providerDownloadQualityOptions = {
     }
   ]
 } as const;
-const mediaSourceProviders: readonly SourceProviderCatalogEntry[] =
-  SOURCE_PROVIDER_CATALOG.filter(
-    (provider) => downloadEnabledProviderIds.has(provider.id)
-  );
-
 function defaultProviderDownloadQuality(
   format: string,
   settings: ProviderDownloadSettings = defaultProviderDownloadSettings
@@ -4345,58 +4334,6 @@ export default function Home() {
                   </button>
                 </span>
               </div>
-              <div className="provider-warning">
-                <span className="provider-icon amber">
-                  <ShieldCheck size={18} />
-                </span>
-                <span>
-                  <h3>External media providers</h3>
-                  <p>
-                    No provider account connection is needed here. TrackKeep
-                    searches YouTube first, then JioSaavn; you review the match
-                    before downloading. Bulk jobs can trigger provider blocking.
-                  </p>
-                </span>
-              </div>
-              <div className="provider-list">
-                {mediaSourceProviders.map((provider) => (
-                  <div
-                    className="provider-row provider-row-stacked"
-                    key={provider.id}
-                  >
-                    <span
-                      className={`provider-icon ${providerStatusTone(
-                        provider.status
-                      )}`}
-                    >
-                      {provider.status === "planned" ? (
-                        <Clock3 size={18} />
-                      ) : provider.status === "active" ? (
-                        <CheckCircle2 size={18} />
-                      ) : (
-                        <ShieldCheck size={18} />
-                      )}
-                    </span>
-                    <span>
-                      <span className="provider-heading">
-                        <h3>{provider.name}</h3>
-                        <span className="provider-badges">
-                          <span className={`provider-badge ${provider.status}`}>
-                            {providerStatusLabel(provider.status)}
-                          </span>
-                          <span
-                            className={`provider-badge risk-${provider.risk}`}
-                          >
-                            {providerRiskLabel(provider.risk)}
-                          </span>
-                        </span>
-                      </span>
-                      <p>{provider.description}</p>
-                      <p className="provider-note">{provider.bulkWarning}</p>
-                    </span>
-                  </div>
-                ))}
-              </div>
               {musicLibraryStatus?.libraryPath ? (
                 <div className="path-readout">
                   <span className="stat-label">Music folder</span>
@@ -5400,30 +5337,6 @@ function sourceKindLabel(sourceKind: SourceKind) {
   return "User playlist";
 }
 
-function providerStatusTone(status: ProviderStatus) {
-  if (status === "active") {
-    return "green";
-  }
-
-  if (status === "planned") {
-    return "teal";
-  }
-
-  return "amber";
-}
-
-function providerStatusLabel(status: ProviderStatus) {
-  if (status === "active") {
-    return "Active";
-  }
-
-  if (status === "planned") {
-    return "Planned";
-  }
-
-  return "User-confirmed";
-}
-
 function renderFolderPlanStatusIcon(status: FolderPlanDisplayStatus) {
   if (status === "ready") {
     return <CheckCircle2 size={14} />;
@@ -5602,18 +5515,6 @@ function stableFolderSlug(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-}
-
-function providerRiskLabel(risk: ProviderRiskLevel) {
-  if (risk === "low") {
-    return "Low risk";
-  }
-
-  if (risk === "medium") {
-    return "Medium risk";
-  }
-
-  return "High risk";
 }
 
 function providerDisplayName(providerId: string) {

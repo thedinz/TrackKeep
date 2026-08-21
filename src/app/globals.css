@@ -541,21 +541,44 @@ button {
   align-items: stretch;
   display: grid;
   gap: 16px;
-  grid-template-columns: minmax(250px, 320px) minmax(0, 1fr) minmax(240px, 300px);
+  grid-template-areas:
+    "library operations"
+    "library detail";
+  grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   margin: 0 auto;
   max-width: 1440px;
 }
 
 .library-panel,
-.detail-panel,
-.ops-panel {
+.detail-panel {
   min-height: calc(100vh - 128px);
 }
 
 .library-panel {
   align-self: stretch;
   display: grid;
+  grid-area: library;
   grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.detail-panel {
+  grid-area: detail;
+}
+
+.ops-panel {
+  align-self: start;
+  display: grid;
+  grid-area: operations;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: auto;
+  width: 100%;
+}
+
+.ops-panel > .panel-header {
+  align-items: flex-start;
+  border-bottom: 0;
+  border-right: 1px solid var(--line);
 }
 
 .library-tools {
@@ -1284,8 +1307,9 @@ button.folder-plan-status.organize:hover:not(:disabled) {
 
 .ops-body {
   display: grid;
-  gap: 14px;
-  padding: 16px;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  padding: 12px;
 }
 
 .provider-row {
@@ -1297,10 +1321,6 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   grid-template-columns: 34px minmax(0, 1fr);
   min-height: 64px;
   padding: 10px;
-}
-
-.provider-row-stacked {
-  align-items: flex-start;
 }
 
 .provider-row.with-action {
@@ -1409,71 +1429,6 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   color: #f6d796;
   font-size: 0.82rem;
   margin-top: 2px;
-}
-
-.provider-list {
-  display: grid;
-  gap: 10px;
-}
-
-.provider-heading {
-  align-items: flex-start;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  justify-content: space-between;
-  min-width: 0;
-}
-
-.provider-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.provider-badge {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  display: inline-flex;
-  font-size: 0.68rem;
-  font-weight: 900;
-  line-height: 1;
-  padding: 5px 7px;
-  white-space: nowrap;
-}
-
-.provider-badge.active {
-  background: rgba(37, 230, 109, 0.12);
-  border-color: rgba(37, 230, 109, 0.42);
-  color: var(--spotify-bright);
-}
-
-.provider-badge.planned {
-  background: rgba(50, 208, 176, 0.12);
-  border-color: rgba(50, 208, 176, 0.42);
-  color: var(--teal);
-}
-
-.provider-badge.requires_authorization,
-.provider-badge.risk-high {
-  background: rgba(243, 184, 75, 0.12);
-  border-color: rgba(243, 184, 75, 0.5);
-  color: #ffe5a6;
-}
-
-.provider-badge.risk-medium {
-  background: rgba(255, 122, 92, 0.1);
-  border-color: rgba(255, 122, 92, 0.42);
-  color: #ffc4b5;
-}
-
-.provider-badge.risk-low {
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--muted);
-}
-
-.provider-note {
-  color: #d7c18e;
 }
 
 .provider-download {
@@ -1901,13 +1856,13 @@ button.folder-plan-status.organize:hover:not(:disabled) {
 }
 
 @media (max-width: 1100px) {
-  .workspace-grid {
-    grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  .ops-panel {
+    grid-template-columns: 1fr;
   }
 
-  .ops-panel {
-    grid-column: 1 / -1;
-    min-height: auto;
+  .ops-panel > .panel-header {
+    border-bottom: 1px solid var(--line);
+    border-right: 0;
   }
 }
 
@@ -1933,6 +1888,14 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   .settings-inline-grid,
   .backup-workflow-grid {
     grid-template-columns: 1fr;
+  }
+
+  .workspace-grid {
+    grid-template-areas:
+      "operations"
+      "library"
+      "detail";
+    grid-template-rows: auto auto auto;
   }
 
   .segmented-control {
