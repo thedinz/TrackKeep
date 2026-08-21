@@ -2220,9 +2220,9 @@ export default function Home() {
     musicServerScan?.message ??
     musicLibraryStatus?.server.message ??
     "Checking Navidrome scan status";
-  const musicServerScanDetailLabel = musicServerScan
+  const musicServerScanDetailRows = musicServerScan
     ? musicServerScanDetails(musicServerScan)
-    : "";
+    : [];
   const musicServerScanProgressLabel = musicServerScan
     ? navidromeScanTypeLabel(musicServerScan.scanType)
     : "Scan";
@@ -4202,8 +4202,19 @@ export default function Home() {
                 <span className="provider-content">
                   <h3>Navidrome scan</h3>
                   <p>{musicServerScanLabel}</p>
-                  {musicServerScanDetailLabel ? (
-                    <p>{musicServerScanDetailLabel}</p>
+                  {musicServerScanDetailRows.length ? (
+                    <div className="navidrome-scan-details">
+                      {musicServerScanDetailRows.map((detail, index) => (
+                        <p
+                          className={
+                            index === 0 ? "navidrome-scan-detail-type" : undefined
+                          }
+                          key={detail}
+                        >
+                          {detail}
+                        </p>
+                      ))}
+                    </div>
                   ) : null}
                   {musicServerScan?.error &&
                   musicServerScan.error !== musicServerScan.message ? (
@@ -5269,29 +5280,29 @@ function formatShortDate(value: string) {
 }
 
 function musicServerScanDetails(status: MusicServerScanStatus) {
-  const parts: string[] = [];
+  const rows: string[] = [];
 
   if (status.scanType) {
-    parts.push(navidromeScanTypeLabel(status.scanType));
+    rows.push(`${navidromeScanTypeLabel(status.scanType)}:`);
   }
 
-  if (status.running || status.count > 0) {
-    parts.push(`${numberFormatter.format(status.count)} files`);
-  }
-
-  if (status.folderCount > 0) {
-    parts.push(`${numberFormatter.format(status.folderCount)} folders`);
+  if (status.running || status.count > 0 || status.folderCount > 0) {
+    rows.push(
+      `${numberFormatter.format(status.count)} files / ${numberFormatter.format(
+        status.folderCount
+      )} folders`
+    );
   }
 
   if (status.elapsedSeconds != null) {
-    parts.push(`${formatDurationSeconds(status.elapsedSeconds)} elapsed`);
+    rows.push(`Time elapsed: ${formatDurationSeconds(status.elapsedSeconds)}`);
   }
 
   if (status.lastScan && !status.running) {
-    parts.push(`Last ${formatShortDate(status.lastScan)}`);
+    rows.push(`Last scan: ${formatShortDate(status.lastScan)}`);
   }
 
-  return parts.join(" - ");
+  return rows;
 }
 
 function navidromeScanTypeLabel(scanType: string | null) {

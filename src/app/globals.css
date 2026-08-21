@@ -1460,6 +1460,21 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   min-width: 0;
 }
 
+.navidrome-scan-details {
+  display: grid;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.provider-row .navidrome-scan-details p {
+  margin-top: 0;
+}
+
+.provider-row .navidrome-scan-detail-type {
+  color: var(--ink);
+  font-weight: 750;
+}
+
 .navidrome-scan-progress {
   margin-top: 10px;
 }
