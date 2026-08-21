@@ -34,6 +34,9 @@ import {
   youtubeProviderSearchQueries
 } from "./search-query";
 import {
+  isProviderBulkCandidateEligible,
+  isProviderBulkMatchScoreEligible,
+  providerBulkMinimumMatchScore,
   SOURCE_PROVIDER_CATALOG,
   type SourceCandidate,
   type SourceProviderCatalogEntry
@@ -108,6 +111,7 @@ export type ProviderDownloadJobSnapshot = {
 };
 
 export type ProviderBulkCandidatePreviewItem = {
+  bulkEligible: boolean;
   candidate?: SourceCandidate;
   candidates: SourceCandidate[];
   errors: ProviderSearchResult["errors"];
@@ -119,6 +123,7 @@ export type ProviderBulkCandidatePreviewResult = {
   failedCount: number;
   generatedAt: string;
   items: ProviderBulkCandidatePreviewItem[];
+  reviewCount: number;
   totalCount: number;
 };
 
@@ -530,7 +535,7 @@ export async function previewProviderBulkDownloadCandidates({
   tracks.forEach(validateTrack);
 
   let completedCount = 0;
-  let failedCount = 0;
+  let searchFailedCount = 0;
   const items = await mapWithConcurrency(tracks, 3, async (track) => {
     const item = await previewProviderBulkDownloadCandidate({
       limit,
@@ -541,25 +546,30 @@ export async function previewProviderBulkDownloadCandidates({
     if (item.candidate?.url) {
       completedCount += 1;
     } else {
-      failedCount += 1;
+      searchFailedCount += 1;
     }
 
     onProgress?.({
       completedCount,
-      failedCount,
+      failedCount: searchFailedCount,
       item,
       totalCount: tracks.length
     });
 
     return item;
   });
-  const downloadableCount = items.filter((item) => item.candidate?.url).length;
+  const downloadableCount = items.filter((item) => item.bulkEligible).length;
+  const reviewCount = items.filter(
+    (item) => item.candidate?.url && !item.bulkEligible
+  ).length;
+  const failedCount = items.filter((item) => !item.candidate?.url).length;
 
   return {
     downloadableCount,
-    failedCount: items.length - downloadableCount,
+    failedCount,
     generatedAt: new Date().toISOString(),
     items,
+    reviewCount,
     totalCount: items.length
   } satisfies ProviderBulkCandidatePreviewResult;
 }
@@ -579,15 +589,18 @@ async function previewProviderBulkDownloadCandidate({
       providerIds,
       track
     });
+    const candidate = bestProviderCandidate(search.candidates);
 
     return {
-      candidate: bestProviderCandidate(search.candidates),
+      bulkEligible: isProviderBulkCandidateEligible(candidate),
+      candidate,
       candidates: search.candidates,
       errors: search.errors,
       track
     } satisfies ProviderBulkCandidatePreviewItem;
   } catch (error) {
     return {
+      bulkEligible: false,
       candidates: [],
       errors: [
         {
@@ -716,6 +729,8 @@ export async function downloadAuthorizedProviderBatch(
     throw new Error(`Bulk queues are limited to ${maxBatchItems} tracks.`);
   }
 
+  assertProviderBulkCandidateScores(request.items);
+
   const chunkSize = clampPositiveInteger(
     request.chunkSize,
     defaultProviderBulkChunkSize,
@@ -744,7 +759,9 @@ export async function downloadAuthorizedProviderBatch(
         bulkRiskAccepted: true,
         fallbackFormat: item.fallbackFormat ?? request.fallbackFormat,
         fallbackQuality: item.fallbackQuality ?? request.fallbackQuality,
-        fallbackSources: item.fallbackSources,
+        fallbackSources: eligibleProviderBulkFallbackSources(
+          item.fallbackSources
+        ),
         format: item.format ?? request.format,
         providerId: item.providerId,
         quality: item.quality ?? request.quality,
@@ -1352,6 +1369,44 @@ async function runProviderDownloadJob(jobId: string) {
   }
 }
 
+function assertProviderBulkCandidateScores(
+  items: AuthorizedProviderDownloadBatchItem[]
+) {
+  const ineligibleItem = items.find(
+    (item) => !isProviderBulkMatchScoreEligible(item.candidateScore)
+  );
+
+  if (ineligibleItem) {
+    throw new Error(providerBulkMatchScoreError(ineligibleItem));
+  }
+}
+
+function providerBulkMatchScoreError(
+  item: Pick<
+    AuthorizedProviderDownloadBatchItem,
+    "candidateScore" | "candidateTitle" | "track"
+  >
+) {
+  const scoreLabel =
+    typeof item.candidateScore === "number" &&
+    Number.isFinite(item.candidateScore)
+      ? `${item.candidateScore}%`
+      : "an unknown score";
+  const candidateLabel = item.candidateTitle
+    ? `Candidate "${item.candidateTitle}" for "${item.track.name}"`
+    : `Candidate for "${item.track.name}"`;
+
+  return `${candidateLabel} has ${scoreLabel}; bulk downloads require at least ${providerBulkMinimumMatchScore}% match confidence.`;
+}
+
+function eligibleProviderBulkFallbackSources(
+  fallbackSources: AuthorizedProviderDownloadFallbackSource[] | undefined
+) {
+  return fallbackSources?.filter((source) =>
+    isProviderBulkMatchScoreEligible(source.candidateScore)
+  );
+}
+
 function buildProviderBulkDownloadJob(
   request: AuthorizedProviderBulkDownloadRequest
 ): ProviderBulkDownloadJobRecord {
@@ -1370,6 +1425,8 @@ function buildProviderBulkDownloadJob(
   if (request.items.length > maxBatchItems) {
     throw new Error(`Bulk queues are limited to ${maxBatchItems} tracks.`);
   }
+
+  assertProviderBulkCandidateScores(request.items);
 
   const format = normalizeDownloadFormat(request.format);
   const quality = normalizeDownloadQuality(request.quality, format);
@@ -1407,10 +1464,12 @@ function buildProviderBulkDownloadJob(
     return {
       candidateScore: item.candidateScore,
       candidateTitle: item.candidateTitle,
-      fallbackSources: normalizeProviderFallbackSources(
-        item.fallbackSources,
-        providerId,
-        source.sourceUrl
+      fallbackSources: eligibleProviderBulkFallbackSources(
+        normalizeProviderFallbackSources(
+          item.fallbackSources,
+          providerId,
+          source.sourceUrl
+        )
       ),
       providerId,
       selectedReason:
@@ -1482,6 +1541,15 @@ async function runProviderBulkDownloadJob(jobId: string) {
         continue;
       }
 
+      if (!isProviderBulkMatchScoreEligible(item.candidateScore)) {
+        item.error = providerBulkMatchScoreError(item);
+        item.status = "failed";
+        item.completedAt = new Date().toISOString();
+        job.updatedAt = item.completedAt;
+        persistProviderBulkDownloadJob(job);
+        continue;
+      }
+
       item.status = "downloading";
       item.startedAt = new Date().toISOString();
       item.error = undefined;
@@ -1495,7 +1563,9 @@ async function runProviderBulkDownloadJob(jobId: string) {
           diagnosticId: `${job.diagnosticId}-${item.track.position}`,
           fallbackFormat: job.request.fallbackFormat,
           fallbackQuality: job.request.fallbackQuality,
-          fallbackSources: item.fallbackSources,
+          fallbackSources: eligibleProviderBulkFallbackSources(
+            item.fallbackSources
+          ),
           format: job.request.format,
           providerId: item.providerId,
           quality: job.request.quality,
