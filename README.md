@@ -24,6 +24,7 @@ TrackKeep can source audio from files already present in the mounted Navidrome m
 - Settings page with the canonical TrackKeep organize scheme
 - Playlist listing with private and collaborative playlist scopes
 - Playlist rail badges for fully backed-up playlists and changed playlists with unbacked-up track counts
+- API-key-protected Homepage custom API widget statistics
 - SQLite-backed playlist metadata backup snapshots saved under the TrackKeep config directory
 - Song, album, and pasted track-list metadata lookup from Spotify URLs, URIs, or IDs
 - Playlist track preview
@@ -151,6 +152,7 @@ Set these values before starting the app:
 | `NEXT_PUBLIC_APP_URL` | No | Public URL for TrackKeep. Set this for reverse-proxy installs. If blank, TrackKeep derives it from `X-Forwarded-Host`/`X-Forwarded-Proto` or the request host. |
 | `TRACKKEEP_APP_SECRET` | Yes | Long random value used to sign TrackKeep's own login sessions. This is not your Spotify app Client Secret. |
 | `TRACKKEEP_DATABASE_PATH` | No | Optional SQLite path. Defaults to `<TRACKKEEP_CONFIG_DIR>/spotifybu.sqlite`. |
+| `TRACKKEEP_HOMEPAGE_API_KEY` | No | Enables the read-only Homepage stats endpoint when set. Use a separate long random value; do not reuse `TRACKKEEP_APP_SECRET`. |
 | `PUID` | No | User ID used by the TrackKeep process inside the container. Defaults to `1000` for compatibility with older images. On Unraid, set this to match NaviClean/Navidrome, commonly `99`. |
 | `PGID` | No | Group ID used by the TrackKeep process inside the container. Defaults to `1000` for compatibility with older images. On Unraid, set this to match NaviClean/Navidrome, commonly `100`. |
 | `TRACKKEEP_CHOWN_MUSIC` | No | Advanced opt-in repair switch. Set `true` only if you intentionally want container startup to recursively chown the mounted music library to `PUID:PGID`. Defaults to `false`. |
@@ -195,6 +197,57 @@ then runs the app as that UID/GID. Existing installs that do not set `PUID` or
 `PGID` keep the previous `1000:1000` behavior. TrackKeep does not recursively
 change ownership of `/music` by default. On large libraries, that can be slow and
 risky, so `TRACKKEEP_CHOWN_MUSIC=true` is an explicit repair option only.
+
+### Homepage Widget
+
+TrackKeep exposes an optional read-only endpoint for a
+[Homepage Custom API widget](https://gethomepage.dev/widgets/services/customapi/).
+Set a separate long random API key in TrackKeep's `.env`, then restart TrackKeep:
+
+```text
+TRACKKEEP_HOMEPAGE_API_KEY=replace-with-a-long-random-value
+```
+
+Unraid users can set the same value in the template's optional
+`Homepage API Key` field.
+
+Open TrackKeep once after connecting Spotify so it can save the current playlist
+catalog. Then add this service to Homepage's `services.yaml`:
+
+```yaml
+- Media:
+    - TrackKeep:
+        icon: mdi-playlist-check
+        href: https://trackkeep.example.com
+        description: Spotify playlist backups
+        widget:
+          type: customapi
+          url: http://trackkeep:3000/api/homepage/stats
+          refreshInterval: 60000
+          headers:
+            X-API-Key: replace-with-the-same-long-random-value
+          mappings:
+            - field: fullyBackedUp
+              label: Backed up
+              format: number
+            - field: needsBackup
+              label: Needs backup
+              format: number
+            - field: totalPlaylists
+              label: Total
+              format: number
+```
+
+Use the TrackKeep address that is reachable from the Homepage container. The
+example `http://trackkeep:3000` works when both containers share a Docker
+network and the TrackKeep service or container is named `trackkeep`.
+
+`Backed up` counts playlists whose latest saved TrackKeep snapshot has every
+track in the current music-library index. `Needs backup` includes playlists with
+missing tracks and playlists that have not been loaded into TrackKeep yet.
+`Total` is the most recent Spotify playlist count saved when TrackKeep loaded
+the playlist list. The endpoint also returns `updatedAt` if you want to add a
+fourth mapping later.
 
 ### Unraid Shared Library Permissions
 
