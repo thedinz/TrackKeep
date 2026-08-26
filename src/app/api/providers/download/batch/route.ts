@@ -5,6 +5,7 @@ import {
 } from "@/lib/providers/download";
 import { refreshProviderDownloadTracksFromSpotify } from "@/lib/providers/spotify-metadata";
 import { getSpotifySession, withSessionCookie } from "@/lib/server-session";
+import { isUnavailableSpotifyBackupTrack } from "@/lib/spotify";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -41,7 +42,11 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const items = Array.isArray(body.items) ? body.items : [];
+    const items = Array.isArray(body.items)
+      ? body.items.filter(
+          (item) => !isUnavailableSpotifyBackupTrack(item.track)
+        )
+      : [];
     const tracks = await refreshProviderDownloadTracksFromSpotify(
       session.token,
       items.map((item) => item.track)

@@ -14,12 +14,14 @@ test("buildHomepageStats separates fully backed-up playlists from playlists need
         one: {
           backedUp: true,
           missingTrackCount: 0,
-          trackCount: 10
+          trackCount: 10,
+          unavailableTrackCount: 0
         },
         two: {
           backedUp: false,
           missingTrackCount: 2,
-          trackCount: 12
+          trackCount: 12,
+          unavailableTrackCount: 0
         }
       },
       "2026-08-23T12:00:00.000Z"
@@ -50,7 +52,8 @@ test("buildHomepageStats treats tracks added after the saved snapshot as needing
         changed: {
           backedUp: true,
           missingTrackCount: 0,
-          trackCount: 10
+          trackCount: 10,
+          unavailableTrackCount: 0
         }
       },
       "2026-08-23T12:00:00.000Z"
@@ -58,6 +61,29 @@ test("buildHomepageStats treats tracks added after the saved snapshot as needing
     {
       fullyBackedUp: 0,
       needsBackup: 1,
+      totalPlaylists: 1,
+      updatedAt: "2026-08-23T12:00:00.000Z"
+    }
+  );
+});
+
+test("buildHomepageStats excludes unavailable tracks from backup completeness", () => {
+  assert.deepEqual(
+    buildHomepageStats(
+      [{ id: "licensed", tracksTotal: 10 }],
+      {
+        licensed: {
+          backedUp: true,
+          missingTrackCount: 0,
+          trackCount: 8,
+          unavailableTrackCount: 2
+        }
+      },
+      "2026-08-23T12:00:00.000Z"
+    ),
+    {
+      fullyBackedUp: 1,
+      needsBackup: 0,
       totalPlaylists: 1,
       updatedAt: "2026-08-23T12:00:00.000Z"
     }

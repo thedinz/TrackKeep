@@ -61,8 +61,12 @@ export type SpotifyTrackObject = {
   };
   external_urls?: SpotifyExternalUrls;
   id?: string;
+  is_playable?: boolean;
   is_local?: boolean;
   name?: string;
+  restrictions?: {
+    reason?: string;
+  };
   track_number?: number;
   type?: string;
   uri?: string;
@@ -168,7 +172,8 @@ export type AlbumSummary = {
 export type BackupTrackMetadataStatus =
   | "spotify"
   | "spotify-local-resolved"
-  | "spotify-local-unresolved";
+  | "spotify-local-unresolved"
+  | "spotify-unavailable";
 
 export type BackupTrack = {
   addedAt?: string;
@@ -226,10 +231,19 @@ export const SPOTIFY_SCOPES = [
 export const unresolvedSpotifyLocalTrackMessage =
   "Spotify returned this playlist row as a local file instead of a catalog track. Remove and re-add the Spotify catalog track before backing it up.";
 
+export const unavailableSpotifyTrackMessage =
+  "Spotify no longer provides metadata for this playlist item. It may have been removed or become unavailable because of licensing changes.";
+
 export function isUnresolvedSpotifyLocalBackupTrack(
   track: Pick<BackupTrack, "metadataStatus">
 ) {
   return track.metadataStatus === "spotify-local-unresolved";
+}
+
+export function isUnavailableSpotifyBackupTrack(
+  track: Pick<BackupTrack, "metadataStatus">
+) {
+  return track.metadataStatus === "spotify-unavailable";
 }
 
 const playlistMetadataFields = [
@@ -393,12 +407,17 @@ export async function getPlaylistTracks(
     throw error;
   }
 
-  const playlistTracks = items
-    .map((item) => ({
+  const playlistTracks = items.map((item) => {
+    const track = item.item ?? item.track;
+    const metadataWarning = spotifyPlaylistItemUnavailableMessage(track);
+
+    return {
       addedAt: item.added_at,
-      track: item.item ?? item.track
-    }))
-    .filter((item): item is PlaylistTrackItem => item.track?.type === "track");
+      metadataStatus: metadataWarning ? "spotify-unavailable" : undefined,
+      metadataWarning,
+      track: track ?? { type: "track" }
+    } satisfies PlaylistTrackItem;
+  });
   const resolvedTracks = await resolveLocalPlaylistTracks(
     tokenSet,
     playlistTracks
@@ -421,7 +440,11 @@ async function resolveLocalPlaylistTracks(
 ) {
   const localEntries = playlistTracks
     .map((item, index) => ({ index, item }))
-    .filter(({ item }) => spotifyTrackNeedsCatalogResolution(item.track));
+    .filter(
+      ({ item }) =>
+        item.metadataStatus !== "spotify-unavailable" &&
+        spotifyTrackNeedsCatalogResolution(item.track)
+    );
 
   if (!localEntries.length) {
     return playlistTracks;
@@ -1143,6 +1166,51 @@ async function mapWithConcurrency<T, R>(
 
 export function spotifyTrackNeedsCatalogResolution(track: SpotifyTrackObject) {
   return spotifyTrackCatalogResolutionReasons(track).length > 0;
+}
+
+function spotifyPlaylistItemUnavailableMessage(
+  track: SpotifyTrackObject | null | undefined
+) {
+  if (!track) {
+    return unavailableSpotifyTrackMessage;
+  }
+
+  if (track.type && track.type !== "track") {
+    return "This Spotify playlist item is not a music track and is not supported by TrackKeep.";
+  }
+
+  if (
+    !track.id &&
+    !track.uri &&
+    !track.name &&
+    !(track.artists ?? []).length
+  ) {
+    return unavailableSpotifyTrackMessage;
+  }
+
+  const restrictionReason = track.restrictions?.reason?.trim().toLowerCase();
+
+  if (restrictionReason === "market") {
+    return "This track is not currently available in your Spotify market. It may return if its licensing changes.";
+  }
+
+  if (restrictionReason === "product") {
+    return "This track is not available for the connected Spotify account's subscription.";
+  }
+
+  if (restrictionReason === "explicit") {
+    return "This track is unavailable because the connected Spotify account does not permit explicit content.";
+  }
+
+  if (restrictionReason) {
+    return `Spotify reports this track as unavailable (${restrictionReason}).`;
+  }
+
+  if (track.is_playable === false) {
+    return "Spotify reports this track as unavailable. It may return if its availability or licensing changes.";
+  }
+
+  return undefined;
 }
 
 function spotifyTrackCatalogResolutionReasons(track: SpotifyTrackObject) {

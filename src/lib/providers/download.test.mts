@@ -16,6 +16,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 import {
   downloadAuthorizedProviderTrack,
+  previewProviderBulkDownloadCandidates,
   providerDownloadFormatProfiles,
   startProviderBulkDownloadJob
 } from "./download.ts";
@@ -60,6 +61,39 @@ test("bulk jobs reject candidates below the automatic confidence floor", () => {
         rightsConfirmed: true
       }),
     /require at least 68% match confidence/
+  );
+});
+
+test("bulk previews and queues exclude unavailable Spotify tracks", async () => {
+  const unavailableTrack = {
+    ...exampleTrack,
+    metadataStatus: "spotify-unavailable",
+    metadataWarning: "This track is unavailable."
+  } satisfies BackupTrack;
+
+  await assert.rejects(
+    previewProviderBulkDownloadCandidates({
+      tracks: [unavailableTrack]
+    }),
+    /No available Spotify tracks can be included in this bulk preview/
+  );
+
+  assert.throws(
+    () =>
+      startProviderBulkDownloadJob({
+        bulkRiskAccepted: true,
+        items: [
+          {
+            candidateScore: 100,
+            candidateTitle: "Unavailable track candidate",
+            providerId: "youtube",
+            sourceUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            track: unavailableTrack
+          }
+        ],
+        rightsConfirmed: true
+      }),
+    /Add previewed provider candidates before starting bulk backup/
   );
 });
 

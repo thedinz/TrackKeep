@@ -230,6 +230,7 @@ type PlaylistBackupStatus = {
   backedUp: boolean;
   missingTrackCount: number;
   trackCount: number;
+  unavailableTrackCount?: number;
 };
 
 type PlaylistMetadataBackup = {
@@ -262,7 +263,8 @@ type BackupTrack = {
   metadataStatus?:
     | "spotify"
     | "spotify-local-resolved"
-    | "spotify-local-unresolved";
+    | "spotify-local-unresolved"
+    | "spotify-unavailable";
   metadataWarning?: string;
   name: string;
   position: number;
@@ -283,6 +285,7 @@ type TracksResponse = {
   metadataBackup?: PlaylistMetadataBackup | null;
   playlist: PlaylistSummary;
   tracks: BackupTrack[];
+  unavailableTracks: BackupTrack[];
 };
 
 type ResolveResponse = {
@@ -718,6 +721,7 @@ export default function Home() {
   const [lookupInput, setLookupInput] = useState("");
   const [resolvedSource, setResolvedSource] = useState<ResolvedSource | null>(null);
   const [tracks, setTracks] = useState<BackupTrack[]>([]);
+  const [unavailableTracks, setUnavailableTracks] = useState<BackupTrack[]>([]);
   const [folderPlans, setFolderPlans] = useState<FolderPlan[]>([]);
   const [isFolderPlanSectionExpanded, setIsFolderPlanSectionExpanded] =
     useState(false);
@@ -821,11 +825,15 @@ export default function Home() {
       if (sourceKind === "playlist" && selectedPlaylistId) {
         setPlaylistBackupStatuses((current) => ({
           ...current,
-          [selectedPlaylistId]: getPlaylistBackupStatus(nextTracks, nextMatches)
+          [selectedPlaylistId]: getPlaylistBackupStatus(
+            nextTracks,
+            nextMatches,
+            unavailableTracks.length
+          )
         }));
       }
     },
-    [selectedPlaylistId, sourceKind]
+    [selectedPlaylistId, sourceKind, unavailableTracks.length]
   );
 
   useEffect(() => {
@@ -1833,6 +1841,7 @@ export default function Home() {
       );
       setResolvedSource(response.source);
       setTracks(response.tracks);
+      setUnavailableTracks([]);
       setFolderPlans(response.folderPlans);
       setIsFolderPlanSectionExpanded(false);
       setShowAllFolderPlans(false);
@@ -1853,6 +1862,7 @@ export default function Home() {
     setMusicLibraryPlaylistSkipped([]);
     setResolvedSource(null);
     setTracks([]);
+    setUnavailableTracks([]);
     setFolderPlans([]);
     setIsFolderPlanSectionExpanded(false);
     setShowAllFolderPlans(false);
@@ -1871,6 +1881,7 @@ export default function Home() {
         setRequestError(null);
         setSelectedPlaylist(null);
         setTracks([]);
+        setUnavailableTracks([]);
         setFolderPlans([]);
         setIsFolderPlanSectionExpanded(false);
         setShowAllFolderPlans(false);
@@ -2070,6 +2081,7 @@ export default function Home() {
       setSelectedPlaylist(null);
       setSelectedMetadataBackup(null);
       setTracks([]);
+      setUnavailableTracks([]);
       setFolderPlans([]);
       setIsFolderPlanSectionExpanded(false);
       setShowAllFolderPlans(false);
@@ -2093,6 +2105,7 @@ export default function Home() {
       setSelectedPlaylist(null);
       setSelectedMetadataBackup(null);
       setTracks([]);
+      setUnavailableTracks([]);
       setFolderPlans([]);
       setIsFolderPlanSectionExpanded(false);
       setShowAllFolderPlans(false);
@@ -2106,6 +2119,7 @@ export default function Home() {
         if (!cancelled) {
           setSelectedPlaylist(response.playlist);
           setTracks(response.tracks);
+          setUnavailableTracks(response.unavailableTracks ?? []);
           setFolderPlans(response.folderPlans);
           setLibraryMatches(response.libraryMatches);
           setSelectedMetadataBackup(response.metadataBackup ?? null);
@@ -2119,7 +2133,8 @@ export default function Home() {
             ...current,
             [playlistId]: getPlaylistBackupStatus(
               response.tracks,
-              response.libraryMatches
+              response.libraryMatches,
+              response.unavailableTracks?.length ?? 0
             )
           }));
         }
@@ -2146,11 +2161,19 @@ export default function Home() {
   ]);
 
   useEffect(() => {
-    if (sourceKind !== "playlist" || !selectedPlaylistId || !tracks.length) {
+    if (
+      sourceKind !== "playlist" ||
+      !selectedPlaylistId ||
+      (!tracks.length && !unavailableTracks.length)
+    ) {
       return;
     }
 
-    const nextStatus = getPlaylistBackupStatus(tracks, libraryMatches);
+    const nextStatus = getPlaylistBackupStatus(
+      tracks,
+      libraryMatches,
+      unavailableTracks.length
+    );
 
     setPlaylistBackupStatuses((current) => {
       const currentStatus = current[selectedPlaylistId];
@@ -2158,7 +2181,8 @@ export default function Home() {
       if (
         currentStatus?.backedUp === nextStatus.backedUp &&
         currentStatus.missingTrackCount === nextStatus.missingTrackCount &&
-        currentStatus.trackCount === nextStatus.trackCount
+        currentStatus.trackCount === nextStatus.trackCount &&
+        currentStatus.unavailableTrackCount === nextStatus.unavailableTrackCount
       ) {
         return current;
       }
@@ -2168,7 +2192,13 @@ export default function Home() {
         [selectedPlaylistId]: nextStatus
       };
     });
-  }, [libraryMatches, selectedPlaylistId, sourceKind, tracks]);
+  }, [
+    libraryMatches,
+    selectedPlaylistId,
+    sourceKind,
+    tracks,
+    unavailableTracks.length
+  ]);
 
   const filteredPlaylists = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -2771,7 +2801,7 @@ export default function Home() {
     : null;
   const activeSource = sourceKind === "playlist" ? playlistSource : resolvedSource;
   const selectedTracksLabel =
-    sourceKind === "playlist" ? "Selected Tracks" : "Resolved Tracks";
+    sourceKind === "playlist" ? "Available Tracks" : "Resolved Tracks";
   const bulkProgressFinished = bulkDownloadProgress
     ? bulkDownloadProgress.completedCount + bulkDownloadProgress.failedCount
     : 0;
@@ -3132,10 +3162,21 @@ export default function Home() {
                           ) : backupStatus?.backedUp ? (
                             <span
                               className="playlist-backed-up-badge"
-                              title="All tracks in this playlist are backed up"
+                              title="All available tracks in this playlist are backed up"
                             >
                               <CheckCircle2 size={14} />
                               Backed up
+                            </span>
+                          ) : null}
+                          {playlistReadable &&
+                          (backupStatus?.unavailableTrackCount ?? 0) > 0 ? (
+                            <span
+                              className="playlist-unavailable-badge"
+                              title="Excluded from backup and organization status because Spotify reports these tracks as unavailable"
+                            >
+                              {numberFormatter.format(
+                                backupStatus?.unavailableTrackCount ?? 0
+                              )} unavailable
                             </span>
                           ) : null}
                           {metadataBackup ? (
@@ -4079,8 +4120,8 @@ export default function Home() {
                     <div>
                       <span className="stat-label">Track backup status</span>
                       <p>
-                        Every Spotify track in the selected source, with its
-                        current Navidrome match status.
+                        Available Spotify tracks in the selected source, with
+                        their current Navidrome match status.
                       </p>
                     </div>
                     {spotifyBuTaggedDeleteCount ? (
@@ -4184,7 +4225,72 @@ export default function Home() {
                         </div>
                       );
                     })}
+                    {!tracks.length ? (
+                      <div className="track-table-empty">
+                        No currently available tracks in this source.
+                      </div>
+                    ) : null}
                   </div>
+                  {unavailableTracks.length ? (
+                    <section className="unavailable-track-section">
+                      <div className="section-heading">
+                        <span className="stat-label">
+                          Unavailable · {numberFormatter.format(unavailableTracks.length)}
+                        </span>
+                        <p>
+                          Spotify currently reports these playlist items as
+                          unavailable. TrackKeep keeps them visible for
+                          monitoring, but excludes them from backup,
+                          organization, download, and sync status.
+                        </p>
+                      </div>
+                      <div className="track-table unavailable-track-table">
+                        <div className="track-row track-head">
+                          <span>#</span>
+                          <span>Track</span>
+                          <span className="track-cell">Album</span>
+                          <span className="track-cell">Status</span>
+                          <span className="track-cell">Time</span>
+                        </div>
+                        {unavailableTracks.map((track) => (
+                          <div
+                            className="track-row unavailable-track-row"
+                            key={`unavailable-${track.position}-${
+                              track.id ?? track.name
+                            }`}
+                          >
+                            <span className="track-cell">{track.position}</span>
+                            <span className="track-meta">
+                              <span className="track-title">{track.name}</span>
+                              <span className="track-subtitle">
+                                {track.artists.join(", ") ||
+                                  "Spotify metadata unavailable"}
+                              </span>
+                              <span className="track-unavailable-reason">
+                                {track.metadataWarning ??
+                                  "Spotify reports this track as unavailable."}
+                              </span>
+                            </span>
+                            <span className="track-cell">
+                              {track.album === "Unknown Album"
+                                ? "Metadata unavailable"
+                                : track.album}
+                            </span>
+                            <span className="track-cell library-cell">
+                              <span className="track-status unavailable">
+                                Unavailable
+                              </span>
+                            </span>
+                            <span className="track-cell">
+                              {track.durationMs
+                                ? formatDuration(track.durationMs)
+                                : "—"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
                 </>
               ) : (
                 <div className="empty-state">
@@ -5045,7 +5151,8 @@ function canReadPlaylistTracks(
 
 function getPlaylistBackupStatus(
   tracks: BackupTrack[],
-  libraryMatches: LibraryMatch[]
+  libraryMatches: LibraryMatch[],
+  unavailableTrackCount = 0
 ): PlaylistBackupStatus {
   const matchesByPosition = new Map(
     libraryMatches.map((match) => [match.trackPosition, match] as const)
@@ -5057,9 +5164,11 @@ function getPlaylistBackupStatus(
   ).length;
 
   return {
-    backedUp: tracks.length > 0 && missingTrackCount === 0,
+    backedUp:
+      tracks.length + unavailableTrackCount > 0 && missingTrackCount === 0,
     missingTrackCount,
-    trackCount: tracks.length
+    trackCount: tracks.length,
+    unavailableTrackCount
   };
 }
 
@@ -5088,7 +5197,12 @@ function getPlaylistMissingBackupTrackCount(
   if (backupStatus) {
     return (
       backupStatus.missingTrackCount +
-      Math.max(0, playlist.tracksTotal - backupStatus.trackCount)
+      Math.max(
+        0,
+        playlist.tracksTotal -
+          backupStatus.trackCount -
+          (backupStatus.unavailableTrackCount ?? 0)
+      )
     );
   }
 

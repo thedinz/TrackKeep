@@ -6,12 +6,16 @@ import {
   readCurrentMusicLibraryIndex,
   type MusicLibraryTrackMatch
 } from "./music-library";
-import type { BackupTrack } from "./spotify";
+import {
+  isUnavailableSpotifyBackupTrack,
+  type BackupTrack
+} from "./spotify";
 
 export type PlaylistBackupStatus = {
   backedUp: boolean;
   missingTrackCount: number;
   trackCount: number;
+  unavailableTrackCount: number;
 };
 
 export async function getPersistedPlaylistBackupStatuses(
@@ -38,7 +42,12 @@ export async function getPersistedPlaylistBackupStatuses(
       snapshot.playlistId,
       getPlaylistBackupStatus(
         snapshot.tracks,
-        await matchMusicLibraryTracksWithIndex(snapshot.tracks, index)
+        await matchMusicLibraryTracksWithIndex(
+          snapshot.tracks.filter(
+            (track) => !isUnavailableSpotifyBackupTrack(track)
+          ),
+          index
+        )
       )
     ] as const)
   );
@@ -50,16 +59,21 @@ export function getPlaylistBackupStatus(
   tracks: BackupTrack[],
   libraryMatches: MusicLibraryTrackMatch[]
 ): PlaylistBackupStatus {
+  const availableTracks = tracks.filter(
+    (track) => !isUnavailableSpotifyBackupTrack(track)
+  );
+  const unavailableTrackCount = tracks.length - availableTracks.length;
   const matchesByPosition = new Map(
     libraryMatches.map((match) => [match.trackPosition, match] as const)
   );
-  const missingTrackCount = tracks.filter(
+  const missingTrackCount = availableTracks.filter(
     (track) => !matchesByPosition.get(track.position)?.exists
   ).length;
 
   return {
     backedUp: tracks.length > 0 && missingTrackCount === 0,
     missingTrackCount,
-    trackCount: tracks.length
+    trackCount: availableTracks.length,
+    unavailableTrackCount
   };
 }
