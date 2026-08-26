@@ -42,17 +42,22 @@ type SpotifyArtist = {
 type SpotifyAlbumSummaryObject = {
   album_type?: string;
   artists?: SpotifyArtist[];
+  available_markets?: string[];
   external_urls?: SpotifyExternalUrls;
   id?: string;
   images?: SpotifyImage[];
   name?: string;
   release_date?: string;
+  restrictions?: {
+    reason?: string;
+  };
   total_tracks?: number;
 };
 
 export type SpotifyTrackObject = {
   album?: SpotifyAlbumSummaryObject;
   artists?: SpotifyArtist[];
+  available_markets?: string[];
   disc_number?: number;
   duration_ms?: number;
   explicit?: boolean;
@@ -111,6 +116,7 @@ type SpotifyPlaylistObject = {
 
 type SpotifyPlaylistTrackItem = {
   added_at?: string;
+  is_local?: boolean;
   item?: SpotifyTrackObject | null;
   track?: SpotifyTrackObject | null;
 };
@@ -219,6 +225,9 @@ const spotifyMaxRateLimitRetries = 3;
 const spotifySearchPageSize = 10;
 const spotifySearchResultsPerQuery = 30;
 const spotifySearchResultsTotal = 60;
+// Supplying a market activates Spotify's track-relinking availability fields.
+// For user tokens Spotify gives the account country priority over this fallback.
+const spotifyAvailabilityFallbackMarket = "US";
 
 export const SPOTIFY_SCOPES = [
   "user-read-email",
@@ -395,7 +404,9 @@ export async function getPlaylistTracks(
   try {
     items = await getAllPages<SpotifyPlaylistTrackItem>(
       tokenSet,
-      `/playlists/${encodeURIComponent(playlistId)}/items?limit=50`
+      `/playlists/${encodeURIComponent(
+        playlistId
+      )}/items?limit=50&market=${spotifyAvailabilityFallbackMarket}`
     );
   } catch (error) {
     if (isSpotifyApiStatus(error, 403)) {
@@ -408,15 +419,50 @@ export async function getPlaylistTracks(
   }
 
   const playlistTracks = items.map((item) => {
-    const track = item.item ?? item.track;
-    const metadataWarning = spotifyPlaylistItemUnavailableMessage(track);
+    const rawTrack = item.item ?? item.track;
+    const track: SpotifyTrackObject = rawTrack
+      ? {
+          ...rawTrack,
+          is_local: rawTrack.is_local ?? item.is_local
+        }
+      : { type: "track" };
+    const metadataWarning = spotifyPlaylistItemUnavailableMessage(
+      rawTrack ? track : rawTrack
+    );
 
     return {
       addedAt: item.added_at,
       metadataStatus: metadataWarning ? "spotify-unavailable" : undefined,
       metadataWarning,
-      track: track ?? { type: "track" }
+      track
     } satisfies PlaylistTrackItem;
+  });
+  const unavailableTracks = playlistTracks.filter(
+    (item) => item.metadataStatus === "spotify-unavailable"
+  );
+
+  await appendDiagnosticLog("spotify.playlist.availability", {
+    itemCount: playlistTracks.length,
+    marketFallback: spotifyAvailabilityFallbackMarket,
+    playlistId,
+    unavailableExamples: unavailableTracks.slice(0, 8).map((item) => ({
+      album: item.track.album?.name,
+      albumAvailableMarketCount: item.track.album?.available_markets?.length,
+      albumRestriction: item.track.album?.restrictions?.reason,
+      availableMarketCount: item.track.available_markets?.length,
+      id: item.track.id,
+      isLocal: item.track.is_local,
+      isPlayable: item.track.is_playable,
+      name: item.track.name,
+      restriction: item.track.restrictions?.reason,
+      warning: item.metadataWarning
+    })),
+    unavailableTrackCount: unavailableTracks.length,
+    unknownPlayabilityCount: playlistTracks.filter(
+      (item) =>
+        item.metadataStatus !== "spotify-unavailable" &&
+        item.track.is_playable === undefined
+    ).length
   });
   const resolvedTracks = await resolveLocalPlaylistTracks(
     tokenSet,
@@ -1188,7 +1234,11 @@ function spotifyPlaylistItemUnavailableMessage(
     return unavailableSpotifyTrackMessage;
   }
 
-  const restrictionReason = track.restrictions?.reason?.trim().toLowerCase();
+  const restrictionReason = (
+    track.restrictions?.reason ?? track.album?.restrictions?.reason
+  )
+    ?.trim()
+    .toLowerCase();
 
   if (restrictionReason === "market") {
     return "This track is not currently available in your Spotify market. It may return if its licensing changes.";
@@ -1208,6 +1258,14 @@ function spotifyPlaylistItemUnavailableMessage(
 
   if (track.is_playable === false) {
     return "Spotify reports this track as unavailable. It may return if its availability or licensing changes.";
+  }
+
+  if (
+    !isExplicitLocalSpotifyTrack(track) &&
+    (track.available_markets?.length === 0 ||
+      track.album?.available_markets?.length === 0)
+  ) {
+    return "Spotify reports no available markets for this track. It may return if its licensing changes.";
   }
 
   return undefined;

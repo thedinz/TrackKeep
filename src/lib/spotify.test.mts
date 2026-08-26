@@ -316,6 +316,26 @@ test("keeps unavailable playlist rows visible with their original positions", as
           },
           {
             item: spotifyTrack({})
+          },
+          {
+            item: spotifyTrack({
+              album: {
+                ...spotifyAlbum("Album Restricted Album"),
+                restrictions: { reason: "market" }
+              },
+              artists: [spotifyArtist("Album Restricted Artist")],
+              id: "album-restricted-track",
+              name: "Album Restricted Song"
+            })
+          },
+          {
+            item: spotifyTrack({
+              album: spotifyAlbum("No Markets Album"),
+              artists: [spotifyArtist("No Markets Artist")],
+              available_markets: [],
+              id: "no-markets-track",
+              name: "No Markets Song"
+            })
           }
         ],
         next: null
@@ -337,7 +357,7 @@ test("keeps unavailable playlist rows visible with their original positions", as
 
     assert.deepEqual(
       tracks.map((track) => track.position),
-      [1, 2, 3, 4]
+      [1, 2, 3, 4, 5, 6]
     );
     assert.equal(tracks[0].metadataStatus, "spotify");
     assert.equal(tracks[1].metadataStatus, "spotify-unavailable");
@@ -347,6 +367,15 @@ test("keeps unavailable playlist rows visible with their original positions", as
     assert.equal(tracks[2].name, "Restricted Song");
     assert.match(tracks[2].metadataWarning ?? "", /Spotify market/);
     assert.equal(tracks[3].metadataStatus, "spotify-unavailable");
+    assert.equal(tracks[4].metadataStatus, "spotify-unavailable");
+    assert.match(tracks[4].metadataWarning ?? "", /Spotify market/);
+    assert.equal(tracks[5].metadataStatus, "spotify-unavailable");
+    assert.match(tracks[5].metadataWarning ?? "", /no available markets/);
+    assert.ok(
+      requestedUrls.some((url) =>
+        url.includes("/playlists/playlist-id/items?limit=50&market=US")
+      )
+    );
     assert.equal(requestedUrls.some((url) => url.includes("/search?")), false);
   } finally {
     globalThis.fetch = originalFetch;
