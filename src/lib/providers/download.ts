@@ -24,7 +24,9 @@ import {
 import { getSpotifyBuDatabase } from "@/lib/database";
 import { getTrackKeepEnvironmentValue } from "@/lib/trackkeep-env";
 import {
+  isUnavailableSpotifyBackupTrack,
   isUnresolvedSpotifyLocalBackupTrack,
+  unavailableSpotifyTrackMessage,
   unresolvedSpotifyLocalTrackMessage,
   type BackupTrack
 } from "@/lib/spotify";
@@ -528,15 +530,23 @@ export async function previewProviderBulkDownloadCandidates({
     throw new Error("Send Spotify tracks before previewing provider candidates.");
   }
 
-  if (tracks.length > maxBatchItems) {
+  const availableTracks = tracks.filter(
+    (track) => !isUnavailableSpotifyBackupTrack(track)
+  );
+
+  if (!availableTracks.length) {
+    throw new Error("No available Spotify tracks can be included in this bulk preview.");
+  }
+
+  if (availableTracks.length > maxBatchItems) {
     throw new Error(`Bulk previews are limited to ${maxBatchItems} tracks.`);
   }
 
-  tracks.forEach(validateTrack);
+  availableTracks.forEach(validateTrack);
 
   let completedCount = 0;
   let searchFailedCount = 0;
-  const items = await mapWithConcurrency(tracks, 3, async (track) => {
+  const items = await mapWithConcurrency(availableTracks, 3, async (track) => {
     const item = await previewProviderBulkDownloadCandidate({
       limit,
       providerIds,
@@ -553,7 +563,7 @@ export async function previewProviderBulkDownloadCandidates({
       completedCount,
       failedCount: searchFailedCount,
       item,
-      totalCount: tracks.length
+      totalCount: availableTracks.length
     });
 
     return item;
@@ -616,7 +626,12 @@ async function previewProviderBulkDownloadCandidate({
 export function startProviderBulkDownloadJob(
   request: AuthorizedProviderBulkDownloadRequest
 ) {
-  const job = buildProviderBulkDownloadJob(request);
+  const job = buildProviderBulkDownloadJob({
+    ...request,
+    items: request.items.filter(
+      (item) => !isUnavailableSpotifyBackupTrack(item.track)
+    )
+  });
 
   providerBulkDownloadJobs.set(job.id, job);
   persistProviderBulkDownloadJob(job);
@@ -725,11 +740,19 @@ export async function downloadAuthorizedProviderBatch(
     throw new Error("Add at least one provider download item to the bulk queue.");
   }
 
-  if (request.items.length > maxBatchItems) {
+  const items = request.items.filter(
+    (item) => !isUnavailableSpotifyBackupTrack(item.track)
+  );
+
+  if (!items.length) {
+    throw new Error("No available Spotify tracks can be included in this bulk queue.");
+  }
+
+  if (items.length > maxBatchItems) {
     throw new Error(`Bulk queues are limited to ${maxBatchItems} tracks.`);
   }
 
-  assertProviderBulkCandidateScores(request.items);
+  assertProviderBulkCandidateScores(items);
 
   const chunkSize = clampPositiveInteger(
     request.chunkSize,
@@ -751,8 +774,8 @@ export async function downloadAuthorizedProviderBatch(
   );
   const results: AuthorizedProviderDownloadBatchResult["results"] = [];
 
-  for (let index = 0; index < request.items.length; index += 1) {
-    const item = request.items[index];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
 
     try {
       const result = await downloadAuthorizedProviderTrack({
@@ -787,7 +810,7 @@ export async function downloadAuthorizedProviderBatch(
       });
     }
 
-    const isLast = index === request.items.length - 1;
+    const isLast = index === items.length - 1;
     const isChunkBoundary = (index + 1) % chunkSize === 0;
 
     if (!isLast) {
@@ -801,7 +824,7 @@ export async function downloadAuthorizedProviderBatch(
     completedCount: results.length - failedCount,
     failedCount,
     results,
-    totalCount: request.items.length
+    totalCount: items.length
   } satisfies AuthorizedProviderDownloadBatchResult;
 }
 
@@ -2468,6 +2491,10 @@ function validateTrack(track: BackupTrack) {
 
   if (!Array.isArray(track.artists)) {
     throw new Error("Send Spotify track artists before downloading.");
+  }
+
+  if (isUnavailableSpotifyBackupTrack(track)) {
+    throw new Error(track.metadataWarning ?? unavailableSpotifyTrackMessage);
   }
 
   if (isUnresolvedSpotifyLocalBackupTrack(track)) {

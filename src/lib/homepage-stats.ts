@@ -41,7 +41,10 @@ export function buildHomepageStats(
   const fullyBackedUp = playlists.filter((playlist) => {
     const status = statuses[playlist.id];
 
-    return status?.backedUp && status.trackCount >= playlist.tracksTotal;
+    return (
+      status?.backedUp &&
+      status.trackCount + status.unavailableTrackCount >= playlist.tracksTotal
+    );
   }).length;
 
   return {

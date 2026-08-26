@@ -280,6 +280,79 @@ test("marks unresolved local playlist tracks as not safe to download", async () 
   }
 });
 
+test("keeps unavailable playlist rows visible with their original positions", async () => {
+  const originalFetch = globalThis.fetch;
+  const requestedUrls: string[] = [];
+
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    requestedUrls.push(url);
+
+    if (url.includes("/playlists/playlist-id/items")) {
+      return jsonResponse({
+        items: [
+          {
+            item: spotifyTrack({
+              album: spotifyAlbum("Available Album"),
+              artists: [spotifyArtist("Available Artist")],
+              duration_ms: 180_000,
+              id: "available-track",
+              name: "Available Song"
+            })
+          },
+          {
+            item: null
+          },
+          {
+            item: spotifyTrack({
+              album: spotifyAlbum("Restricted Album"),
+              artists: [spotifyArtist("Restricted Artist")],
+              duration_ms: 210_000,
+              id: "restricted-track",
+              is_playable: false,
+              name: "Restricted Song",
+              restrictions: { reason: "market" }
+            })
+          },
+          {
+            item: spotifyTrack({})
+          }
+        ],
+        next: null
+      });
+    }
+
+    throw new Error(`Unexpected Spotify test request: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const tracks = await getPlaylistTracks(
+      {
+        access_token: "token",
+        expires_at: Date.now() + 60_000,
+        token_type: "Bearer"
+      },
+      "playlist-id"
+    );
+
+    assert.deepEqual(
+      tracks.map((track) => track.position),
+      [1, 2, 3, 4]
+    );
+    assert.equal(tracks[0].metadataStatus, "spotify");
+    assert.equal(tracks[1].metadataStatus, "spotify-unavailable");
+    assert.equal(tracks[1].name, "Unknown track");
+    assert.match(tracks[1].metadataWarning ?? "", /licensing changes/);
+    assert.equal(tracks[2].metadataStatus, "spotify-unavailable");
+    assert.equal(tracks[2].name, "Restricted Song");
+    assert.match(tracks[2].metadataWarning ?? "", /Spotify market/);
+    assert.equal(tracks[3].metadataStatus, "spotify-unavailable");
+    assert.equal(requestedUrls.some((url) => url.includes("/search?")), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("paginates Spotify search ten results at a time and stops after a confident match", async () => {
   const originalFetch = globalThis.fetch;
   const searchUrls: URL[] = [];
