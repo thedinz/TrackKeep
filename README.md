@@ -4,7 +4,7 @@ TrackKeep is a Docker-first web app for turning a Spotify library into a Navidro
 
 The point is not to replace Navidrome search. Navidrome already tells you what files exist locally. TrackKeep uses Spotify as the source-of-truth list, uses local library matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
 
-Current stable release: `1.10.0`. It includes the web UI, local or external-proxy app auth, Spotify OAuth diagnostics, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, unavailable-track monitoring, Homepage widget statistics, the in-app help guide, Navidrome folder checks, TrackKeep organize naming, library indexing, durable Spotify identity tags for downloaded files, matched-file organization, Navidrome and Plex playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
+Current stable release: `1.10.1`. It includes the web UI, local or external-proxy app auth, Spotify OAuth diagnostics, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, unavailable-track monitoring, Homepage widget statistics, the expanded in-app playlist-sync guide, Navidrome folder checks, TrackKeep organize naming, library indexing, durable Spotify identity tags for downloaded files, matched-file organization, Navidrome and Plex playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
 The existing Docker image name and `.spotifybu` data paths retain their original
 identifiers so upgrades keep using the same image and persisted data. New
@@ -64,13 +64,13 @@ The test image built from the `dev` branch is:
 ghcr.io/thedinz/spotifybu:dev
 ```
 
-Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.10.0-dev.1`; stable releases use normal version tags such as `1.10.0`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
+Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.10.1-dev.1`; stable releases use normal version tags such as `1.10.1`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
 
-For the exact v1.10.0 release, pin one of these tags:
+For the exact v1.10.1 release, pin one of these tags:
 
 ```text
-ghcr.io/thedinz/spotifybu:v1.10.0
-ghcr.io/thedinz/spotifybu:1.10.0
+ghcr.io/thedinz/spotifybu:v1.10.1
+ghcr.io/thedinz/spotifybu:1.10.1
 ghcr.io/thedinz/spotifybu:1.10
 ```
 
