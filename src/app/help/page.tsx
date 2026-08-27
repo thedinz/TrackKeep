@@ -10,6 +10,7 @@ import {
   FolderSync,
   HardDrive,
   ListChecks,
+  ListMusic,
   RefreshCw,
   Server,
   Settings,
@@ -61,6 +62,7 @@ const quickAnswers = [
   ["#audio", "What quality gets downloaded?"],
   ["#workflow", "What order should I use?"],
   ["#matching", "How does matching work?"],
+  ["#sync", "How does playlist sync work?"],
   ["#faq", "Fix a common problem"]
 ] as const;
 
@@ -323,13 +325,191 @@ export default function HelpPage() {
             </article>
             <article>
               <ListChecks size={22} />
-              <h3>Sync modes are different</h3>
+              <h3>Matching protects the playlist</h3>
               <p>
-                Replace rebuilds a same-named playlist from current local matches.
-                Append only adds new matches. Full sync also removes stale entries and
-                restores the current Spotify order.
+                TrackKeep resolves each Spotify row to a specific local file before
+                asking Navidrome or Plex for its server-side track ID. A filename that
+                merely looks close is not enough to enter a synced playlist.
               </p>
             </article>
+          </div>
+        </section>
+
+        <section className="help-section sync-guide" id="sync">
+          <div className="help-section-heading">
+            <span className="help-section-icon green"><ListMusic size={21} /></span>
+            <div>
+              <p className="eyebrow">Navidrome and Plex playlist sync</p>
+              <h2>Turn a Spotify playlist into a playlist your own server can play.</h2>
+            </div>
+          </div>
+          <p className="help-intro">
+            The <strong>Sync library</strong> button does not download, move, or copy
+            audio. It creates or updates a same-named playlist in Navidrome or Plex
+            using tracks that already exist locally and that the chosen server can
+            actually see.
+          </p>
+
+          <div className="sync-pipeline" aria-label="Playlist sync flow">
+            <div>
+              <span><ListChecks size={20} /></span>
+              <small>Spotify</small>
+              <strong>Playlist order</strong>
+            </div>
+            <i aria-hidden="true" />
+            <div>
+              <span><HardDrive size={20} /></span>
+              <small>TrackKeep</small>
+              <strong>Local match</strong>
+            </div>
+            <i aria-hidden="true" />
+            <div>
+              <span><FileSearch size={20} /></span>
+              <small>Your server</small>
+              <strong>Track identity</strong>
+            </div>
+            <i aria-hidden="true" />
+            <div>
+              <span><ListMusic size={20} /></span>
+              <small>Result</small>
+              <strong>Playable playlist</strong>
+            </div>
+          </div>
+
+          <div className="sync-truth-strip">
+            <div>
+              <strong>It references</strong>
+              <span>the audio already indexed by your server</span>
+            </div>
+            <div>
+              <strong>It never deletes</strong>
+              <span>music files from the mounted library</span>
+            </div>
+            <div>
+              <strong>It reports</strong>
+              <span>tracks that could not safely be included</span>
+            </div>
+          </div>
+
+          <div className="sync-target-grid">
+            <article className="sync-target-card navidrome">
+              <div className="sync-target-heading">
+                <span className="help-section-icon green"><Server size={20} /></span>
+                <div>
+                  <p className="eyebrow">Target one</p>
+                  <h3>Navidrome</h3>
+                </div>
+              </div>
+              <p>
+                TrackKeep uses the Navidrome/Subsonic API to find each matched song
+                and create or update the playlist. Configure a regular Navidrome
+                username and password; no separate API key is needed.
+              </p>
+              <ul>
+                <li>Run Index so TrackKeep knows the local files.</li>
+                <li>Quick-scan Navidrome so its API knows those same files.</li>
+                <li>Select <strong>Navidrome</strong>, choose a mode, then sync.</li>
+              </ul>
+              <div className="sync-target-note">
+                If a local match is missing from Navidrome, TrackKeep skips it and
+                tells you to scan Navidrome before trying again.
+              </div>
+            </article>
+
+            <article className="sync-target-card plex">
+              <div className="sync-target-heading">
+                <span className="help-section-icon teal"><Server size={20} /></span>
+                <div>
+                  <p className="eyebrow">Target two</p>
+                  <h3>Plex</h3>
+                </div>
+              </div>
+              <p>
+                Enable Plex sync in Settings, enter the Plex server URL and an
+                <strong> X-Plex-Token</strong>, then choose the music library. The
+                target remains shown as “Plex off” until that setup is enabled.
+              </p>
+              <ul>
+                <li>Make sure Plex can access and play the matched local files.</li>
+                <li>Scan the Plex music library after adding or organizing audio.</li>
+                <li>Select <strong>Plex</strong>, choose a mode, then sync.</li>
+              </ul>
+              <div className="sync-target-note">
+                TrackKeep asks Plex to refresh the selected library during sync and
+                also attempts to copy the Spotify playlist artwork.
+              </div>
+            </article>
+          </div>
+
+          <div className="sync-mode-heading">
+            <p className="eyebrow">Choose the behavior</p>
+            <h3>Replace, Append, and Full Sync answer different questions.</h3>
+          </div>
+
+          <div className="sync-mode-grid">
+            <article>
+              <span className="sync-mode-number">01</span>
+              <h3>Replace</h3>
+              <strong>“Make it from what is matched right now.”</strong>
+              <p>
+                Creates the playlist if it does not exist. If a same-named playlist
+                already exists, its contents are replaced with the currently matched
+                Spotify tracks in Spotify order.
+              </p>
+              <small>Good default when TrackKeep should rebuild the playlist.</small>
+            </article>
+            <article>
+              <span className="sync-mode-number">02</span>
+              <h3>Append</h3>
+              <strong>“Keep what is there and add anything new.”</strong>
+              <p>
+                Preserves existing playlist entries and adds matched Spotify tracks
+                that are not already present. It does not remove stale entries or
+                rearrange the playlist to Spotify order.
+              </p>
+              <small>Best when the server playlist also has your own additions.</small>
+            </article>
+            <article className="full-sync-mode">
+              <span className="sync-mode-number">03</span>
+              <h3>Full Sync</h3>
+              <strong>“Mirror the current resolvable Spotify playlist.”</strong>
+              <p>
+                Adds missing matches, removes stale playlist entries, and restores
+                the current Spotify order. “Current” means the tracks TrackKeep can
+                safely resolve in both the local library and target server.
+              </p>
+              <small>Removes entries from the playlist—never the audio files.</small>
+            </article>
+          </div>
+
+          <div className="sync-skipped-panel">
+            <div>
+              <span className="help-section-icon amber"><AlertTriangle size={20} /></span>
+              <div>
+                <p className="eyebrow">Why tracks get skipped</p>
+                <h3>A Spotify row has to clear both matching steps.</h3>
+              </div>
+            </div>
+            <ul>
+              <li><strong>Missing locally:</strong> TrackKeep has no backed-up file to reference.</li>
+              <li><strong>Not in the server:</strong> the file exists, but Navidrome or Plex has not indexed it.</li>
+              <li><strong>Unresolved local Spotify row:</strong> the identity is too uncertain to sync safely.</li>
+              <li><strong>Unavailable on Spotify:</strong> the row lacks dependable metadata and is excluded.</li>
+            </ul>
+            <p>
+              TrackKeep shows the skipped count and reasons after syncing. Fix the
+              file or scan state, then sync again; you do not need to recreate the
+              Spotify playlist.
+            </p>
+          </div>
+
+          <div className="help-callout tip sync-best-order">
+            <CheckCircle2 size={20} />
+            <p>
+              <strong>The dependable order:</strong> load the Spotify playlist → Run
+              Index → back up or organize tracks → scan the target server → choose
+              Navidrome or Plex → choose the sync mode → Sync library.
+            </p>
           </div>
         </section>
 
@@ -367,6 +547,23 @@ export default function HelpPage() {
                 Sync only uses tracks that are backed up and resolvable in the target
                 server. Run Index, scan Navidrome or Plex, and retry. Unavailable
                 Spotify rows and genuinely missing files are intentionally skipped.
+              </p>
+            </details>
+            <details>
+              <summary>Can Replace or Full Sync delete my music files?</summary>
+              <p>
+                No. These modes only change entries inside the same-named Navidrome
+                or Plex playlist. Full Sync can remove a stale playlist entry, but it
+                never deletes, moves, or retags the underlying audio file.
+              </p>
+            </details>
+            <details>
+              <summary>Why does the target menu say “Plex off”?</summary>
+              <p>
+                Plex playlist sync must first be enabled in Settings with a reachable
+                Plex server URL, an X-Plex-Token, and a selected music library. Save
+                those settings, confirm the Plex status is ready, then return to the
+                playlist and select Plex as the target.
               </p>
             </details>
             <details>
