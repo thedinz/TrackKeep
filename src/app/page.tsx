@@ -8,6 +8,7 @@ import {
   Clock3,
   Download,
   HardDrive,
+  CircleHelp,
   Link2,
   ListMusic,
   Loader2,
@@ -2884,6 +2885,11 @@ export default function Home() {
           <a className="icon-command" href="/settings" title="Settings">
             <Settings size={18} />
             Settings
+          </a>
+
+          <a className="icon-command" href="/help" title="How TrackKeep works">
+            <CircleHelp size={18} />
+            Help
           </a>
 
           {externalAuthEnabled ? (
