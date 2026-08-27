@@ -3,6 +3,7 @@
 import {
   ArrowLeft,
   CheckCircle2,
+  CircleHelp,
   Clock,
   Download,
   Fingerprint,
@@ -662,10 +663,16 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        <a className="icon-command" href="/" title="Back to dashboard">
-          <ArrowLeft size={18} />
-          Dashboard
-        </a>
+        <div className="topbar-actions">
+          <a className="icon-command" href="/help" title="How TrackKeep works">
+            <CircleHelp size={18} />
+            Help
+          </a>
+          <a className="icon-command" href="/" title="Back to dashboard">
+            <ArrowLeft size={18} />
+            Dashboard
+          </a>
+        </div>
       </header>
 
       <section className="settings-grid">

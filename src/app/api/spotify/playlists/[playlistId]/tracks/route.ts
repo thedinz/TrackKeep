@@ -6,6 +6,7 @@ import { getSpotifySession, withSessionCookie } from "@/lib/server-session";
 import {
   getPlaylist,
   getPlaylistTracks,
+  isUnavailableSpotifyBackupTrack,
   isUnresolvedSpotifyLocalBackupTrack
 } from "@/lib/spotify";
 
@@ -28,17 +29,23 @@ export async function GET(request: Request, context: RouteContext) {
 
   try {
     const { playlistId } = await context.params;
-    const [playlist, tracks] = await Promise.all([
+    const [playlist, playlistTracks] = await Promise.all([
       getPlaylist(session.token, playlistId),
       getPlaylistTracks(session.token, playlistId)
     ]);
     const playlistWithTrackTotal =
-      playlist.tracksTotal || !tracks.length
+      playlist.tracksTotal || !playlistTracks.length
         ? playlist
         : {
             ...playlist,
-            tracksTotal: tracks.length
+            tracksTotal: playlistTracks.length
           };
+    const tracks = playlistTracks.filter(
+      (track) => !isUnavailableSpotifyBackupTrack(track)
+    );
+    const unavailableTracks = playlistTracks.filter(
+      isUnavailableSpotifyBackupTrack
+    );
     const folderPlanTracks = tracks.filter(
       (track) => !isUnresolvedSpotifyLocalBackupTrack(track)
     );
@@ -49,7 +56,7 @@ export async function GET(request: Request, context: RouteContext) {
     const metadataBackup = persistPlaylistBackup({
       playlist: playlistWithTrackTotal,
       source: "playlist-load",
-      tracks
+      tracks: playlistTracks
     });
 
     return withSessionCookie(
@@ -58,7 +65,8 @@ export async function GET(request: Request, context: RouteContext) {
         libraryMatches,
         metadataBackup,
         playlist: playlistWithTrackTotal,
-        tracks
+        tracks,
+        unavailableTracks
       }),
       session,
       request

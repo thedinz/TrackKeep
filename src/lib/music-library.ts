@@ -12,6 +12,7 @@ import {
   type OrganizeNamingSettings
 } from "./organize-settings.ts";
 import {
+  isUnavailableSpotifyBackupTrack,
   isUnresolvedSpotifyLocalBackupTrack,
   unresolvedSpotifyLocalTrackMessage,
   type BackupTrack,
@@ -2191,18 +2192,22 @@ export async function createOrUpdateMusicLibraryPlaylistFromSpotify(
     mode?: MusicLibraryPlaylistSyncMode;
   } = {}
 ) {
-  if (!tracks.length) {
+  const availableTracks = tracks.filter(
+    (track) => !isUnavailableSpotifyBackupTrack(track)
+  );
+
+  if (!availableTracks.length) {
     throw new Error("Load Spotify playlist tracks before creating a Navidrome playlist.");
   }
 
   await musicServerApiRequest("ping");
 
   const mode = normalizePlaylistSyncMode(options.mode);
-  const matches = await matchMusicLibraryTracks(tracks);
+  const matches = await matchMusicLibraryTracks(availableTracks);
   const songIds: string[] = [];
   const skipped: MusicLibraryPlaylistSyncResult["skipped"] = [];
 
-  for (const track of tracks) {
+  for (const track of availableTracks) {
     if (isUnresolvedSpotifyLocalBackupTrack(track)) {
       skipped.push({
         reason: track.metadataWarning ?? unresolvedSpotifyLocalTrackMessage,
@@ -4673,6 +4678,10 @@ function uniqueBackupTracksWithSpotifyIdentity(tracks: BackupTrack[]) {
   const tracksByIdentity = new Map<string, BackupTrack>();
 
   for (const track of tracks) {
+    if (isUnavailableSpotifyBackupTrack(track)) {
+      continue;
+    }
+
     const key = spotifyBuIdentityKeyForTrack(track);
 
     if (key && !tracksByIdentity.has(key)) {
