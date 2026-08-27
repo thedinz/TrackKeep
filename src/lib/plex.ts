@@ -9,6 +9,7 @@ import {
   type MusicLibraryPlaylistSyncResult
 } from "./music-library";
 import {
+  isUnavailableSpotifyBackupTrack,
   isUnresolvedSpotifyLocalBackupTrack,
   unresolvedSpotifyLocalTrackMessage,
   type BackupTrack,
@@ -259,7 +260,11 @@ export async function createOrUpdatePlexPlaylistFromSpotify(
     mode?: MusicLibraryPlaylistSyncMode;
   } = {}
 ): Promise<MusicLibraryPlaylistSyncResult> {
-  if (!tracks.length) {
+  const availableTracks = tracks.filter(
+    (track) => !isUnavailableSpotifyBackupTrack(track)
+  );
+
+  if (!availableTracks.length) {
     throw new Error("Load Spotify playlist tracks before syncing a Plex playlist.");
   }
 
@@ -277,7 +282,7 @@ export async function createOrUpdatePlexPlaylistFromSpotify(
 
   const server = await getPlexServerIdentity(settings);
   const mode = normalizePlaylistSyncMode(options.mode);
-  const matches = await matchMusicLibraryTracks(tracks);
+  const matches = await matchMusicLibraryTracks(availableTracks);
   const ratingKeys: string[] = [];
   const skipped: MusicLibraryPlaylistSyncResult["skipped"] = [];
 
@@ -285,7 +290,7 @@ export async function createOrUpdatePlexPlaylistFromSpotify(
     () => undefined
   );
 
-  for (const track of tracks) {
+  for (const track of availableTracks) {
     if (isUnresolvedSpotifyLocalBackupTrack(track)) {
       skipped.push({
         reason: track.metadataWarning ?? unresolvedSpotifyLocalTrackMessage,

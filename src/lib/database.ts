@@ -40,6 +40,12 @@ export function getSpotifyBuDatabase() {
     CREATE INDEX IF NOT EXISTS idx_playlist_backups_playlist_created
       ON playlist_backups (playlist_id, created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS spotify_playlist_catalog (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      playlists_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS provider_bulk_jobs (
       id TEXT PRIMARY KEY,
       status TEXT NOT NULL,
