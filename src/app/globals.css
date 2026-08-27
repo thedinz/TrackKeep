@@ -866,10 +866,11 @@ button {
   background: rgba(5, 8, 6, 0.74);
   border: 1px solid var(--line);
   border-radius: 8px;
+  column-gap: 12px;
   display: grid;
   grid-template-columns: 38px minmax(0, 1fr);
   min-height: 82px;
-  padding: 13px;
+  padding: 14px;
 }
 
 .sync-pipeline > div > span {
@@ -882,7 +883,6 @@ button {
   grid-row: 1 / 3;
   height: 38px;
   justify-content: center;
-  margin-right: 10px;
   width: 38px;
 }
 
@@ -898,12 +898,14 @@ button {
   font-size: 0.65rem;
   font-weight: 800;
   letter-spacing: 0.06em;
+  min-width: 0;
   text-transform: uppercase;
 }
 
 .sync-pipeline strong {
   font-size: 0.82rem;
   line-height: 1.25;
+  min-width: 0;
 }
 
 .sync-pipeline > i {
