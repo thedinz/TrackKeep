@@ -3531,21 +3531,21 @@ export default function Home() {
                       <span className="playlist-status-row">
                         {!playlistReadable ? (
                           <span
-                            className="playlist-unavailable-badge"
+                            className="playlist-unavailable-badge playlist-primary-status-badge"
                             title="Spotify only exposes tracks for owned or collaborative playlists"
                           >
                             Limited
                           </span>
                         ) : backupStatusStale ? (
                           <span
-                            className="playlist-missing-backup-badge"
+                            className="playlist-missing-backup-badge playlist-primary-status-badge"
                             title="Spotify changed this playlist; TrackKeep is refreshing its backup status"
                           >
                             Playlist changed
                           </span>
                         ) : missingBackupTrackCount > 0 ? (
                           <span
-                            className="playlist-missing-backup-badge"
+                            className="playlist-missing-backup-badge playlist-primary-status-badge"
                             title={playlistMissingBackupTitle(
                               missingBackupTrackCount
                             )}
@@ -3555,7 +3555,7 @@ export default function Home() {
                           </span>
                         ) : backupStatus?.backedUp ? (
                           <span
-                            className="playlist-backed-up-badge"
+                            className="playlist-backed-up-badge playlist-primary-status-badge"
                             title="All available tracks in this playlist are backed up"
                           >
                             <CheckCircle2 size={14} />
@@ -3565,7 +3565,7 @@ export default function Home() {
                         {playlistReadable &&
                         (backupStatus?.unavailableTrackCount ?? 0) > 0 ? (
                           <span
-                            className="playlist-unavailable-badge"
+                            className="playlist-unavailable-badge playlist-unavailable-status-badge"
                             title="Excluded from backup and organization status because Spotify reports these tracks as unavailable"
                           >
                             {numberFormatter.format(

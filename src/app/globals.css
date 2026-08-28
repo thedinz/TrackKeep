@@ -1578,10 +1578,10 @@ button {
 
 .playlist-status-row {
   align-items: center;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 6px;
   grid-column: 1 / -1;
+  grid-template-columns: max-content max-content;
   min-width: 0;
 }
 
@@ -1593,6 +1593,21 @@ button {
   justify-content: center;
   min-height: 23px;
   white-space: nowrap;
+}
+
+.playlist-primary-status-badge {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.playlist-status-row > .playlist-saved-badge {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.playlist-unavailable-status-badge {
+  grid-column: 1;
+  grid-row: 2;
 }
 
 .playlist-name {
