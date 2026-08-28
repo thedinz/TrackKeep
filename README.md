@@ -517,7 +517,9 @@ songs in the Navidrome API. Replace rebuilds the playlist from matched Spotify
 tracks, append only adds new matches, and full sync removes stale Navidrome
 playlist entries before adding the current matched Spotify order. Tracks that
 are not backed up or not visible to Navidrome are skipped and reported in the UI,
-so scan/index the folder before syncing a playlist.
+so scan/index the folder before syncing a playlist. Spotify-unavailable tracks
+remain in the synced playlist when their local files can still be matched; an
+unmatched unavailable row is omitted by Replace or Full Sync.
 
 ### Plex Playlist Sync
 
@@ -531,8 +533,9 @@ first one unless you choose another.
 On the playlist page, use the target dropdown to switch between Navidrome and
 Plex. Replace, append, and full sync have the same meaning for both targets.
 Tracks that are not backed up locally or cannot be found in Plex are skipped and
-reported in the UI. Scan Plex's music library after adding or organizing files
-before syncing playlists.
+reported in the UI. Spotify-unavailable tracks follow the same local-file rule
+as Navidrome. Scan Plex's music library after adding or organizing files before
+syncing playlists.
 
 If Library Index fails, check the mounted folder first:
 

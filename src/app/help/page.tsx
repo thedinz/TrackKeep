@@ -494,7 +494,7 @@ export default function HelpPage() {
               <li><strong>Missing locally:</strong> TrackKeep has no backed-up file to reference.</li>
               <li><strong>Not in the server:</strong> the file exists, but Navidrome or Plex has not indexed it.</li>
               <li><strong>Unresolved local Spotify row:</strong> the identity is too uncertain to sync safely.</li>
-              <li><strong>Unavailable on Spotify:</strong> the row lacks dependable metadata and is excluded.</li>
+              <li><strong>Unavailable on Spotify:</strong> kept when TrackKeep can still match its local file; otherwise excluded.</li>
             </ul>
             <p>
               TrackKeep shows the skipped count and reasons after syncing. Fix the
