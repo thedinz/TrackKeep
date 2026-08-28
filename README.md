@@ -4,7 +4,7 @@ TrackKeep is a Docker-first web app for turning a Spotify library into a Navidro
 
 The point is not to replace Navidrome search. Navidrome already tells you what files exist locally. TrackKeep uses Spotify as the source-of-truth list, uses local library matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
 
-Current stable release: `1.10.1`. It includes the web UI, local or external-proxy app auth, Spotify OAuth diagnostics, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, unavailable-track monitoring, Homepage widget statistics, the expanded in-app playlist-sync guide, Navidrome folder checks, TrackKeep organize naming, library indexing, durable Spotify identity tags for downloaded files, matched-file organization, Navidrome and Plex playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
+Current stable release: `1.10.2`. It includes the web UI, local or external-proxy app auth, Spotify OAuth diagnostics, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, unavailable-track monitoring with local-copy visibility, Homepage widget statistics, the expanded in-app playlist-sync guide, Navidrome folder checks, TrackKeep organize naming, library indexing, durable Spotify identity tags for downloaded files, matched-file organization, Navidrome and Plex playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
 The existing Docker image name and `.spotifybu` data paths retain their original
 identifiers so upgrades keep using the same image and persisted data. New
@@ -517,7 +517,9 @@ songs in the Navidrome API. Replace rebuilds the playlist from matched Spotify
 tracks, append only adds new matches, and full sync removes stale Navidrome
 playlist entries before adding the current matched Spotify order. Tracks that
 are not backed up or not visible to Navidrome are skipped and reported in the UI,
-so scan/index the folder before syncing a playlist.
+so scan/index the folder before syncing a playlist. Spotify-unavailable tracks
+remain in the synced playlist when their local files can still be matched; an
+unmatched unavailable row is omitted by Replace or Full Sync.
 
 ### Plex Playlist Sync
 
@@ -531,8 +533,9 @@ first one unless you choose another.
 On the playlist page, use the target dropdown to switch between Navidrome and
 Plex. Replace, append, and full sync have the same meaning for both targets.
 Tracks that are not backed up locally or cannot be found in Plex are skipped and
-reported in the UI. Scan Plex's music library after adding or organizing files
-before syncing playlists.
+reported in the UI. Spotify-unavailable tracks follow the same local-file rule
+as Navidrome. Scan Plex's music library after adding or organizing files before
+syncing playlists.
 
 If Library Index fails, check the mounted folder first:
 

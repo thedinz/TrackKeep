@@ -260,11 +260,7 @@ export async function createOrUpdatePlexPlaylistFromSpotify(
     mode?: MusicLibraryPlaylistSyncMode;
   } = {}
 ): Promise<MusicLibraryPlaylistSyncResult> {
-  const availableTracks = tracks.filter(
-    (track) => !isUnavailableSpotifyBackupTrack(track)
-  );
-
-  if (!availableTracks.length) {
+  if (!tracks.length) {
     throw new Error("Load Spotify playlist tracks before syncing a Plex playlist.");
   }
 
@@ -282,7 +278,7 @@ export async function createOrUpdatePlexPlaylistFromSpotify(
 
   const server = await getPlexServerIdentity(settings);
   const mode = normalizePlaylistSyncMode(options.mode);
-  const matches = await matchMusicLibraryTracks(availableTracks);
+  const matches = await matchMusicLibraryTracks(tracks);
   const ratingKeys: string[] = [];
   const skipped: MusicLibraryPlaylistSyncResult["skipped"] = [];
 
@@ -290,7 +286,7 @@ export async function createOrUpdatePlexPlaylistFromSpotify(
     () => undefined
   );
 
-  for (const track of availableTracks) {
+  for (const track of tracks) {
     if (isUnresolvedSpotifyLocalBackupTrack(track)) {
       skipped.push({
         reason: track.metadataWarning ?? unresolvedSpotifyLocalTrackMessage,
@@ -306,7 +302,9 @@ export async function createOrUpdatePlexPlaylistFromSpotify(
 
     if (!match?.matchedTrack) {
       skipped.push({
-        reason: "Track is not backed up in the local music folder.",
+        reason: isUnavailableSpotifyBackupTrack(track)
+          ? "Track is unavailable on Spotify and is not backed up in the local music folder."
+          : "Track is not backed up in the local music folder.",
         trackName: track.name,
         trackPosition: track.position
       });

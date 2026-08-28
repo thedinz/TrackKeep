@@ -49,10 +49,19 @@ export async function GET(request: Request, context: RouteContext) {
     const folderPlanTracks = tracks.filter(
       (track) => !isUnresolvedSpotifyLocalBackupTrack(track)
     );
-    const [folderPlans, libraryMatches] = await Promise.all([
+    const [folderPlans, playlistLibraryMatches] = await Promise.all([
       planMusicLibraryAlbumFolders(folderPlanTracks),
-      matchMusicLibraryTracks(tracks)
+      matchMusicLibraryTracks(playlistTracks)
     ]);
+    const unavailableTrackPositions = new Set(
+      unavailableTracks.map((track) => track.position)
+    );
+    const libraryMatches = playlistLibraryMatches.filter(
+      (match) => !unavailableTrackPositions.has(match.trackPosition)
+    );
+    const unavailableLibraryMatches = playlistLibraryMatches.filter((match) =>
+      unavailableTrackPositions.has(match.trackPosition)
+    );
     const metadataBackup = persistPlaylistBackup({
       playlist: playlistWithTrackTotal,
       source: "playlist-load",
@@ -66,6 +75,7 @@ export async function GET(request: Request, context: RouteContext) {
         metadataBackup,
         playlist: playlistWithTrackTotal,
         tracks,
+        unavailableLibraryMatches,
         unavailableTracks
       }),
       session,
