@@ -279,8 +279,12 @@ If the widget reports an API error, confirm that Homepage can reach this URL and
 that its `X-API-Key` exactly matches `TRACKKEEP_HOMEPAGE_API_KEY`.
 
 `Backed up` counts playlists whose latest saved TrackKeep snapshot has every
-track in the current music-library index. `Needs backup` includes playlists with
-missing tracks and playlists that have not been loaded into TrackKeep yet.
+track in the current music-library index and still matches Spotify's current
+playlist revision. TrackKeep checks revisions when the playlist view loads,
+every minute while it stays open, and when the browser regains focus; changed
+playlists are refreshed without requiring them to be opened individually.
+`Needs backup` includes playlists with missing tracks and playlists that have
+not been loaded into TrackKeep yet.
 `Total` is the most recent Spotify playlist count saved when TrackKeep loaded
 the playlist list. The endpoint also returns `updatedAt` if you want to add a
 fourth mapping later.
@@ -532,6 +536,11 @@ first one unless you choose another.
 
 On the playlist page, use the target dropdown to switch between Navidrome and
 Plex. Replace, append, and full sync have the same meaning for both targets.
+Auto Sync is saved separately for each Spotify playlist and target. When it is
+checked, TrackKeep requests the target server scan it needs and appends each
+newly completed single or bulk backup as soon as the server can resolve it. You
+can enable Auto Sync for Navidrome, Plex, or both; automatic updates never remove
+playlist entries.
 Tracks that are not backed up locally or cannot be found in Plex are skipped and
 reported in the UI. Spotify-unavailable tracks follow the same local-file rule
 as Navidrome. Scan Plex's music library after adding or organizing files before

@@ -109,6 +109,7 @@ type SpotifyPlaylistObject = {
     id?: string;
   };
   public?: boolean | null;
+  snapshot_id?: string;
   tracks?: {
     total?: number;
   };
@@ -160,6 +161,7 @@ export type PlaylistSummary = {
   owner: string;
   ownerId?: string;
   public: boolean | null;
+  snapshotId?: string;
   tracksTotal: number;
 };
 
@@ -263,7 +265,8 @@ const playlistMetadataFields = [
   "images",
   "name",
   "owner(display_name,id)",
-  "public"
+  "public",
+  "snapshot_id"
 ].join(",");
 
 const playlistSummaryFields = [playlistMetadataFields, "items(total)"].join(",");
@@ -1053,6 +1056,7 @@ function mapPlaylist(playlist: SpotifyPlaylistObject) {
     owner: playlist.owner?.display_name || ownerId || "Spotify",
     ownerId,
     public: playlist.public ?? null,
+    snapshotId: playlist.snapshot_id,
     tracksTotal: playlist.items?.total ?? playlist.tracks?.total ?? 0
   } satisfies PlaylistSummary;
 }

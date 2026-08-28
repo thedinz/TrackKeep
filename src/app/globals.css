@@ -1686,6 +1686,21 @@ button {
   padding: 0 8px;
 }
 
+.auto-sync-control {
+  cursor: pointer;
+  padding-right: 10px;
+}
+
+.auto-sync-control:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.auto-sync-control input {
+  accent-color: var(--spotify-bright);
+  margin: 0;
+}
+
 .detail-body {
   padding: 0 16px 16px;
 }

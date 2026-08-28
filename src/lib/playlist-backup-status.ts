@@ -8,15 +8,32 @@ import {
 } from "./music-library";
 import {
   isUnavailableSpotifyBackupTrack,
-  type BackupTrack
+  type BackupTrack,
+  type PlaylistSummary
 } from "./spotify";
 
 export type PlaylistBackupStatus = {
   backedUp: boolean;
   missingTrackCount: number;
+  snapshotId?: string;
   trackCount: number;
   unavailableTrackCount: number;
 };
+
+export function playlistBackupSnapshotNeedsRefresh(
+  playlist: Pick<PlaylistSummary, "snapshotId" | "tracksTotal">,
+  persistedPlaylist?: Pick<PlaylistSummary, "snapshotId" | "tracksTotal">
+) {
+  if (!persistedPlaylist) {
+    return false;
+  }
+
+  if (playlist.snapshotId) {
+    return playlist.snapshotId !== persistedPlaylist.snapshotId;
+  }
+
+  return playlist.tracksTotal !== persistedPlaylist.tracksTotal;
+}
 
 export async function getPersistedPlaylistBackupStatuses(
   playlistIds: string[],
@@ -40,15 +57,18 @@ export async function getPersistedPlaylistBackupStatuses(
   const statuses = await Promise.all(
     Object.values(snapshots).map(async (snapshot) => [
       snapshot.playlistId,
-      getPlaylistBackupStatus(
-        snapshot.tracks,
-        await matchMusicLibraryTracksWithIndex(
-          snapshot.tracks.filter(
-            (track) => !isUnavailableSpotifyBackupTrack(track)
-          ),
-          index
-        )
-      )
+      {
+        ...getPlaylistBackupStatus(
+          snapshot.tracks,
+          await matchMusicLibraryTracksWithIndex(
+            snapshot.tracks.filter(
+              (track) => !isUnavailableSpotifyBackupTrack(track)
+            ),
+            index
+          )
+        ),
+        snapshotId: snapshot.playlist.snapshotId
+      }
     ] as const)
   );
 
