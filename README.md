@@ -202,45 +202,67 @@ risky, so `TRACKKEEP_CHOWN_MUSIC=true` is an explicit repair option only.
 
 TrackKeep exposes an optional read-only endpoint for a
 [Homepage Custom API widget](https://gethomepage.dev/widgets/services/customapi/).
-Set a separate long random API key in TrackKeep's `.env`, then restart TrackKeep:
+The TrackKeep logo is already hosted in this repository and can be used directly
+by Homepage:
 
 ```text
-TRACKKEEP_HOMEPAGE_API_KEY=replace-with-a-long-random-value
+https://raw.githubusercontent.com/thedinz/TrackKeep/main/assets/trackkeep.png
 ```
 
-Unraid users can set the same value in the template's optional
-`Homepage API Key` field.
+To add the widget:
 
-Open TrackKeep once after connecting Spotify so it can save the current playlist
-catalog. Then add this service to Homepage's `services.yaml`:
+1. Generate a separate random key. Do not reuse `TRACKKEEP_APP_SECRET`:
 
-```yaml
-- Media:
-    - TrackKeep:
-        icon: mdi-playlist-check
-        href: https://trackkeep.example.com
-        description: Spotify playlist backups
-        widget:
-          type: customapi
-          url: http://trackkeep:3000/api/homepage/stats
-          refreshInterval: 60000
-          headers:
-            X-API-Key: replace-with-the-same-long-random-value
-          mappings:
-            - field: fullyBackedUp
-              label: Backed up
-              format: number
-            - field: needsBackup
-              label: Needs backup
-              format: number
-            - field: totalPlaylists
-              label: Total
-              format: number
-```
+   ```sh
+   openssl rand -hex 32
+   ```
 
-Use the TrackKeep address that is reachable from the Homepage container. The
-example `http://trackkeep:3000` works when both containers share a Docker
-network and the TrackKeep service or container is named `trackkeep`.
+2. Put the generated value in TrackKeep's `.env`, then recreate or restart the
+   TrackKeep container so it receives the new environment variable:
+
+   ```text
+   TRACKKEEP_HOMEPAGE_API_KEY=PASTE_THE_GENERATED_KEY_HERE
+   ```
+
+   Unraid users can put the same value in the template's optional
+   `Homepage API Key` field, then restart the TrackKeep container.
+
+3. Open TrackKeep once after connecting Spotify so TrackKeep can save the current
+   playlist catalog.
+
+4. Paste the following block into Homepage's `services.yaml`. Replace both
+   occurrences of `http://TRACKKEEP-IP:3000` with the same TrackKeep URL and
+   port, and replace `PASTE_THE_SAME_KEY_HERE` with the key from step 1:
+
+   ```yaml
+   - Media:
+       - TrackKeep:
+           icon: https://raw.githubusercontent.com/thedinz/TrackKeep/main/assets/trackkeep.png
+           href: http://TRACKKEEP-IP:3000
+           description: Spotify playlist backups
+           widget:
+             type: customapi
+             url: http://TRACKKEEP-IP:3000/api/homepage/stats
+             refreshInterval: 60000
+             headers:
+               X-API-Key: PASTE_THE_SAME_KEY_HERE
+             mappings:
+               - field: fullyBackedUp
+                 label: Backed up
+                 format: number
+               - field: needsBackup
+                 label: Needs backup
+                 format: number
+               - field: totalPlaylists
+                 label: Total
+                 format: number
+   ```
+
+For example, if TrackKeep opens at `http://192.168.1.50:3000`, replace
+`http://TRACKKEEP-IP:3000` with `http://192.168.1.50:3000` in both places. Use
+an address that is reachable from both your browser and the Homepage container.
+If the widget reports an API error, confirm that Homepage can reach this URL and
+that its `X-API-Key` exactly matches `TRACKKEEP_HOMEPAGE_API_KEY`.
 
 `Backed up` counts playlists whose latest saved TrackKeep snapshot has every
 track in the current music-library index. `Needs backup` includes playlists with
