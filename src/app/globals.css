@@ -1576,12 +1576,23 @@ button {
   min-width: 0;
 }
 
-.playlist-title-row {
+.playlist-status-row {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
+  grid-column: 1 / -1;
   min-width: 0;
+}
+
+.playlist-status-row:empty {
+  display: none;
+}
+
+.playlist-status-row > span {
+  justify-content: center;
+  min-height: 23px;
+  white-space: nowrap;
 }
 
 .playlist-name {

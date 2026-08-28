@@ -3523,66 +3523,66 @@ export default function Home() {
                         )}
                       </span>
                       <span className="playlist-meta">
-                        <span className="playlist-title-row">
-                          <span className="playlist-name">{playlist.name}</span>
-                          {!playlistReadable ? (
-                            <span
-                              className="playlist-unavailable-badge"
-                              title="Spotify only exposes tracks for owned or collaborative playlists"
-                            >
-                              Limited
-                            </span>
-                          ) : backupStatusStale ? (
-                            <span
-                              className="playlist-missing-backup-badge"
-                              title="Spotify changed this playlist; TrackKeep is refreshing its backup status"
-                            >
-                              Playlist changed
-                            </span>
-                          ) : missingBackupTrackCount > 0 ? (
-                            <span
-                              className="playlist-missing-backup-badge"
-                              title={playlistMissingBackupTitle(
-                                missingBackupTrackCount
-                              )}
-                            >
-                              {numberFormatter.format(missingBackupTrackCount)} not
-                              backed up
-                            </span>
-                          ) : backupStatus?.backedUp ? (
-                            <span
-                              className="playlist-backed-up-badge"
-                              title="All available tracks in this playlist are backed up"
-                            >
-                              <CheckCircle2 size={14} />
-                              Backed up
-                            </span>
-                          ) : null}
-                          {playlistReadable &&
-                          (backupStatus?.unavailableTrackCount ?? 0) > 0 ? (
-                            <span
-                              className="playlist-unavailable-badge"
-                              title="Excluded from backup and organization status because Spotify reports these tracks as unavailable"
-                            >
-                              {numberFormatter.format(
-                                backupStatus?.unavailableTrackCount ?? 0
-                              )} unavailable
-                            </span>
-                          ) : null}
-                          {metadataBackup ? (
-                            <span
-                              className="playlist-saved-badge"
-                              title={`Metadata saved ${formatShortDate(
-                                metadataBackup.exportedAt
-                              )}`}
-                            >
-                              DB saved
-                            </span>
-                          ) : null}
-                        </span>
+                        <span className="playlist-name">{playlist.name}</span>
                         <span className="playlist-count">
                           {numberFormatter.format(playlist.tracksTotal)} tracks
                         </span>
+                      </span>
+                      <span className="playlist-status-row">
+                        {!playlistReadable ? (
+                          <span
+                            className="playlist-unavailable-badge"
+                            title="Spotify only exposes tracks for owned or collaborative playlists"
+                          >
+                            Limited
+                          </span>
+                        ) : backupStatusStale ? (
+                          <span
+                            className="playlist-missing-backup-badge"
+                            title="Spotify changed this playlist; TrackKeep is refreshing its backup status"
+                          >
+                            Playlist changed
+                          </span>
+                        ) : missingBackupTrackCount > 0 ? (
+                          <span
+                            className="playlist-missing-backup-badge"
+                            title={playlistMissingBackupTitle(
+                              missingBackupTrackCount
+                            )}
+                          >
+                            {numberFormatter.format(missingBackupTrackCount)} not backed
+                            up
+                          </span>
+                        ) : backupStatus?.backedUp ? (
+                          <span
+                            className="playlist-backed-up-badge"
+                            title="All available tracks in this playlist are backed up"
+                          >
+                            <CheckCircle2 size={14} />
+                            Backed up
+                          </span>
+                        ) : null}
+                        {playlistReadable &&
+                        (backupStatus?.unavailableTrackCount ?? 0) > 0 ? (
+                          <span
+                            className="playlist-unavailable-badge"
+                            title="Excluded from backup and organization status because Spotify reports these tracks as unavailable"
+                          >
+                            {numberFormatter.format(
+                              backupStatus?.unavailableTrackCount ?? 0
+                            )} unavailable
+                          </span>
+                        ) : null}
+                        {metadataBackup ? (
+                          <span
+                            className="playlist-saved-badge"
+                            title={`Metadata saved ${formatShortDate(
+                              metadataBackup.exportedAt
+                            )}`}
+                          >
+                            DB saved
+                          </span>
+                        ) : null}
                       </span>
                     </button>
                   );
