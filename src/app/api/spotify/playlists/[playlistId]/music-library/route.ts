@@ -32,20 +32,25 @@ export async function POST(request: Request, context: RouteContext) {
       | {
           mode?: unknown;
           target?: unknown;
+          trackPositions?: unknown;
         }
       | null;
     const mode: MusicLibraryPlaylistSyncMode = parsePlaylistSyncMode(body?.mode);
     const target = parsePlaylistSyncTarget(body?.target);
+    const requestedTrackPositions = parseTrackPositions(body?.trackPositions);
     const [playlist, tracks] = await Promise.all([
       getPlaylist(session.token, playlistId),
       getPlaylistTracks(session.token, playlistId)
     ]);
+    const syncTracks = requestedTrackPositions.length
+      ? tracks.filter((track) => requestedTrackPositions.includes(track.position))
+      : tracks;
     const musicLibraryPlaylist =
       target === "plex"
-        ? await createOrUpdatePlexPlaylistFromSpotify(playlist, tracks, {
+        ? await createOrUpdatePlexPlaylistFromSpotify(playlist, syncTracks, {
             mode
           })
-        : await createOrUpdateMusicLibraryPlaylistFromSpotify(playlist, tracks, {
+        : await createOrUpdateMusicLibraryPlaylistFromSpotify(playlist, syncTracks, {
             mode
           });
 
@@ -106,4 +111,17 @@ function parsePlaylistSyncTarget(
   target: unknown
 ): MusicLibraryPlaylistSyncTarget {
   return target === "plex" ? "plex" : "navidrome";
+}
+
+function parseTrackPositions(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return [...new Set(value)].filter(
+    (trackPosition): trackPosition is number =>
+      typeof trackPosition === "number" &&
+      Number.isInteger(trackPosition) &&
+      trackPosition >= 0
+  );
 }
