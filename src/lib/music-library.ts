@@ -2192,22 +2192,18 @@ export async function createOrUpdateMusicLibraryPlaylistFromSpotify(
     mode?: MusicLibraryPlaylistSyncMode;
   } = {}
 ) {
-  const availableTracks = tracks.filter(
-    (track) => !isUnavailableSpotifyBackupTrack(track)
-  );
-
-  if (!availableTracks.length) {
+  if (!tracks.length) {
     throw new Error("Load Spotify playlist tracks before creating a Navidrome playlist.");
   }
 
   await musicServerApiRequest("ping");
 
   const mode = normalizePlaylistSyncMode(options.mode);
-  const matches = await matchMusicLibraryTracks(availableTracks);
+  const matches = await matchMusicLibraryTracks(tracks);
   const songIds: string[] = [];
   const skipped: MusicLibraryPlaylistSyncResult["skipped"] = [];
 
-  for (const track of availableTracks) {
+  for (const track of tracks) {
     if (isUnresolvedSpotifyLocalBackupTrack(track)) {
       skipped.push({
         reason: track.metadataWarning ?? unresolvedSpotifyLocalTrackMessage,
@@ -2223,7 +2219,9 @@ export async function createOrUpdateMusicLibraryPlaylistFromSpotify(
 
     if (!match?.matchedTrack) {
       skipped.push({
-        reason: "Track is not backed up in the Navidrome folder.",
+        reason: isUnavailableSpotifyBackupTrack(track)
+          ? "Track is unavailable on Spotify and is not backed up in the Navidrome folder."
+          : "Track is not backed up in the Navidrome folder.",
         trackName: track.name,
         trackPosition: track.position
       });

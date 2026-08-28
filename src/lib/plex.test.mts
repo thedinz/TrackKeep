@@ -80,6 +80,101 @@ test("Plex playlist sync creates an audio playlist from matched tracks", async (
   });
 });
 
+test("Plex playlist sync keeps an unavailable Spotify track when its local file exists", async (t) => {
+  await withTempEnvironment(t, async ({ libraryPath }) => {
+    const playlistCreates: string[] = [];
+    const server = await startMockPlexServer({
+      onCreatePlaylist(uri) {
+        playlistCreates.push(uri);
+      }
+    });
+
+    t.after(async () => {
+      await server.close();
+    });
+
+    await writeLibraryIndex(libraryPath);
+    await updatePlexSettings({
+      enabled: true,
+      serverUrl: server.url,
+      token: "test-token"
+    });
+
+    const result = await createOrUpdatePlexPlaylistFromSpotify(
+      examplePlaylist,
+      [
+        {
+          ...exampleTrack,
+          metadataStatus: "spotify-unavailable",
+          metadataWarning: "Spotify reports this track as unavailable."
+        }
+      ],
+      {
+        mode: "replace"
+      }
+    );
+
+    assert.equal(result.matchedCount, 1);
+    assert.equal(result.skippedCount, 0);
+    assert.deepEqual(playlistCreates, [
+      "server://mock-machine/com.plexapp.plugins.library/library/metadata/501"
+    ]);
+  });
+});
+
+test("Plex playlist sync excludes an unavailable Spotify track without a local file", async (t) => {
+  await withTempEnvironment(t, async ({ libraryPath }) => {
+    const playlistCreates: string[] = [];
+    const server = await startMockPlexServer({
+      onCreatePlaylist(uri) {
+        playlistCreates.push(uri);
+      }
+    });
+
+    t.after(async () => {
+      await server.close();
+    });
+
+    await writeLibraryIndex(libraryPath);
+    await updatePlexSettings({
+      enabled: true,
+      serverUrl: server.url,
+      token: "test-token"
+    });
+
+    const unavailableMissingTrack = {
+      ...exampleTrack,
+      album: "Missing Record",
+      albumArtist: "Missing Artist",
+      artists: ["Missing Artist"],
+      id: "missing-spotify-track",
+      isrc: "USRC17600000",
+      metadataStatus: "spotify-unavailable" as const,
+      metadataWarning: "Spotify reports this track as unavailable.",
+      name: "Missing Song",
+      position: 2,
+      spotifyUri: "spotify:track:missing-spotify-track"
+    } satisfies BackupTrack;
+    const result = await createOrUpdatePlexPlaylistFromSpotify(
+      {
+        ...examplePlaylist,
+        tracksTotal: 2
+      },
+      [exampleTrack, unavailableMissingTrack],
+      {
+        mode: "replace"
+      }
+    );
+
+    assert.equal(result.matchedCount, 1);
+    assert.equal(result.skippedCount, 1);
+    assert.match(result.skipped[0].reason, /unavailable on Spotify/);
+    assert.deepEqual(playlistCreates, [
+      "server://mock-machine/com.plexapp.plugins.library/library/metadata/501"
+    ]);
+  });
+});
+
 test("Plex playlist sync rejects metadata-only tracks that cannot play", async (t) => {
   await withTempEnvironment(t, async ({ libraryPath }) => {
     const playlistCreates: string[] = [];
