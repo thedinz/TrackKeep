@@ -217,15 +217,29 @@ To add the widget:
    openssl rand -hex 32
    ```
 
-2. Put the generated value in TrackKeep's `.env`, then recreate or restart the
-   TrackKeep container so it receives the new environment variable:
+2. Configure the generated value for your installation type:
 
-   ```text
-   TRACKKEEP_HOMEPAGE_API_KEY=PASTE_THE_GENERATED_KEY_HERE
-   ```
+   - **Docker Compose:** put it in TrackKeep's `.env`, then recreate or restart
+     the TrackKeep container so it receives the new environment variable:
 
-   Unraid users can put the same value in the template's optional
-   `Homepage API Key` field, then restart the TrackKeep container.
+     ```text
+     TRACKKEEP_HOMEPAGE_API_KEY=PASTE_THE_GENERATED_KEY_HERE
+     ```
+
+   - **Unraid:** edit the TrackKeep container, find the optional
+     `Homepage API Key` field, and paste the generated value there. That field
+     sets the container variable `TRACKKEEP_HOMEPAGE_API_KEY`. Click **Apply**
+     to recreate the container with the new variable.
+
+     If an older Unraid template does not show `Homepage API Key`, add a new
+     Variable with these values, then apply the container changes:
+
+     ```text
+     Name: Homepage API Key
+     Key: TRACKKEEP_HOMEPAGE_API_KEY
+     Value: PASTE_THE_GENERATED_KEY_HERE
+     Mask: Yes
+     ```
 
 3. Open TrackKeep once after connecting Spotify so TrackKeep can save the current
    playlist catalog.
