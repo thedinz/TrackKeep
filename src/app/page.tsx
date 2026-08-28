@@ -286,6 +286,7 @@ type TracksResponse = {
   metadataBackup?: PlaylistMetadataBackup | null;
   playlist: PlaylistSummary;
   tracks: BackupTrack[];
+  unavailableLibraryMatches: LibraryMatch[];
   unavailableTracks: BackupTrack[];
 };
 
@@ -723,6 +724,9 @@ export default function Home() {
   const [resolvedSource, setResolvedSource] = useState<ResolvedSource | null>(null);
   const [tracks, setTracks] = useState<BackupTrack[]>([]);
   const [unavailableTracks, setUnavailableTracks] = useState<BackupTrack[]>([]);
+  const [unavailableLibraryMatches, setUnavailableLibraryMatches] = useState<
+    LibraryMatch[]
+  >([]);
   const [folderPlans, setFolderPlans] = useState<FolderPlan[]>([]);
   const [isFolderPlanSectionExpanded, setIsFolderPlanSectionExpanded] =
     useState(false);
@@ -1045,22 +1049,36 @@ export default function Home() {
   }, []);
 
   const refreshLibraryMatches = useCallback(async (nextTracks = tracks) => {
-    if (!nextTracks.length) {
+    const allTracks = [...nextTracks, ...unavailableTracks];
+
+    if (!allTracks.length) {
       applyLibraryMatches([], []);
+      setUnavailableLibraryMatches([]);
       return [];
     }
 
     const response = await postJson<LibraryMatchesResponse>(
       "/api/music-library/matches",
       {
-        tracks: nextTracks
+        tracks: allTracks
       }
     );
+    const unavailableTrackPositions = new Set(
+      unavailableTracks.map((track) => track.position)
+    );
+    const nextLibraryMatches = response.libraryMatches.filter(
+      (match) => !unavailableTrackPositions.has(match.trackPosition)
+    );
 
-    applyLibraryMatches(nextTracks, response.libraryMatches);
+    applyLibraryMatches(nextTracks, nextLibraryMatches);
+    setUnavailableLibraryMatches(
+      response.libraryMatches.filter((match) =>
+        unavailableTrackPositions.has(match.trackPosition)
+      )
+    );
 
-    return response.libraryMatches;
-  }, [applyLibraryMatches, tracks]);
+    return nextLibraryMatches;
+  }, [applyLibraryMatches, tracks, unavailableTracks]);
 
   const deleteLibraryTrack = useCallback(
     async (relativePath: string) => {
@@ -1843,6 +1861,7 @@ export default function Home() {
       setResolvedSource(response.source);
       setTracks(response.tracks);
       setUnavailableTracks([]);
+      setUnavailableLibraryMatches([]);
       setFolderPlans(response.folderPlans);
       setIsFolderPlanSectionExpanded(false);
       setShowAllFolderPlans(false);
@@ -1864,6 +1883,7 @@ export default function Home() {
     setResolvedSource(null);
     setTracks([]);
     setUnavailableTracks([]);
+    setUnavailableLibraryMatches([]);
     setFolderPlans([]);
     setIsFolderPlanSectionExpanded(false);
     setShowAllFolderPlans(false);
@@ -1883,6 +1903,7 @@ export default function Home() {
         setSelectedPlaylist(null);
         setTracks([]);
         setUnavailableTracks([]);
+        setUnavailableLibraryMatches([]);
         setFolderPlans([]);
         setIsFolderPlanSectionExpanded(false);
         setShowAllFolderPlans(false);
@@ -2083,6 +2104,7 @@ export default function Home() {
       setSelectedMetadataBackup(null);
       setTracks([]);
       setUnavailableTracks([]);
+      setUnavailableLibraryMatches([]);
       setFolderPlans([]);
       setIsFolderPlanSectionExpanded(false);
       setShowAllFolderPlans(false);
@@ -2107,6 +2129,7 @@ export default function Home() {
       setSelectedMetadataBackup(null);
       setTracks([]);
       setUnavailableTracks([]);
+      setUnavailableLibraryMatches([]);
       setFolderPlans([]);
       setIsFolderPlanSectionExpanded(false);
       setShowAllFolderPlans(false);
@@ -2121,6 +2144,9 @@ export default function Home() {
           setSelectedPlaylist(response.playlist);
           setTracks(response.tracks);
           setUnavailableTracks(response.unavailableTracks ?? []);
+          setUnavailableLibraryMatches(
+            response.unavailableLibraryMatches ?? []
+          );
           setFolderPlans(response.folderPlans);
           setLibraryMatches(response.libraryMatches);
           setSelectedMetadataBackup(response.metadataBackup ?? null);
@@ -2269,6 +2295,16 @@ export default function Home() {
         libraryMatches.map((match) => [match.trackPosition, match] as const)
       ),
     [libraryMatches]
+  );
+  const unavailableLibraryMatchesByPosition = useMemo(
+    () =>
+      new Map(
+        unavailableLibraryMatches.map((match) => [
+          match.trackPosition,
+          match
+        ] as const)
+      ),
+    [unavailableLibraryMatches]
   );
   const spotifyBuTaggedDeleteCount = useMemo(
     () => spotifyBuTaggedLibraryMatchCount(libraryMatches),
@@ -4245,9 +4281,9 @@ export default function Home() {
                         </span>
                         <p>
                           Spotify currently reports these playlist items as
-                          unavailable. TrackKeep keeps them visible for
-                          monitoring, but excludes them from backup,
-                          organization, download, and sync status.
+                          unavailable. A Local copy badge confirms that the
+                          audio still exists in your library and remains
+                          eligible for playlist sync.
                         </p>
                       </div>
                       <div className="track-table unavailable-track-table">
@@ -4258,42 +4294,63 @@ export default function Home() {
                           <span className="track-cell">Status</span>
                           <span className="track-cell">Time</span>
                         </div>
-                        {unavailableTracks.map((track) => (
-                          <div
-                            className="track-row unavailable-track-row"
-                            key={`unavailable-${track.position}-${
-                              track.id ?? track.name
-                            }`}
-                          >
-                            <span className="track-cell">{track.position}</span>
-                            <span className="track-meta">
-                              <span className="track-title">{track.name}</span>
-                              <span className="track-subtitle">
-                                {track.artists.join(", ") ||
-                                  "Spotify metadata unavailable"}
+                        {unavailableTracks.map((track) => {
+                          const localMatch =
+                            unavailableLibraryMatchesByPosition.get(
+                              track.position
+                            );
+
+                          return (
+                            <div
+                              className="track-row unavailable-track-row"
+                              key={`unavailable-${track.position}-${
+                                track.id ?? track.name
+                              }`}
+                            >
+                              <span className="track-cell">{track.position}</span>
+                              <span className="track-meta">
+                                <span className="track-title">{track.name}</span>
+                                <span className="track-subtitle">
+                                  {track.artists.join(", ") ||
+                                    "Spotify metadata unavailable"}
+                                </span>
+                                <span className="track-unavailable-reason">
+                                  {track.metadataWarning ??
+                                    "Spotify reports this track as unavailable."}
+                                </span>
                               </span>
-                              <span className="track-unavailable-reason">
-                                {track.metadataWarning ??
-                                  "Spotify reports this track as unavailable."}
+                              <span className="track-cell">
+                                {track.album === "Unknown Album"
+                                  ? "Metadata unavailable"
+                                  : track.album}
                               </span>
-                            </span>
-                            <span className="track-cell">
-                              {track.album === "Unknown Album"
-                                ? "Metadata unavailable"
-                                : track.album}
-                            </span>
-                            <span className="track-cell library-cell">
-                              <span className="track-status unavailable">
-                                Unavailable
+                              <span className="track-cell library-cell">
+                                <span className="track-status-actions">
+                                  <span className="track-status unavailable">
+                                    Unavailable
+                                  </span>
+                                  {localMatch?.exists ? (
+                                    <span
+                                      className="track-status exists"
+                                      title={`Local copy: ${
+                                        localMatch.matchedTrack?.relativePath ??
+                                        "indexed file"
+                                      }`}
+                                    >
+                                      <CheckCircle2 size={13} />
+                                      Local copy
+                                    </span>
+                                  ) : null}
+                                </span>
                               </span>
-                            </span>
-                            <span className="track-cell">
-                              {track.durationMs
-                                ? formatDuration(track.durationMs)
-                                : "—"}
-                            </span>
-                          </div>
-                        ))}
+                              <span className="track-cell">
+                                {track.durationMs
+                                  ? formatDuration(track.durationMs)
+                                  : "—"}
+                              </span>
+                            </div>
+                          );
+                        })}
                       </div>
                     </section>
                   ) : null}
