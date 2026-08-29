@@ -34,7 +34,7 @@ export async function getHomepageStats(): Promise<HomepageStats> {
 }
 
 export function buildHomepageStats(
-  playlists: Pick<PlaylistSummary, "id" | "tracksTotal">[],
+  playlists: Pick<PlaylistSummary, "id" | "snapshotId" | "tracksTotal">[],
   statuses: Record<string, PlaylistBackupStatus>,
   updatedAt: string | null
 ): HomepageStats {
@@ -43,6 +43,7 @@ export function buildHomepageStats(
 
     return (
       status?.backedUp &&
+      (!playlist.snapshotId || status.snapshotId === playlist.snapshotId) &&
       status.trackCount + status.unavailableTrackCount >= playlist.tracksTotal
     );
   }).length;

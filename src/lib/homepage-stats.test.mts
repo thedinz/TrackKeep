@@ -67,6 +67,36 @@ test("buildHomepageStats treats tracks added after the saved snapshot as needing
   );
 });
 
+test("buildHomepageStats treats a changed same-size playlist as needing backup", () => {
+  assert.deepEqual(
+    buildHomepageStats(
+      [
+        {
+          id: "changed",
+          snapshotId: "current-revision",
+          tracksTotal: 10
+        }
+      ],
+      {
+        changed: {
+          backedUp: true,
+          missingTrackCount: 0,
+          snapshotId: "saved-revision",
+          trackCount: 10,
+          unavailableTrackCount: 0
+        }
+      },
+      "2026-08-23T12:00:00.000Z"
+    ),
+    {
+      fullyBackedUp: 0,
+      needsBackup: 1,
+      totalPlaylists: 1,
+      updatedAt: "2026-08-23T12:00:00.000Z"
+    }
+  );
+});
+
 test("buildHomepageStats excludes unavailable tracks from backup completeness", () => {
   assert.deepEqual(
     buildHomepageStats(

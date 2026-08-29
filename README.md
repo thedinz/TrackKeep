@@ -4,7 +4,7 @@ TrackKeep is a Docker-first web app for turning a Spotify library into a Navidro
 
 The point is not to replace Navidrome search. Navidrome already tells you what files exist locally. TrackKeep uses Spotify as the source-of-truth list, uses local library matching only to avoid duplicates, and focuses the workflow on the tracks that would disappear if Spotify went away.
 
-Current stable release: `1.10.2`. It includes the web UI, local or external-proxy app auth, Spotify OAuth diagnostics, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, unavailable-track monitoring with local-copy visibility, Homepage widget statistics, the expanded in-app playlist-sync guide, Navidrome folder checks, TrackKeep organize naming, library indexing, durable Spotify identity tags for downloaded files, matched-file organization, Navidrome and Plex playlist sync controls, Docker packaging, and automatic provider sourcing inspired by spotDL.
+Current stable release: `1.10.3`. It includes the web UI, local or external-proxy app auth, Spotify OAuth diagnostics, playlist/song/album/track-list metadata reads, SQLite-backed metadata backup snapshots, unavailable-track monitoring with local-copy visibility, revision-aware Homepage widget statistics, the expanded in-app playlist-sync guide, Navidrome folder checks, TrackKeep organize naming, library indexing, durable Spotify identity tags for downloaded files, matched-file organization, Navidrome and Plex playlist sync controls with per-target Auto Sync, Docker packaging, and automatic provider sourcing inspired by spotDL.
 
 The existing Docker image name and `.spotifybu` data paths retain their original
 identifiers so upgrades keep using the same image and persisted data. New
@@ -64,13 +64,13 @@ The test image built from the `dev` branch is:
 ghcr.io/thedinz/spotifybu:dev
 ```
 
-Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.10.1-dev.1`; stable releases use normal version tags such as `1.10.1`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
+Use `latest` for normal installs. Use `dev` while testing changes before they are promoted to `main`. Dev builds may use prerelease versions such as `1.10.3-dev.1`; stable releases use normal version tags such as `1.10.3`. The image tag chooses the branch/release track; no separate runtime `GIT_BRANCH` setting is needed.
 
-For the exact v1.10.1 release, pin one of these tags:
+For the exact v1.10.3 release, pin one of these tags:
 
 ```text
-ghcr.io/thedinz/spotifybu:v1.10.1
-ghcr.io/thedinz/spotifybu:1.10.1
+ghcr.io/thedinz/spotifybu:v1.10.3
+ghcr.io/thedinz/spotifybu:1.10.3
 ghcr.io/thedinz/spotifybu:1.10
 ```
 
@@ -279,8 +279,12 @@ If the widget reports an API error, confirm that Homepage can reach this URL and
 that its `X-API-Key` exactly matches `TRACKKEEP_HOMEPAGE_API_KEY`.
 
 `Backed up` counts playlists whose latest saved TrackKeep snapshot has every
-track in the current music-library index. `Needs backup` includes playlists with
-missing tracks and playlists that have not been loaded into TrackKeep yet.
+track in the current music-library index and still matches Spotify's current
+playlist revision. TrackKeep checks revisions when the playlist view loads,
+every minute while it stays open, and when the browser regains focus; changed
+playlists are refreshed without requiring them to be opened individually.
+`Needs backup` includes playlists with missing tracks and playlists that have
+not been loaded into TrackKeep yet.
 `Total` is the most recent Spotify playlist count saved when TrackKeep loaded
 the playlist list. The endpoint also returns `updatedAt` if you want to add a
 fourth mapping later.
@@ -532,6 +536,11 @@ first one unless you choose another.
 
 On the playlist page, use the target dropdown to switch between Navidrome and
 Plex. Replace, append, and full sync have the same meaning for both targets.
+Auto Sync is saved separately for each Spotify playlist and target. When it is
+checked, TrackKeep requests the target server scan it needs and appends each
+newly completed single or bulk backup as soon as the server can resolve it. You
+can enable Auto Sync for Navidrome, Plex, or both; automatic updates never remove
+playlist entries.
 Tracks that are not backed up locally or cannot be found in Plex are skipped and
 reported in the UI. Spotify-unavailable tracks follow the same local-file rule
 as Navidrome. Scan Plex's music library after adding or organizing files before
