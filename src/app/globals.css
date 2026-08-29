@@ -1576,12 +1576,38 @@ button {
   min-width: 0;
 }
 
-.playlist-title-row {
+.playlist-status-row {
   align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  display: grid;
+  gap: 6px;
+  grid-column: 1 / -1;
+  grid-template-columns: max-content max-content;
   min-width: 0;
+}
+
+.playlist-status-row:empty {
+  display: none;
+}
+
+.playlist-status-row > span {
+  justify-content: center;
+  min-height: 23px;
+  white-space: nowrap;
+}
+
+.playlist-primary-status-badge {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.playlist-status-row > .playlist-saved-badge {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.playlist-unavailable-status-badge {
+  grid-column: 1;
+  grid-row: 2;
 }
 
 .playlist-name {
@@ -1684,6 +1710,21 @@ button {
   min-height: 30px;
   outline: none;
   padding: 0 8px;
+}
+
+.auto-sync-control {
+  cursor: pointer;
+  padding-right: 10px;
+}
+
+.auto-sync-control:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.auto-sync-control input {
+  accent-color: var(--spotify-bright);
+  margin: 0;
 }
 
 .detail-body {

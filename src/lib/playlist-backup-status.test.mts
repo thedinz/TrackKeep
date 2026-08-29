@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getPlaylistBackupStatus } from "./playlist-backup-status.ts";
+import {
+  getPlaylistBackupStatus,
+  playlistBackupSnapshotNeedsRefresh
+} from "./playlist-backup-status.ts";
 import type { MusicLibraryTrackMatch } from "./music-library.ts";
 import type { BackupTrack } from "./spotify.ts";
 
@@ -30,6 +33,26 @@ test("a playlist containing only unavailable rows has no missing backup", () => 
     trackCount: 0,
     unavailableTrackCount: 1
   });
+});
+
+test("playlist revisions invalidate persisted status when the track count is unchanged", () => {
+  assert.equal(
+    playlistBackupSnapshotNeedsRefresh(
+      { snapshotId: "current-revision", tracksTotal: 10 },
+      { snapshotId: "saved-revision", tracksTotal: 10 }
+    ),
+    true
+  );
+});
+
+test("matching playlist revisions keep persisted status current", () => {
+  assert.equal(
+    playlistBackupSnapshotNeedsRefresh(
+      { snapshotId: "same-revision", tracksTotal: 10 },
+      { snapshotId: "same-revision", tracksTotal: 10 }
+    ),
+    false
+  );
 });
 
 function backupTrack(

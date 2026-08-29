@@ -482,6 +482,17 @@ export default function HelpPage() {
             </article>
           </div>
 
+          <div className="help-callout tip">
+            <CheckCircle2 size={20} />
+            <p>
+              <strong>Auto Sync:</strong> choose Navidrome or Plex and check Auto
+              Sync to append a track after its backup finishes. The setting is
+              remembered separately for each Spotify playlist and target, so both
+              servers can be enabled. TrackKeep waits briefly for the target server
+              to index the new file; automatic sync never removes playlist entries.
+            </p>
+          </div>
+
           <div className="sync-skipped-panel">
             <div>
               <span className="help-section-icon amber"><AlertTriangle size={20} /></span>

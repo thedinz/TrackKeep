@@ -600,6 +600,7 @@ test("falls back to legacy playlist total fields when Spotify rejects items", as
         {
           id: "playlist-id",
           name: "Legacy Playlist",
+          snapshot_id: "snapshot-12",
           tracks: { total: 12 }
         }
       ],
@@ -616,7 +617,9 @@ test("falls back to legacy playlist total fields when Spotify rejects items", as
 
     assert.equal(requestedFields.length, 2);
     assert.ok(requestedFields[0].includes("items(total)"));
+    assert.ok(requestedFields[0].includes("snapshot_id"));
     assert.ok(requestedFields[1].includes("tracks(total)"));
+    assert.equal(playlists[0].snapshotId, "snapshot-12");
     assert.equal(playlists[0].tracksTotal, 12);
   } finally {
     globalThis.fetch = originalFetch;

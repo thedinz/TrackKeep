@@ -224,12 +224,14 @@ type PlaylistSummary = {
   owner: string;
   ownerId?: string;
   public: boolean | null;
+  snapshotId?: string;
   tracksTotal: number;
 };
 
 type PlaylistBackupStatus = {
   backedUp: boolean;
   missingTrackCount: number;
+  snapshotId?: string;
   trackCount: number;
   unavailableTrackCount?: number;
 };
@@ -634,8 +636,21 @@ const folderPlanPreviewLimit = 5;
 const providerSearchOrder = ["youtube", "jiosaavn"] as const;
 const singleTrackProviderSearchLimit = 8;
 const providerDownloadPollIntervalMs = 2500;
+const playlistStatusRefreshIntervalMs = 60_000;
 const maxProviderDownloadPollAttempts = 720;
 const bulkProviderJobStorageKey = "spotifybu.bulkProviderJobId";
+const bulkProviderJobPlaylistStorageKey =
+  "trackkeep.bulkProviderJobPlaylistId";
+const playlistAutoSyncStoragePrefix = "trackkeep.playlistAutoSync.v1";
+const playlistAutoSyncRetryDelayMs = 2500;
+const playlistAutoSyncMaxAttempts = 12;
+const defaultPlaylistAutoSyncTargets: Record<
+  MusicLibraryPlaylistSyncTarget,
+  boolean
+> = {
+  navidrome: false,
+  plex: false
+};
 const defaultProviderDownloadSettings = {
   fallbackFormat: "mp3",
   mp3FallbackQuality: "320",
@@ -699,7 +714,23 @@ function providerDownloadProfileLabel(format: string, quality: string) {
 export default function Home() {
   const missingBackupActionsRef = useRef<HTMLDivElement | null>(null);
   const bulkDownloadJobRef = useRef<ProviderBulkDownloadJob | null>(null);
+  const playlistRefreshInFlightRef = useRef(false);
   const refreshedBulkJobIdRef = useRef<string | null>(null);
+  const selectedPlaylistIdRef = useRef<string | null>(null);
+  const playlistAutoSyncTargetsRef = useRef(defaultPlaylistAutoSyncTargets);
+  const playlistAutoSyncQueueRef = useRef(
+    new Map<
+      string,
+      {
+        playlistId: string;
+        target: MusicLibraryPlaylistSyncTarget;
+        trackPositions: Set<number>;
+      }
+    >()
+  );
+  const playlistAutoSyncRunningRef = useRef(false);
+  const autoSyncObservedBulkItemsRef = useRef(new Set<string>());
+  const bulkProviderJobPlaylistIdsRef = useRef(new Map<string, string>());
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [appAuthMode, setAppAuthMode] =
     useState<AppAuthStatus["authMode"]>("internal");
@@ -768,6 +799,11 @@ export default function Home() {
     useState<MusicLibraryPlaylistSyncMode>("replace");
   const [musicLibraryPlaylistSyncTarget, setMusicLibraryPlaylistSyncTarget] =
     useState<MusicLibraryPlaylistSyncTarget>("navidrome");
+  const [playlistAutoSyncTargets, setPlaylistAutoSyncTargets] = useState(
+    defaultPlaylistAutoSyncTargets
+  );
+  const [isAutoSyncingMusicLibraryPlaylist, setIsAutoSyncingMusicLibraryPlaylist] =
+    useState(false);
   const [isSearchingProvider, setIsSearchingProvider] = useState(false);
   const [isDownloadingProvider, setIsDownloadingProvider] = useState(false);
   const [isDownloadingBulkProvider, setIsDownloadingBulkProvider] =
@@ -833,17 +869,33 @@ export default function Home() {
           [selectedPlaylistId]: getPlaylistBackupStatus(
             nextTracks,
             nextMatches,
-            unavailableTracks.length
+            unavailableTracks.length,
+            selectedPlaylist?.snapshotId
           )
         }));
       }
     },
-    [selectedPlaylistId, sourceKind, unavailableTracks.length]
+    [
+      selectedPlaylist?.snapshotId,
+      selectedPlaylistId,
+      sourceKind,
+      unavailableTracks.length
+    ]
   );
 
   useEffect(() => {
     bulkDownloadJobRef.current = bulkDownloadJob;
   }, [bulkDownloadJob]);
+
+  useEffect(() => {
+    selectedPlaylistIdRef.current = selectedPlaylistId;
+    const nextTargets = selectedPlaylistId
+      ? readPlaylistAutoSyncTargets(selectedPlaylistId)
+      : defaultPlaylistAutoSyncTargets;
+
+    playlistAutoSyncTargetsRef.current = nextTargets;
+    setPlaylistAutoSyncTargets(nextTargets);
+  }, [selectedPlaylistId]);
 
   const clearBackupWorkflowState = useCallback(() => {
     setBulkDownloadMessage(null);
@@ -884,9 +936,17 @@ export default function Home() {
     }
   }, []);
 
-  const loadPlaylists = useCallback(async () => {
-    setIsLoadingPlaylists(true);
-    setRequestError(null);
+  const loadPlaylists = useCallback(async ({ silent = false } = {}) => {
+    if (playlistRefreshInFlightRef.current) {
+      return;
+    }
+
+    playlistRefreshInFlightRef.current = true;
+
+    if (!silent) {
+      setIsLoadingPlaylists(true);
+      setRequestError(null);
+    }
 
     try {
       const response = await fetchJson<PlaylistResponse>("/api/spotify/playlists");
@@ -918,9 +978,15 @@ export default function Home() {
         );
       }
     } catch (error) {
-      setRequestError(errorMessage(error));
+      if (!silent) {
+        setRequestError(errorMessage(error));
+      }
     } finally {
-      setIsLoadingPlaylists(false);
+      playlistRefreshInFlightRef.current = false;
+
+      if (!silent) {
+        setIsLoadingPlaylists(false);
+      }
     }
   }, [session?.user?.id]);
 
@@ -1598,6 +1664,185 @@ export default function Home() {
     selectedPlaylistId
   ]);
 
+  const syncMusicLibraryPlaylistAutomatically = useCallback(
+    async ({
+      playlistId,
+      target,
+      trackPositions
+    }: {
+      playlistId: string;
+      target: MusicLibraryPlaylistSyncTarget;
+      trackPositions: Set<number>;
+    }) => {
+      if (target === "navidrome") {
+        await postJson<MusicServerScanStatus>(
+          "/api/music-library/navidrome-scan",
+          { fullScan: false }
+        ).catch(() => null);
+      }
+
+      let lastError: unknown = new Error(
+        `${playlistSyncTargetLabel(target)} has not indexed the new track yet.`
+      );
+
+      for (let attempt = 0; attempt < playlistAutoSyncMaxAttempts; attempt += 1) {
+        try {
+          const response = await postJson<MusicLibraryPlaylistSyncResponse>(
+            `/api/spotify/playlists/${playlistId}/music-library`,
+            {
+              mode: "append",
+              target,
+              ...(attempt > 0
+                ? { trackPositions: [...trackPositions] }
+                : {})
+            }
+          );
+          const skippedPositions = new Set(
+            response.musicLibraryPlaylist.skipped.map(
+              (skippedTrack) => skippedTrack.trackPosition
+            )
+          );
+          const unresolvedNewTrack = [...trackPositions].some((trackPosition) =>
+            skippedPositions.has(trackPosition)
+          );
+
+          if (!unresolvedNewTrack) {
+            return response;
+          }
+
+          lastError = new Error(
+            `${playlistSyncTargetLabel(target)} is still indexing the new backup.`
+          );
+        } catch (error) {
+          lastError = error;
+        }
+
+        if (attempt < playlistAutoSyncMaxAttempts - 1) {
+          await wait(playlistAutoSyncRetryDelayMs);
+        }
+      }
+
+      throw lastError;
+    },
+    []
+  );
+
+  const drainPlaylistAutoSyncQueue = useCallback(async () => {
+    if (playlistAutoSyncRunningRef.current) {
+      return;
+    }
+
+    playlistAutoSyncRunningRef.current = true;
+    setIsAutoSyncingMusicLibraryPlaylist(true);
+    setMusicLibraryPlaylistMessage(null);
+    setMusicLibraryPlaylistSkipped([]);
+
+    try {
+      while (playlistAutoSyncQueueRef.current.size) {
+        const queuedJobs = [...playlistAutoSyncQueueRef.current.values()];
+        playlistAutoSyncQueueRef.current.clear();
+
+        await Promise.all(
+          queuedJobs.map(async (job) => {
+            try {
+              const response = await syncMusicLibraryPlaylistAutomatically(job);
+              const result = response.musicLibraryPlaylist;
+              const appendedCount = result.appendedCount ?? 0;
+              const resultMessage = appendedCount
+                ? `Auto Sync added ${numberFormatter.format(
+                    appendedCount
+                  )} track${appendedCount === 1 ? "" : "s"} to the ${
+                    result.targetName
+                  } playlist "${result.name}".`
+                : `Auto Sync confirmed the ${result.targetName} playlist "${result.name}" is up to date.`;
+
+              if (selectedPlaylistIdRef.current === job.playlistId) {
+                setMusicLibraryPlaylistMessage((current) =>
+                  current ? `${current} ${resultMessage}` : resultMessage
+                );
+              }
+            } catch (error) {
+              if (selectedPlaylistIdRef.current === job.playlistId) {
+                setRequestError(
+                  `${playlistSyncTargetLabel(job.target)} Auto Sync could not add the new backup: ${errorMessage(
+                    error
+                  )}`
+                );
+              }
+            }
+          })
+        );
+      }
+    } finally {
+      playlistAutoSyncRunningRef.current = false;
+      setIsAutoSyncingMusicLibraryPlaylist(false);
+    }
+  }, [syncMusicLibraryPlaylistAutomatically]);
+
+  const queuePlaylistAutoSync = useCallback(
+    (trackPositions: number[], requestedPlaylistId?: string | null) => {
+      const playlistId = requestedPlaylistId ?? selectedPlaylistIdRef.current;
+      const uniqueTrackPositions = trackPositions.filter(Number.isFinite);
+
+      if (!playlistId || !uniqueTrackPositions.length) {
+        return;
+      }
+
+      const autoSyncTargets =
+        playlistId === selectedPlaylistIdRef.current
+          ? playlistAutoSyncTargetsRef.current
+          : readPlaylistAutoSyncTargets(playlistId);
+      let queuedAutoSync = false;
+
+      for (const target of ["navidrome", "plex"] as const) {
+        if (!autoSyncTargets[target]) {
+          continue;
+        }
+
+        const queueKey = `${playlistId}:${target}`;
+        const queuedJob = playlistAutoSyncQueueRef.current.get(queueKey) ?? {
+          playlistId,
+          target,
+          trackPositions: new Set<number>()
+        };
+
+        for (const trackPosition of uniqueTrackPositions) {
+          queuedJob.trackPositions.add(trackPosition);
+        }
+
+        playlistAutoSyncQueueRef.current.set(queueKey, queuedJob);
+        queuedAutoSync = true;
+      }
+
+      if (queuedAutoSync) {
+        void drainPlaylistAutoSyncQueue();
+      }
+    },
+    [drainPlaylistAutoSyncQueue]
+  );
+
+  const updatePlaylistAutoSync = useCallback(
+    (enabled: boolean) => {
+      if (!selectedPlaylistId) {
+        return;
+      }
+
+      const nextTargets = {
+        ...playlistAutoSyncTargetsRef.current,
+        [musicLibraryPlaylistSyncTarget]: enabled
+      };
+
+      playlistAutoSyncTargetsRef.current = nextTargets;
+      setPlaylistAutoSyncTargets(nextTargets);
+      writePlaylistAutoSyncTarget(
+        selectedPlaylistId,
+        musicLibraryPlaylistSyncTarget,
+        enabled
+      );
+    },
+    [musicLibraryPlaylistSyncTarget, selectedPlaylistId]
+  );
+
   const searchProviderTrack = useCallback(async (track: BackupTrack) => {
     setDownloadTrackPosition(String(track.position));
     setProviderCandidates([]);
@@ -1819,6 +2064,8 @@ export default function Home() {
           )}). The file is already in the library folder; run Library Index after the server settles.`
         );
       }
+
+      queuePlaylistAutoSync([selectedTrack.position], selectedPlaylistId);
     } catch (error) {
       setProviderDownloadMessage(null);
       setProviderDownloadError(errorMessage(error));
@@ -1837,8 +2084,10 @@ export default function Home() {
     markDownloadedTrackInLibrary,
     providerCandidates,
     providerDownloadSettings,
+    queuePlaylistAutoSync,
     refreshLibraryMatches,
     selectedProviderCandidateId,
+    selectedPlaylistId,
     tracks
   ]);
 
@@ -2091,8 +2340,27 @@ export default function Home() {
   useEffect(() => {
     if (session?.authenticated && sourceKind === "playlist") {
       void loadPlaylists();
+
+      const refreshPlaylistStatuses = () => {
+        void loadPlaylists({ silent: true });
+      };
+      const intervalId = window.setInterval(
+        refreshPlaylistStatuses,
+        playlistStatusRefreshIntervalMs
+      );
+
+      window.addEventListener("focus", refreshPlaylistStatuses);
+
+      return () => {
+        window.clearInterval(intervalId);
+        window.removeEventListener("focus", refreshPlaylistStatuses);
+      };
     }
   }, [loadPlaylists, session?.authenticated, sourceKind]);
+
+  const selectedPlaylistCatalogSnapshotId = playlists.find(
+    (playlist) => playlist.id === selectedPlaylistId
+  )?.snapshotId;
 
   useEffect(() => {
     if (sourceKind !== "playlist") {
@@ -2161,7 +2429,8 @@ export default function Home() {
             [playlistId]: getPlaylistBackupStatus(
               response.tracks,
               response.libraryMatches,
-              response.unavailableTracks?.length ?? 0
+              response.unavailableTracks?.length ?? 0,
+              response.playlist.snapshotId
             )
           }));
         }
@@ -2183,6 +2452,7 @@ export default function Home() {
     };
   }, [
     clearBackupWorkflowState,
+    selectedPlaylistCatalogSnapshotId,
     selectedPlaylistId,
     sourceKind
   ]);
@@ -2199,7 +2469,8 @@ export default function Home() {
     const nextStatus = getPlaylistBackupStatus(
       tracks,
       libraryMatches,
-      unavailableTracks.length
+      unavailableTracks.length,
+      selectedPlaylist?.snapshotId
     );
 
     setPlaylistBackupStatuses((current) => {
@@ -2208,6 +2479,7 @@ export default function Home() {
       if (
         currentStatus?.backedUp === nextStatus.backedUp &&
         currentStatus.missingTrackCount === nextStatus.missingTrackCount &&
+        currentStatus.snapshotId === nextStatus.snapshotId &&
         currentStatus.trackCount === nextStatus.trackCount &&
         currentStatus.unavailableTrackCount === nextStatus.unavailableTrackCount
       ) {
@@ -2221,6 +2493,7 @@ export default function Home() {
     });
   }, [
     libraryMatches,
+    selectedPlaylist?.snapshotId,
     selectedPlaylistId,
     sourceKind,
     tracks,
@@ -2430,7 +2703,8 @@ export default function Home() {
     tracks.length > 0 &&
     selectedPlaylistSyncTargetReady &&
     !isLoadingTracks &&
-    !isCreatingMusicLibraryPlaylist;
+    !isCreatingMusicLibraryPlaylist &&
+    !isAutoSyncingMusicLibraryPlaylist;
   const selectedDownloadTrack =
     downloadTrackOptions.find(
       (track) => String(track.position) === downloadTrackPosition
@@ -2544,6 +2818,8 @@ export default function Home() {
 
   const applyBulkProviderJob = useCallback(
     (job: ProviderBulkDownloadJob) => {
+      const newlyCompletedTrackPositions: number[] = [];
+
       setBulkDownloadJob(job);
       setBulkDownloadProgress(providerBulkJobProgress(job));
       setIsDownloadingBulkProvider(isProviderBulkJobActive(job));
@@ -2560,7 +2836,19 @@ export default function Home() {
         if (item.download.relativePath) {
           markDownloadedTrackInLibrary(item.track, item.download.relativePath);
         }
+
+        const completedItemKey = `${job.id}:${item.track.position}`;
+
+        if (!autoSyncObservedBulkItemsRef.current.has(completedItemKey)) {
+          autoSyncObservedBulkItemsRef.current.add(completedItemKey);
+          newlyCompletedTrackPositions.push(item.track.position);
+        }
       }
+
+      queuePlaylistAutoSync(
+        newlyCompletedTrackPositions,
+        bulkProviderJobPlaylistIdsRef.current.get(job.id)
+      );
 
       if (isProviderBulkJobTerminal(job)) {
         const bulkMessage = providerBulkJobResultMessage(job);
@@ -2569,12 +2857,13 @@ export default function Home() {
 
         try {
           window.localStorage.removeItem(bulkProviderJobStorageKey);
+          window.localStorage.removeItem(bulkProviderJobPlaylistStorageKey);
         } catch {
           // Local storage may be unavailable in hardened browser contexts.
         }
       }
     },
-    [markDownloadedTrackInLibrary]
+    [markDownloadedTrackInLibrary, queuePlaylistAutoSync]
   );
 
   const loadBulkProviderJob = useCallback(
@@ -2631,8 +2920,21 @@ export default function Home() {
         throw new Error("Provider bulk job did not return a job.");
       }
 
+      if (selectedPlaylistId) {
+        bulkProviderJobPlaylistIdsRef.current.set(
+          response.job.id,
+          selectedPlaylistId
+        );
+      }
+
       try {
         window.localStorage.setItem(bulkProviderJobStorageKey, response.job.id);
+        if (selectedPlaylistId) {
+          window.localStorage.setItem(
+            bulkProviderJobPlaylistStorageKey,
+            selectedPlaylistId
+          );
+        }
       } catch {
         // Local storage may be unavailable in hardened browser contexts.
       }
@@ -2649,7 +2951,8 @@ export default function Home() {
     downloadFormat,
     downloadQuality,
     downloadRightsConfirmed,
-    providerDownloadSettings
+    providerDownloadSettings,
+    selectedPlaylistId
   ]);
 
   const cancelBulkProviderJob = useCallback(async () => {
@@ -2691,8 +2994,29 @@ export default function Home() {
       );
 
       if (response.job) {
+        if (!bulkProviderJobPlaylistIdsRef.current.has(response.job.id)) {
+          const retryPlaylistId = selectedPlaylistIdRef.current;
+
+          if (retryPlaylistId) {
+            bulkProviderJobPlaylistIdsRef.current.set(
+              response.job.id,
+              retryPlaylistId
+            );
+          }
+        }
+
         try {
           window.localStorage.setItem(bulkProviderJobStorageKey, response.job.id);
+          const retryPlaylistId = bulkProviderJobPlaylistIdsRef.current.get(
+            response.job.id
+          );
+
+          if (retryPlaylistId) {
+            window.localStorage.setItem(
+              bulkProviderJobPlaylistStorageKey,
+              retryPlaylistId
+            );
+          }
         } catch {
           // Local storage may be unavailable in hardened browser contexts.
         }
@@ -2707,11 +3031,15 @@ export default function Home() {
   useEffect(() => {
     let cancelled = false;
     let storedJobId = "";
+    let storedPlaylistId = "";
 
     try {
       storedJobId = window.localStorage.getItem(bulkProviderJobStorageKey) ?? "";
+      storedPlaylistId =
+        window.localStorage.getItem(bulkProviderJobPlaylistStorageKey) ?? "";
     } catch {
       storedJobId = "";
+      storedPlaylistId = "";
     }
 
     if (!storedJobId || bulkDownloadJob?.id === storedJobId) {
@@ -2720,11 +3048,19 @@ export default function Home() {
 
     async function restoreBulkJob() {
       try {
+        if (storedPlaylistId) {
+          bulkProviderJobPlaylistIdsRef.current.set(
+            storedJobId,
+            storedPlaylistId
+          );
+        }
+
         const job = await loadBulkProviderJob(storedJobId);
 
         if (!cancelled && isProviderBulkJobTerminal(job)) {
           try {
             window.localStorage.removeItem(bulkProviderJobStorageKey);
+            window.localStorage.removeItem(bulkProviderJobPlaylistStorageKey);
           } catch {
             // Local storage may be unavailable in hardened browser contexts.
           }
@@ -2732,6 +3068,7 @@ export default function Home() {
       } catch {
         try {
           window.localStorage.removeItem(bulkProviderJobStorageKey);
+          window.localStorage.removeItem(bulkProviderJobPlaylistStorageKey);
         } catch {
           // Local storage may be unavailable in hardened browser contexts.
         }
@@ -3153,6 +3490,10 @@ export default function Home() {
                   );
                   const backupStatus = playlistBackupStatuses[playlist.id];
                   const metadataBackup = playlistMetadataBackups[playlist.id];
+                  const backupStatusStale = isPlaylistBackupStatusStale(
+                    playlist,
+                    backupStatus
+                  );
                   const missingBackupTrackCount =
                     getPlaylistMissingBackupTrackCount(
                       playlist,
@@ -3182,59 +3523,66 @@ export default function Home() {
                         )}
                       </span>
                       <span className="playlist-meta">
-                        <span className="playlist-title-row">
-                          <span className="playlist-name">{playlist.name}</span>
-                          {!playlistReadable ? (
-                            <span
-                              className="playlist-unavailable-badge"
-                              title="Spotify only exposes tracks for owned or collaborative playlists"
-                            >
-                              Limited
-                            </span>
-                          ) : missingBackupTrackCount > 0 ? (
-                            <span
-                              className="playlist-missing-backup-badge"
-                              title={playlistMissingBackupTitle(
-                                missingBackupTrackCount
-                              )}
-                            >
-                              {numberFormatter.format(missingBackupTrackCount)} not
-                              backed up
-                            </span>
-                          ) : backupStatus?.backedUp ? (
-                            <span
-                              className="playlist-backed-up-badge"
-                              title="All available tracks in this playlist are backed up"
-                            >
-                              <CheckCircle2 size={14} />
-                              Backed up
-                            </span>
-                          ) : null}
-                          {playlistReadable &&
-                          (backupStatus?.unavailableTrackCount ?? 0) > 0 ? (
-                            <span
-                              className="playlist-unavailable-badge"
-                              title="Excluded from backup and organization status because Spotify reports these tracks as unavailable"
-                            >
-                              {numberFormatter.format(
-                                backupStatus?.unavailableTrackCount ?? 0
-                              )} unavailable
-                            </span>
-                          ) : null}
-                          {metadataBackup ? (
-                            <span
-                              className="playlist-saved-badge"
-                              title={`Metadata saved ${formatShortDate(
-                                metadataBackup.exportedAt
-                              )}`}
-                            >
-                              DB saved
-                            </span>
-                          ) : null}
-                        </span>
+                        <span className="playlist-name">{playlist.name}</span>
                         <span className="playlist-count">
                           {numberFormatter.format(playlist.tracksTotal)} tracks
                         </span>
+                      </span>
+                      <span className="playlist-status-row">
+                        {!playlistReadable ? (
+                          <span
+                            className="playlist-unavailable-badge playlist-primary-status-badge"
+                            title="Spotify only exposes tracks for owned or collaborative playlists"
+                          >
+                            Limited
+                          </span>
+                        ) : backupStatusStale ? (
+                          <span
+                            className="playlist-missing-backup-badge playlist-primary-status-badge"
+                            title="Spotify changed this playlist; TrackKeep is refreshing its backup status"
+                          >
+                            Playlist changed
+                          </span>
+                        ) : missingBackupTrackCount > 0 ? (
+                          <span
+                            className="playlist-missing-backup-badge playlist-primary-status-badge"
+                            title={playlistMissingBackupTitle(
+                              missingBackupTrackCount
+                            )}
+                          >
+                            {numberFormatter.format(missingBackupTrackCount)} not backed
+                            up
+                          </span>
+                        ) : backupStatus?.backedUp ? (
+                          <span
+                            className="playlist-backed-up-badge playlist-primary-status-badge"
+                            title="All available tracks in this playlist are backed up"
+                          >
+                            <CheckCircle2 size={14} />
+                            Backed up
+                          </span>
+                        ) : null}
+                        {playlistReadable &&
+                        (backupStatus?.unavailableTrackCount ?? 0) > 0 ? (
+                          <span
+                            className="playlist-unavailable-badge playlist-unavailable-status-badge"
+                            title="Excluded from backup and organization status because Spotify reports these tracks as unavailable"
+                          >
+                            {numberFormatter.format(
+                              backupStatus?.unavailableTrackCount ?? 0
+                            )} unavailable
+                          </span>
+                        ) : null}
+                        {metadataBackup ? (
+                          <span
+                            className="playlist-saved-badge"
+                            title={`Metadata saved ${formatShortDate(
+                              metadataBackup.exportedAt
+                            )}`}
+                          >
+                            DB saved
+                          </span>
+                        ) : null}
                       </span>
                     </button>
                   );
@@ -3318,6 +3666,48 @@ export default function Home() {
                         <option value="append">Append</option>
                         <option value="fullsync">Full sync</option>
                       </select>
+                    </label>
+                    <label
+                      className="sync-mode-control auto-sync-control"
+                      title={
+                        playlistAutoSyncTargets[musicLibraryPlaylistSyncTarget]
+                          ? `Automatically append new backups to this ${playlistSyncTargetLabel(
+                              musicLibraryPlaylistSyncTarget
+                            )} playlist`
+                          : selectedPlaylistSyncTargetReady
+                            ? `Enable Auto Sync for this playlist in ${playlistSyncTargetLabel(
+                                musicLibraryPlaylistSyncTarget
+                              )}`
+                            : selectedPlaylistSyncTargetStatus
+                      }
+                    >
+                      <input
+                        checked={
+                          playlistAutoSyncTargets[
+                            musicLibraryPlaylistSyncTarget
+                          ]
+                        }
+                        disabled={
+                          !selectedPlaylistId ||
+                          isCreatingMusicLibraryPlaylist ||
+                          (!selectedPlaylistSyncTargetReady &&
+                            !playlistAutoSyncTargets[
+                              musicLibraryPlaylistSyncTarget
+                            ])
+                        }
+                        onChange={(event) =>
+                          updatePlaylistAutoSync(event.target.checked)
+                        }
+                        type="checkbox"
+                      />
+                      <span className="stat-label">
+                        {isAutoSyncingMusicLibraryPlaylist &&
+                        playlistAutoSyncTargets[
+                          musicLibraryPlaylistSyncTarget
+                        ]
+                          ? "Auto syncing"
+                          : "Auto sync"}
+                      </span>
                     </label>
                     <button
                       className={`command secondary ${
@@ -5193,6 +5583,48 @@ function playlistSyncTargetLabel(target: MusicLibraryPlaylistSyncTarget) {
   return target === "plex" ? "Plex" : "Navidrome";
 }
 
+function playlistAutoSyncStorageKey(
+  playlistId: string,
+  target: MusicLibraryPlaylistSyncTarget
+) {
+  return `${playlistAutoSyncStoragePrefix}:${playlistId}:${target}`;
+}
+
+function readPlaylistAutoSyncTargets(playlistId: string) {
+  try {
+    return {
+      navidrome:
+        window.localStorage.getItem(
+          playlistAutoSyncStorageKey(playlistId, "navidrome")
+        ) === "true",
+      plex:
+        window.localStorage.getItem(
+          playlistAutoSyncStorageKey(playlistId, "plex")
+        ) === "true"
+    } satisfies Record<MusicLibraryPlaylistSyncTarget, boolean>;
+  } catch {
+    return { ...defaultPlaylistAutoSyncTargets };
+  }
+}
+
+function writePlaylistAutoSyncTarget(
+  playlistId: string,
+  target: MusicLibraryPlaylistSyncTarget,
+  enabled: boolean
+) {
+  try {
+    const storageKey = playlistAutoSyncStorageKey(playlistId, target);
+
+    if (enabled) {
+      window.localStorage.setItem(storageKey, "true");
+    } else {
+      window.localStorage.removeItem(storageKey);
+    }
+  } catch {
+    // The checkbox still works for this session when local storage is blocked.
+  }
+}
+
 function formatDuration(durationMs: number) {
   const totalSeconds = Math.round(durationMs / 1000);
   const minutes = Math.floor(totalSeconds / 60);
@@ -5215,7 +5647,8 @@ function canReadPlaylistTracks(
 function getPlaylistBackupStatus(
   tracks: BackupTrack[],
   libraryMatches: LibraryMatch[],
-  unavailableTrackCount = 0
+  unavailableTrackCount = 0,
+  snapshotId?: string
 ): PlaylistBackupStatus {
   const matchesByPosition = new Map(
     libraryMatches.map((match) => [match.trackPosition, match] as const)
@@ -5230,6 +5663,7 @@ function getPlaylistBackupStatus(
     backedUp:
       tracks.length + unavailableTrackCount > 0 && missingTrackCount === 0,
     missingTrackCount,
+    snapshotId,
     trackCount: tracks.length,
     unavailableTrackCount
   };
@@ -5274,6 +5708,17 @@ function getPlaylistMissingBackupTrackCount(
   }
 
   return Math.max(0, playlist.tracksTotal - metadataBackup.trackCount);
+}
+
+function isPlaylistBackupStatusStale(
+  playlist: PlaylistSummary,
+  backupStatus: PlaylistBackupStatus | undefined
+) {
+  return Boolean(
+    backupStatus &&
+      playlist.snapshotId &&
+      backupStatus.snapshotId !== playlist.snapshotId
+  );
 }
 
 function playlistMissingBackupTitle(missingTrackCount: number) {

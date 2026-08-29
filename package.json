@@ -1,6 +1,6 @@
 {
   "name": "trackkeep",
-  "version": "1.10.2",
+  "version": "1.10.3",
   "private": true,
   "description": "TrackKeep is a web app for backing up Spotify playlist metadata and preparing authorized media backups.",
   "scripts": {
