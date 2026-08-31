@@ -80,6 +80,78 @@ test("Plex playlist sync creates an audio playlist from matched tracks", async (
   });
 });
 
+test("Plex playlist sync seeds creation with one track and appends the rest", async (t) => {
+  await withTempEnvironment(t, async ({ libraryPath }) => {
+    const playlistCreates: string[] = [];
+    const playlistAdds: string[] = [];
+    const server = await startMockPlexServer({
+      onAddPlaylistItems(uri) {
+        playlistAdds.push(uri);
+      },
+      onCreatePlaylist(uri) {
+        playlistCreates.push(uri);
+      }
+    });
+
+    t.after(async () => {
+      await server.close();
+    });
+
+    await writeLibraryIndex(libraryPath);
+    await updatePlexSettings({
+      enabled: true,
+      serverUrl: server.url,
+      token: "test-token"
+    });
+
+    const result = await createOrUpdatePlexPlaylistFromSpotify(
+      {
+        ...examplePlaylist,
+        tracksTotal: 2
+      },
+      [exampleTrack, { ...exampleTrack, position: 2 }],
+      {
+        mode: "replace"
+      }
+    );
+
+    assert.equal(result.songCount, 2);
+    assert.deepEqual(playlistCreates, [
+      "server://mock-machine/com.plexapp.plugins.library/library/metadata/501"
+    ]);
+    assert.deepEqual(playlistAdds, [
+      "server://mock-machine/com.plexapp.plugins.library/library/metadata/501"
+    ]);
+  });
+});
+
+test("Plex playlist sync does not report success when creation is not persisted", async (t) => {
+  await withTempEnvironment(t, async ({ libraryPath }) => {
+    const server = await startMockPlexServer({
+      persistCreatedPlaylist: false
+    });
+
+    t.after(async () => {
+      await server.close();
+    });
+
+    await writeLibraryIndex(libraryPath);
+    await updatePlexSettings({
+      enabled: true,
+      serverUrl: server.url,
+      token: "test-token"
+    });
+
+    await assert.rejects(
+      () =>
+        createOrUpdatePlexPlaylistFromSpotify(examplePlaylist, [exampleTrack], {
+          mode: "replace"
+        }),
+      /accepted the playlist request but the playlist was not created/
+    );
+  });
+});
+
 test("Plex playlist sync keeps an unavailable Spotify track when its local file exists", async (t) => {
   await withTempEnvironment(t, async ({ libraryPath }) => {
     const playlistCreates: string[] = [];
@@ -308,6 +380,7 @@ async function startMockPlexServer(options: {
   onAddPlaylistItems?: (uri: string) => void;
   onCreatePlaylist?: (uri: string) => void;
   onPosterUpdate?: (url: string) => void;
+  persistCreatedPlaylist?: boolean;
   sectionMetadata?: unknown[];
 } = {}) {
   let createdPlaylist = false;
@@ -432,7 +505,7 @@ async function startMockPlexServer(options: {
       }
 
       options.onCreatePlaylist?.(uri);
-      createdPlaylist = true;
+      createdPlaylist = options.persistCreatedPlaylist !== false;
       playlistItemCount = uri ? uri.split("/metadata/")[1]?.split(",").length ?? 0 : 0;
       response.end(
         JSON.stringify({
@@ -456,7 +529,9 @@ async function startMockPlexServer(options: {
       const uri = url.searchParams.get("uri") ?? "";
 
       options.onAddPlaylistItems?.(uri);
-      playlistItemCount = uri ? uri.split("/metadata/")[1]?.split(",").length ?? 0 : 0;
+      playlistItemCount += uri
+        ? uri.split("/metadata/")[1]?.split(",").length ?? 0
+        : 0;
       response.end(
         JSON.stringify({
           MediaContainer: {}
@@ -466,6 +541,12 @@ async function startMockPlexServer(options: {
     }
 
     if (request.method === "GET" && url.pathname === "/playlists/900") {
+      if (!createdPlaylist) {
+        response.statusCode = 404;
+        response.end(JSON.stringify({}));
+        return;
+      }
+
       response.end(
         JSON.stringify({
           MediaContainer: {
