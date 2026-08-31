@@ -140,6 +140,8 @@ const plexPlaylistType = "15";
 const plexRequestTimeoutMs = 15000;
 const plexTrackSearchLimit = "25";
 const plexRatingKeyChunkSize = 150;
+const plexPlaylistVerificationAttempts = 3;
+const plexPlaylistVerificationDelayMs = 50;
 
 export async function getPublicPlexSettings() {
   const settings = await loadPlexSettings();
@@ -460,20 +462,28 @@ export async function createOrUpdatePlexPlaylistFromSpotify(
     };
   }
 
+  const [initialRatingKey, ...remainingRatingKeys] = ratingKeys;
   const createdPlaylist = await createPlexPlaylist(
     settings,
     name,
     server.machineIdentifier,
-    ratingKeys
+    [initialRatingKey]
   );
 
   if (!createdPlaylist?.ratingKey) {
     throw new Error("Plex created the playlist but did not return its id.");
   }
 
-  const updatedPlaylist =
-    (await getPlexPlaylist(settings, createdPlaylist.ratingKey)) ??
-    createdPlaylist;
+  await addPlexPlaylistItems(
+    settings,
+    createdPlaylist.ratingKey,
+    server.machineIdentifier,
+    remainingRatingKeys
+  );
+  const updatedPlaylist = await verifyCreatedPlexPlaylist(
+    settings,
+    createdPlaylist.ratingKey
+  );
   const artwork = await syncPlexPlaylistArtwork(
     settings,
     playlist,
@@ -699,6 +709,33 @@ async function getPlexPlaylist(
   );
 
   return plexMetadataItems(response)[0] ?? null;
+}
+
+async function verifyCreatedPlexPlaylist(
+  settings: PlexSettings,
+  playlistId: string | number
+) {
+  for (let attempt = 0; attempt < plexPlaylistVerificationAttempts; attempt += 1) {
+    const playlist = await getPlexPlaylist(settings, playlistId).catch((error) => {
+      if (error instanceof PlexApiError && error.status === 404) {
+        return null;
+      }
+
+      throw error;
+    });
+
+    if (playlist?.ratingKey) {
+      return playlist;
+    }
+
+    if (attempt < plexPlaylistVerificationAttempts - 1) {
+      await wait(plexPlaylistVerificationDelayMs);
+    }
+  }
+
+  throw new Error(
+    "Plex accepted the playlist request but the playlist was not created. Check that the X-Plex-Token belongs to the Plex profile where you expect the playlist, then try again."
+  );
 }
 
 async function getPlexPlaylistItems(
@@ -1282,6 +1319,12 @@ function chunkArray<T>(values: T[], size: number) {
   }
 
   return chunks;
+}
+
+function wait(delayMs: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
 }
 
 function normalizeRelativePath(value: string) {
