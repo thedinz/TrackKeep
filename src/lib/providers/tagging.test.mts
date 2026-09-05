@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import {
+  formatExecFileError,
   spotifyAudioMetadataArgs,
   spotifyBackfillMetadataArgs,
   tagAudioFileWithSpotifyBackfillMetadata,
+  tagAudioFileWithSpotifyIdentity,
   tagDownloadedFile
 } from "./tagging.ts";
 import {
@@ -21,6 +23,88 @@ import {
 import type { BackupTrack } from "../spotify.ts";
 
 const execFileAsync = promisify(execFile);
+
+test("tagging diagnostics retain the cause before ffmpeg repetition notices", () => {
+  assert.equal(formatExecFileError(Object.assign(new Error("Command failed"), {
+    code: 1,
+    stderr: "Unsupported codec for Ogg\nCould not write header\nLast message repeated 1 times\n"
+  })), "exit code 1; Unsupported codec for Ogg; Could not write header");
+});
+
+for (const artwork of [false, true]) {
+  test(`Opus organization preserves audio and existing tags (artwork: ${artwork})`, async (t) => {
+    if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe")) || !(await hasMutagen())) {
+      t.skip("ffmpeg, ffprobe and Python with Mutagen are required.");
+      return;
+    }
+    const directory = await mkdtemp(path.join(tmpdir(), "trackkeep-opus-organize-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const filePath = path.join(directory, "Existing & Unicode é.opus");
+    await execFileAsync("ffmpeg", [
+      "-y", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+      "-t", "0.1", "-c:a", "libopus", filePath
+    ]);
+    const coverServer = artwork ? await startCoverServer(largeCoverImage()) : null;
+    if (coverServer) t.after(() => closeServer(coverServer.server));
+    await tagDownloadedFile(filePath, {
+      ...exampleTrack,
+      albumImageUrl: coverServer?.url
+    });
+    const before = await readAudioProbe(filePath);
+    const audioHash = async () => (await execFileAsync("ffmpeg", [
+      "-v", "error", "-i", filePath, "-map", "0:a:0", "-c", "copy", "-f", "hash", "-"
+    ])).stdout;
+    const originalHash = await audioHash();
+    const nativeTags = async () => JSON.parse((await execFileAsync(
+      process.platform === "win32" ? "python" : "python3",
+      ["-c", "import json, sys; from mutagen.oggopus import OggOpus; print(json.dumps(dict(OggOpus(sys.argv[1]))))", filePath],
+      { maxBuffer: 8 * 1024 * 1024 }
+    )).stdout) as Record<string, string[]>;
+    const originalTags = await nativeTags();
+    for (const tagFile of [tagAudioFileWithSpotifyIdentity, tagAudioFileWithSpotifyBackfillMetadata]) {
+      await tagFile(filePath, {
+        ...exampleTrack,
+        id: "4uLU6hMCjMI75M1A2tKUQC",
+        albumReleaseDate: "2016-01-02",
+        name: "Do not overwrite the existing title"
+      });
+      const after = await readAudioProbe(filePath);
+      assert.equal(after.tags.title, before.tags.title);
+      assert.equal(after.tags.album, before.tags.album);
+      assert.equal(after.hasAttachedPicture, artwork);
+      assert.equal(after.tags[trackKeepIdentityTags.trackId], "4uLU6hMCjMI75M1A2tKUQC");
+      assert.equal(after.tags[spotifyBuIdentityTags.trackId], "4uLU6hMCjMI75M1A2tKUQC");
+      assert.equal(await audioHash(), originalHash);
+      assert.deepEqual((await nativeTags()).metadata_block_picture, originalTags.metadata_block_picture);
+    }
+    assert.equal((await readAudioProbe(filePath)).tags.date, "2016-01-02");
+    assert.deepEqual(await readdir(directory), [path.basename(filePath)]);
+  });
+}
+
+test("failed Opus tagging preserves the original and removes its temporary copy", async (t) => {
+  if (!(await hasMutagen())) {
+    t.skip("Python with Mutagen is required.");
+    return;
+  }
+  const directory = await mkdtemp(path.join(tmpdir(), "trackkeep-opus-invalid-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filePath = path.join(directory, "invalid.opus");
+  const original = Buffer.from("not an Opus file");
+  await writeFile(filePath, original);
+  await assert.rejects(tagAudioFileWithSpotifyBackfillMetadata(filePath, exampleTrack), /Could not write Spotify identity tags/);
+  assert.deepEqual(await readFile(filePath), original);
+  assert.deepEqual(await readdir(directory), ["invalid.opus"]);
+});
+
+async function hasMutagen() {
+  try {
+    await execFileAsync(process.platform === "win32" ? "python" : "python3", ["-c", "import mutagen.oggopus"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 test("tagDownloadedFile metadata arguments include TrackKeep identity tags", () => {
   const spotifyTrackId = "4uLU6hMCjMI75M1A2tKUQC";

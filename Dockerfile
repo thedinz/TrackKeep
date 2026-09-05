@@ -45,7 +45,7 @@ RUN apt-get update \
     python3-pip \
     tini \
   && rm -rf /var/lib/apt/lists/* \
-  && python3 -m pip install --no-cache-dir --break-system-packages --upgrade --pre "yt-dlp[default]" \
+  && python3 -m pip install --no-cache-dir --break-system-packages --upgrade --pre "yt-dlp[default]" "mutagen>=1.47,<2" \
   && mkdir -p /config /music \
   && chown -R node:node /app /config \
   && chown node:node /music

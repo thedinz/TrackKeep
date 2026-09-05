@@ -1,6 +1,6 @@
 import { execFile } from "child_process";
 import { constants } from "fs";
-import { access, readFile, rename, rm, writeFile } from "fs/promises";
+import { access, copyFile, readFile, rename, rm, writeFile } from "fs/promises";
 import path from "path";
 import { promisify } from "util";
 import {
@@ -226,6 +226,31 @@ async function writeIdentityTaggedAudioFile(
   tempPath: string,
   metadataArgs: string[]
 ) {
+  if (isOggOpusPath(filePath)) {
+    // Older ffmpeg Ogg muxers reject the attached-picture streams exposed by
+    // their demuxers. Edit native comments on a copy to preserve all artwork,
+    // existing multi-value tags, and audio packets without remuxing.
+    await copyFile(filePath, tempPath);
+    await execFileAsync(
+      process.platform === "win32" ? "python" : "python3",
+      [
+        "-c",
+        [
+          "import json, sys",
+          "from mutagen.oggopus import OggOpus",
+          "audio = OggOpus(sys.argv[1])",
+          "for key, value in json.loads(sys.argv[2]).items():",
+          "    audio[key] = value",
+          "audio.save()"
+        ].join("\n"),
+        tempPath,
+        JSON.stringify(Object.fromEntries(metadataMapFromArgs(metadataArgs)))
+      ],
+      { maxBuffer: 1024 * 1024 * 2, timeout: 60000 }
+    );
+    return;
+  }
+
   await execFileAsync(
     "ffmpeg",
     [
@@ -532,7 +557,7 @@ function formatSpotifyIdentityTaggingError(error: unknown) {
   ].join(" ");
 }
 
-function formatExecFileError(error: unknown) {
+export function formatExecFileError(error: unknown) {
   const execError = error as {
     code?: number | string;
     stderr?: Buffer | string;
@@ -540,16 +565,15 @@ function formatExecFileError(error: unknown) {
   };
   const output = [
     bufferishToString(execError.stderr),
-    bufferishToString(execError.stdout),
-    error instanceof Error ? error.message : ""
+    bufferishToString(execError.stdout)
   ]
     .filter(Boolean)
     .join("\n");
-  const diagnosticLine = output
+  const diagnosticLines = (output || errorMessage(error))
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter(Boolean)
-    .reverse()[0];
+    .filter((line) => line && !/^Last message repeated \d+ times?$/i.test(line));
+  const diagnosticLine = diagnosticLines.slice(-3).join("; ");
   const exitCode =
     execError.code && execError.code !== "ETIMEDOUT"
       ? `exit code ${execError.code}; `

@@ -47,7 +47,7 @@ TrackKeep can source audio from files already present in the mounted Navidrome m
 - Resumable background bulk playlist jobs with cancellation, retry, per-track waits, chunk pauses, progress reporting, and partial-failure reporting
 - Ogg Opus output up to 192 kbps by default, configurable to 160/192/256 kbps caps, with optional MP3 192/256/320 kbps fallback and MP3 kept as a legacy compatibility option
 - Navidrome volume staging with idle cleanup for abandoned failed download/convert temp files
-- Docker image with Node.js, `ffmpeg`, prerelease/nightly-channel `yt-dlp[default]`, Python 3, and `pip`
+- Docker image with Node.js, `ffmpeg`, prerelease/nightly-channel `yt-dlp[default]`, Python 3, Mutagen (for preserving Opus artwork during organization), and `pip`
 - GitHub Container Registry image publishing for `dev`, `latest`, and version tags
 
 ## Docker Quick Start
@@ -564,6 +564,10 @@ Navidrome uses the Subsonic API:
 ## Local Development
 
 For local non-Docker development:
+
+Install `ffmpeg`/`ffprobe` and Python 3 on your PATH. Opus organization and
+metadata backfill also require `python3 -m pip install 'mutagen>=1.47,<2'`
+(use `python` on Windows). Docker includes these dependencies.
 
 ```bash
 npm install
