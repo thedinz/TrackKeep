@@ -5,6 +5,7 @@ import { access, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "f
 import path from "path";
 import { promisify } from "util";
 import { getLatestPlaylistBackupSnapshots } from "./backup-store";
+import { withJsonFileLock, writeJsonFileAtomic } from "./json-store";
 import {
   defaultOrganizeNamingSettings,
   loadOrganizeNamingSettings,
@@ -807,6 +808,15 @@ export async function recordMusicLibraryAlbumFolders(tracks: BackupTrack[]) {
     throw new Error("Navidrome music path is not configured.");
   }
 
+  await withJsonFileLock(
+    path.join(/* turbopackIgnore: true */ libraryPath, ...albumFolderLogSegments),
+    () => updateAlbumFolderLog(tracks)
+  );
+
+  return planMusicLibraryAlbumFolders(tracks);
+}
+
+async function updateAlbumFolderLog(tracks: BackupTrack[]) {
   const log = await readAlbumFolderLog();
   const naming = await loadOrganizeNamingSettings();
   const tracksByAlbum = groupTracksByAlbum(tracks);
@@ -846,8 +856,6 @@ export async function recordMusicLibraryAlbumFolders(tracks: BackupTrack[]) {
 
   log.updatedAt = now;
   await writeAlbumFolderLog(log);
-
-  return planMusicLibraryAlbumFolders(tracks);
 }
 
 export async function getMusicLibraryIndexSummary() {
@@ -996,10 +1004,9 @@ async function writeMusicLibraryOrganizeIgnores(
     version: 1
   } satisfies MusicLibraryOrganizeIgnoreStore;
 
-  await writeFile(
+  await writeJsonFileAtomic(
     path.join(/* turbopackIgnore: true */ storeDirectory, "organize-ignores.json"),
-    `${JSON.stringify(store, null, 2)}\n`,
-    "utf8"
+    store
   );
 }
 
@@ -1099,13 +1106,7 @@ async function writeMusicLibraryManagedTrackStore(
     /* turbopackIgnore: true */ storeDirectory,
     "managed-tracks.json"
   );
-  const tempPath = path.join(
-    /* turbopackIgnore: true */ storeDirectory,
-    "managed-tracks.tmp.json"
-  );
-
-  await writeFile(tempPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
-  await rename(tempPath, storePath);
+  await writeJsonFileAtomic(storePath, store);
 }
 
 function emptyMusicLibraryManagedTrackStore(): MusicLibraryManagedTrackStore {
@@ -1347,38 +1348,42 @@ export async function upsertMusicLibraryIndexTrack(filePath: string) {
   const indexedTrack = await indexAudioFile(libraryPath, targetPath);
   const naming = await loadOrganizeNamingSettings();
   const namingSchemeKey = organizeNamingSettingsKey(naming);
-  const existingIndex = await readCurrentMusicLibraryIndex();
-  const reusableIndex =
-    existingIndex?.libraryPath === libraryPath ? existingIndex : null;
-  const index =
-    reusableIndex
-      ? reusableIndex
-      : ({
-          generatedAt: new Date(0).toISOString(),
-          libraryPath,
-          namingSchemeKey,
-          skipped: [],
-          tracks: [],
-          version: 1
-        } satisfies MusicLibraryIndex);
-  const indexedTrackKey = normalizeRelativePathKey(indexedTrack.relativePath);
+  const index = await withMusicLibraryIndexLock(async () => {
+    const existingIndex = await readCurrentMusicLibraryIndex();
+    const reusableIndex =
+      existingIndex?.libraryPath === libraryPath ? existingIndex : null;
+    const index =
+      reusableIndex
+        ? reusableIndex
+        : ({
+            generatedAt: new Date(0).toISOString(),
+            libraryPath,
+            namingSchemeKey,
+            skipped: [],
+            tracks: [],
+            version: 1
+          } satisfies MusicLibraryIndex);
+    const indexedTrackKey = normalizeRelativePathKey(indexedTrack.relativePath);
 
-  index.generatedAt = new Date().toISOString();
-  index.libraryPath = libraryPath;
-  index.namingSchemeKey = namingSchemeKey;
-  index.tracks = [
-    ...index.tracks.filter(
-      (track) => normalizeRelativePathKey(track.relativePath) !== indexedTrackKey
-    ),
-    indexedTrack
-  ].sort((left, right) =>
-    left.relativePath.localeCompare(right.relativePath)
-  );
-  index.skipped = index.skipped?.filter(
-    (entry) => normalizeRelativePathKey(entry.relativePath) !== indexedTrackKey
-  );
+    index.generatedAt = new Date().toISOString();
+    index.libraryPath = libraryPath;
+    index.namingSchemeKey = namingSchemeKey;
+    index.tracks = [
+      ...index.tracks.filter(
+        (track) => normalizeRelativePathKey(track.relativePath) !== indexedTrackKey
+      ),
+      indexedTrack
+    ].sort((left, right) =>
+      left.relativePath.localeCompare(right.relativePath)
+    );
+    index.skipped = index.skipped?.filter(
+      (entry) => normalizeRelativePathKey(entry.relativePath) !== indexedTrackKey
+    );
 
-  await writeMusicLibraryIndex(index);
+    await writeMusicLibraryIndex(index);
+
+    return index;
+  });
 
   const summary = summarizeMusicLibraryIndex(
     index,
@@ -1410,7 +1415,6 @@ export async function deleteMusicLibraryTrack(relativePath: string) {
 
   const targetPath = absoluteLibraryPath(libraryPath, normalizedRelativePath);
   const existed = await canAccess(targetPath, constants.F_OK);
-  const existingIndex = await readMusicLibraryIndex();
 
   await rm(targetPath, {
     force: true
@@ -1424,34 +1428,43 @@ export async function deleteMusicLibraryTrack(relativePath: string) {
 
   const naming = await loadOrganizeNamingSettings();
   const namingSchemeKey = organizeNamingSettingsKey(naming);
-  const index =
-    existingIndex?.libraryPath === libraryPath
-      ? existingIndex
-      : ({
-          generatedAt: new Date(0).toISOString(),
-          libraryPath,
-          namingSchemeKey,
-          skipped: [],
-          tracks: [],
-          version: 1
-        } satisfies MusicLibraryIndex);
-  const deletedTrackKey = normalizeRelativePathKey(normalizedRelativePath);
-  const tracks = index.tracks.filter(
-    (track) => normalizeRelativePathKey(track.relativePath) !== deletedTrackKey
-  );
-  const removedFromIndex = tracks.length !== index.tracks.length;
-  const updatedIndex = {
-    ...index,
-    generatedAt: new Date().toISOString(),
-    libraryPath,
-    namingSchemeKey,
-    tracks,
-    skipped: index.skipped?.filter(
-      (entry) => normalizeRelativePathKey(entry.relativePath) !== deletedTrackKey
-    )
-  } satisfies MusicLibraryIndex;
+  const { removedFromIndex, updatedIndex } = await withMusicLibraryIndexLock(
+    async () => {
+      const existingIndex = await readMusicLibraryIndex();
+      const index =
+        existingIndex?.libraryPath === libraryPath
+          ? existingIndex
+          : ({
+              generatedAt: new Date(0).toISOString(),
+              libraryPath,
+              namingSchemeKey,
+              skipped: [],
+              tracks: [],
+              version: 1
+            } satisfies MusicLibraryIndex);
+      const deletedTrackKey = normalizeRelativePathKey(normalizedRelativePath);
+      const tracks = index.tracks.filter(
+        (track) => normalizeRelativePathKey(track.relativePath) !== deletedTrackKey
+      );
+      const updatedIndex = {
+        ...index,
+        generatedAt: new Date().toISOString(),
+        libraryPath,
+        namingSchemeKey,
+        tracks,
+        skipped: index.skipped?.filter(
+          (entry) => normalizeRelativePathKey(entry.relativePath) !== deletedTrackKey
+        )
+      } satisfies MusicLibraryIndex;
 
-  await writeMusicLibraryIndex(updatedIndex);
+      await writeMusicLibraryIndex(updatedIndex);
+
+      return {
+        removedFromIndex: tracks.length !== index.tracks.length,
+        updatedIndex
+      };
+    }
+  );
 
   const summary = summarizeMusicLibraryIndex(
     updatedIndex,
@@ -1875,7 +1888,7 @@ export async function backfillMusicLibrarySpotifyIdentityTags(
     reportProgress(track);
   }
 
-  const updatedIndex =
+  let updatedIndex =
     taggedCount > 0
       ? ({
           ...index,
@@ -1889,7 +1902,10 @@ export async function backfillMusicLibrarySpotifyIdentityTags(
       : index;
 
   if (taggedCount > 0) {
-    await writeMusicLibraryIndex(updatedIndex);
+    updatedIndex = await writeMusicLibraryIndexKeepingConcurrentAdds(
+      index.tracks,
+      updatedIndex
+    );
   }
 
   const summary = summarizeMusicLibraryIndex(
@@ -2116,7 +2132,7 @@ export async function organizeMusicLibraryMatchedTracks(
     }
   }
 
-  const updatedIndex = {
+  const snapshotIndex = {
     ...currentIndex,
     generatedAt: new Date().toISOString(),
     namingSchemeKey: organizeNamingSettingsKey(naming),
@@ -2125,7 +2141,10 @@ export async function organizeMusicLibraryMatchedTracks(
     )
   } satisfies MusicLibraryIndex;
 
-  await writeMusicLibraryIndex(updatedIndex);
+  const updatedIndex = await writeMusicLibraryIndexKeepingConcurrentAdds(
+    currentIndex.tracks,
+    snapshotIndex
+  );
   const libraryMatches = matchMusicLibraryTracksWithIndexUsingSettings(
     tracks,
     updatedIndex,
@@ -4993,11 +5012,57 @@ function absoluteLibraryPath(libraryPath: string, relativePath: string) {
 async function writeMusicLibraryIndex(index: MusicLibraryIndex) {
   const indexDirectory = await ensureMusicLibraryTargetDirectory([".spotifybu"]);
 
-  await writeFile(
+  await writeJsonFileAtomic(
     path.join(/* turbopackIgnore: true */ indexDirectory, "library-index.json"),
-    `${JSON.stringify(index, null, 2)}\n`,
-    "utf8"
+    index
   );
+}
+
+function musicLibraryIndexLockKey() {
+  return path.join(
+    /* turbopackIgnore: true */ getMusicLibraryPath() ?? "",
+    ...libraryIndexSegments
+  );
+}
+
+function withMusicLibraryIndexLock<T>(task: () => Promise<T>) {
+  return withJsonFileLock(musicLibraryIndexLockKey(), task);
+}
+
+// Long-running jobs (organize, identity-tag backfill) build their updated
+// index from a snapshot taken when they started. Tracks that other jobs added
+// to the index in the meantime, such as finished downloads, are carried over
+// instead of being dropped by the snapshot write.
+async function writeMusicLibraryIndexKeepingConcurrentAdds(
+  snapshotTracks: MusicLibraryIndexedTrack[],
+  updatedIndex: MusicLibraryIndex
+) {
+  return withMusicLibraryIndexLock(async () => {
+    const latestIndex = await readMusicLibraryIndex().catch(() => null);
+    const knownKeys = new Set(
+      [...snapshotTracks, ...updatedIndex.tracks].map((track) =>
+        normalizeRelativePathKey(track.relativePath)
+      )
+    );
+    const concurrentAdds =
+      latestIndex?.libraryPath === updatedIndex.libraryPath
+        ? latestIndex.tracks.filter(
+            (track) => !knownKeys.has(normalizeRelativePathKey(track.relativePath))
+          )
+        : [];
+    const mergedIndex = concurrentAdds.length
+      ? ({
+          ...updatedIndex,
+          tracks: [...updatedIndex.tracks, ...concurrentAdds].sort((left, right) =>
+            left.relativePath.localeCompare(right.relativePath)
+          )
+        } satisfies MusicLibraryIndex)
+      : updatedIndex;
+
+    await writeMusicLibraryIndex(mergedIndex);
+
+    return mergedIndex;
+  });
 }
 
 async function readAlbumFolderLog(): Promise<AlbumFolderLog> {
@@ -5039,10 +5104,9 @@ async function writeAlbumFolderLog(log: AlbumFolderLog) {
   }
 
   const logDirectory = await ensureMusicLibraryTargetDirectory([".spotifybu"]);
-  await writeFile(
+  await writeJsonFileAtomic(
     path.join(/* turbopackIgnore: true */ logDirectory, "album-folders.json"),
-    `${JSON.stringify(log, null, 2)}\n`,
-    "utf8"
+    log
   );
 }
 

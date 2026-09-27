@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { cookies } from "next/headers";
 import type { NextResponse } from "next/server";
@@ -345,11 +346,66 @@ function getConfigDirectory() {
   return path.join(/* turbopackIgnore: true */ process.cwd(), ".spotifybu");
 }
 
+// Values that have appeared in docs or code. Signing sessions with a public
+// value would let anyone forge a login cookie, so they are treated as unset.
+const placeholderAppSecrets = new Set([
+  "change-this-to-a-long-random-value",
+  "spotifybu-development-session-secret"
+]);
+let generatedAppSecret: string | null = null;
+
 function getAppAuthSecret() {
-  return (
-    getTrackKeepEnvironmentValue("APP_SECRET") ||
-    "spotifybu-development-session-secret"
+  const configuredSecret = getTrackKeepEnvironmentValue("APP_SECRET")?.trim();
+
+  if (configuredSecret && !placeholderAppSecrets.has(configuredSecret)) {
+    return configuredSecret;
+  }
+
+  generatedAppSecret ??= loadOrCreateGeneratedAppSecret();
+
+  return generatedAppSecret;
+}
+
+function loadOrCreateGeneratedAppSecret() {
+  const secretPath = path.join(getConfigDirectory(), "app-secret");
+
+  try {
+    const storedSecret = readFileSync(secretPath, "utf8").trim();
+
+    if (storedSecret) {
+      return storedSecret;
+    }
+  } catch (error) {
+    if (!isNodeError(error) || error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  const secret = randomBytes(48).toString("base64url");
+
+  mkdirSync(getConfigDirectory(), {
+    recursive: true
+  });
+
+  try {
+    writeFileSync(secretPath, `${secret}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600
+    });
+  } catch (error) {
+    if (isNodeError(error) && error.code === "EEXIST") {
+      return readFileSync(secretPath, "utf8").trim();
+    }
+
+    throw error;
+  }
+
+  console.warn(
+    "[trackkeep.app-auth] TRACKKEEP_APP_SECRET is unset or a placeholder; generated a random session secret in the config directory."
   );
+
+  return secret;
 }
 
 function signPayload(payload: string) {

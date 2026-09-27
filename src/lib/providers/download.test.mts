@@ -372,6 +372,11 @@ test("provider downloads fall back from Opus to configured MP3 quality", async (
 });
 
 test("provider downloads do not use MP3 fallback when disabled", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("The fake yt-dlp shebang script cannot be spawned on Windows.");
+    return;
+  }
+
   const tempRoot = await mkdtemp(path.join(tmpdir(), "spotifybu-download-"));
   const libraryPath = path.join(tempRoot, "library");
   const configPath = path.join(tempRoot, "config");
