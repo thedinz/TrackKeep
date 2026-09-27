@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  APP_AUTH_COOKIE,
+  getAppAuthMode,
+  verifyAppSessionCookie
+} from "@/lib/app-auth";
 import { getAppUrl } from "@/lib/app-url";
-import { getTrackKeepEnvironmentValue } from "@/lib/trackkeep-env";
 
-const appAuthCookie = "spotifybu_app_session";
 const publicPaths = new Set([
   "/api/app-auth/login",
   "/api/app-auth/logout",
@@ -26,16 +29,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const cookieAuthenticated = await verifySessionCookie(
-    request.cookies.get(appAuthCookie)?.value
-  );
-  const appAuthStatus = cookieAuthenticated
-    ? null
-    : await getAppAuthStatus(request);
-  const authenticated =
-    cookieAuthenticated ||
-    appAuthStatus?.authMode === "external" ||
-    Boolean(appAuthStatus?.authenticated);
+  const authenticated = await isRequestAuthenticated(request);
 
   if (needsLoginRedirectCheck && authenticated) {
     return NextResponse.redirect(getAppUrl(request, "/"));
@@ -66,107 +60,17 @@ export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg).*)"]
 };
 
-async function verifySessionCookie(value?: string) {
-  if (!value) {
-    return false;
-  }
-
-  const [payload, signature] = value.split(".");
-
-  if (!payload || !signature) {
-    return false;
-  }
-
-  const expectedSignature = await signPayload(payload);
-
-  if (signature !== expectedSignature) {
-    return false;
+// Proxy runs on the Node.js runtime, so auth is checked in-process. It must
+// never be delegated to an HTTP request built from X-Forwarded-Host or Host,
+// because those headers are client-controlled.
+async function isRequestAuthenticated(request: NextRequest) {
+  if (verifyAppSessionCookie(request.cookies.get(APP_AUTH_COOKIE)?.value)) {
+    return true;
   }
 
   try {
-    const parsed = JSON.parse(base64UrlDecode(payload)) as {
-      exp?: number;
-      u?: string;
-    };
-
-    return Boolean(
-      parsed.u && parsed.exp && parsed.exp > Math.floor(Date.now() / 1000)
-    );
+    return (await getAppAuthMode()) === "external";
   } catch {
     return false;
   }
-}
-
-async function getAppAuthStatus(request: NextRequest) {
-  try {
-    const sessionUrl = getAppUrl(request, "/api/app-auth/session");
-    const response = await fetch(sessionUrl, {
-      cache: "no-store",
-      headers: {
-        cookie: request.headers.get("cookie") ?? ""
-      }
-    });
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const body = (await response.json()) as {
-      authenticated?: boolean;
-      authMode?: string;
-    };
-
-    return {
-      authenticated: Boolean(body.authenticated),
-      authMode: body.authMode === "external" ? "external" : "internal"
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function signPayload(payload: string) {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(getAppAuthSecret()),
-    {
-      hash: "SHA-256",
-      name: "HMAC"
-    },
-    false,
-    ["sign"]
-  );
-  const signature = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(payload)
-  );
-
-  return base64UrlEncode(signature);
-}
-
-function getAppAuthSecret() {
-  return (
-    getTrackKeepEnvironmentValue("APP_SECRET") ||
-    "spotifybu-development-session-secret"
-  );
-}
-
-function base64UrlEncode(value: ArrayBuffer) {
-  return btoa(String.fromCharCode(...new Uint8Array(value)))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
-}
-
-function base64UrlDecode(value: string) {
-  const paddedValue = value.replace(/-/g, "+").replace(/_/g, "/");
-  const decodedValue = atob(
-    paddedValue.padEnd(
-      paddedValue.length + ((4 - (paddedValue.length % 4)) % 4),
-      "="
-    )
-  );
-
-  return decodedValue;
 }

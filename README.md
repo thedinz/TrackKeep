@@ -150,7 +150,7 @@ Set these values before starting the app:
 | `TRACKKEEP_IMAGE` | No | Docker image tag to run. The checked-in Docker example defaults to `ghcr.io/thedinz/spotifybu:dev` for testing. Use `ghcr.io/thedinz/spotifybu:latest` for stable installs. |
 | `TRACKKEEP_PORT` | No | Host port for the web UI. Defaults to `3000`. |
 | `NEXT_PUBLIC_APP_URL` | No | Public URL for TrackKeep. Set this for reverse-proxy installs. If blank, TrackKeep derives it from `X-Forwarded-Host`/`X-Forwarded-Proto` or the request host. |
-| `TRACKKEEP_APP_SECRET` | Yes | Long random value used to sign TrackKeep's own login sessions. This is not your Spotify app Client Secret. |
+| `TRACKKEEP_APP_SECRET` | Yes | Long random value used to sign TrackKeep's own login sessions. This is not your Spotify app Client Secret. If it is blank or left as the documented placeholder, TrackKeep generates a random secret in `<TRACKKEEP_CONFIG_DIR>/app-secret` instead of signing sessions with a public value. |
 | `TRACKKEEP_DATABASE_PATH` | No | Optional SQLite path. Defaults to `<TRACKKEEP_CONFIG_DIR>/spotifybu.sqlite`. |
 | `TRACKKEEP_HOMEPAGE_API_KEY` | No | Enables the read-only Homepage stats endpoint when set. Use a separate long random value; do not reuse `TRACKKEEP_APP_SECRET`. |
 | `PUID` | No | User ID used by the TrackKeep process inside the container. Defaults to `1000` for compatibility with older images. On Unraid, set this to match NaviClean/Navidrome, commonly `99`. |

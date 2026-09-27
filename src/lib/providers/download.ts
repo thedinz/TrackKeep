@@ -22,6 +22,7 @@ import {
   type MusicLibraryIndexSummary
 } from "@/lib/music-library";
 import { getSpotifyBuDatabase } from "@/lib/database";
+import { withJsonFileLock, writeJsonFileAtomic } from "@/lib/json-store";
 import { getTrackKeepEnvironmentValue } from "@/lib/trackkeep-env";
 import {
   isUnavailableSpotifyBackupTrack,
@@ -3042,19 +3043,16 @@ async function findDownloadedPath({
 }
 
 async function recordProviderDownload(entry: ProviderDownloadLogEntry) {
-  const log = await readProviderDownloadLog();
-  const now = new Date().toISOString();
+  const logPath = await providerLogFilePath(provenanceLogSegments);
 
-  log.downloads.push(entry);
-  log.updatedAt = now;
+  await withJsonFileLock(logPath, async () => {
+    const log = await readProviderDownloadLog({ preserveCorruptFile: true });
 
-  const logDirectory = await ensureMusicLibraryTargetDirectory([".spotifybu"]);
-  const logPath = path.join(
-    /* turbopackIgnore: true */ logDirectory,
-    "provider-downloads.json"
-  );
+    log.downloads.push(entry);
+    log.updatedAt = new Date().toISOString();
 
-  await writeFile(logPath, `${JSON.stringify(log, null, 2)}\n`, "utf8");
+    await writeJsonFileAtomic(logPath, log);
+  });
 
   return logPath;
 }
@@ -3081,77 +3079,74 @@ export async function purgeProviderDownloadLogsForRelativePath(relativePath: str
 }
 
 async function purgeProviderDownloadLog(normalizedRelativePath: string) {
-  const log = await readProviderDownloadLog();
-  const downloads = log.downloads.filter(
-    (entry) => normalizeRelativePathKey(entry.relativePath) !== normalizedRelativePath
-  );
-  const removedCount = log.downloads.length - downloads.length;
+  const logPath = await providerLogFilePath(provenanceLogSegments);
 
-  if (!removedCount) {
-    return 0;
-  }
+  return withJsonFileLock(logPath, async () => {
+    const log = await readProviderDownloadLog({ preserveCorruptFile: true });
+    const downloads = log.downloads.filter(
+      (entry) => normalizeRelativePathKey(entry.relativePath) !== normalizedRelativePath
+    );
+    const removedCount = log.downloads.length - downloads.length;
 
-  await writeProviderDownloadLog({
-    ...log,
-    downloads,
-    updatedAt: new Date().toISOString()
+    if (!removedCount) {
+      return 0;
+    }
+
+    await writeJsonFileAtomic(logPath, {
+      ...log,
+      downloads,
+      updatedAt: new Date().toISOString()
+    } satisfies ProviderDownloadLog);
+
+    return removedCount;
   });
-
-  return removedCount;
 }
 
 async function purgeProviderDownloadAttemptLog(normalizedRelativePath: string) {
-  const log = await readProviderDownloadAttemptLog();
-  const attempts = log.attempts.filter(
-    (entry) => normalizeRelativePathKey(entry.relativePath) !== normalizedRelativePath
-  );
-  const removedCount = log.attempts.length - attempts.length;
+  const logPath = await providerLogFilePath(attemptLogSegments);
 
-  if (!removedCount) {
-    return 0;
-  }
+  return withJsonFileLock(logPath, async () => {
+    const log = await readProviderDownloadAttemptLog();
+    const attempts = log.attempts.filter(
+      (entry) => normalizeRelativePathKey(entry.relativePath) !== normalizedRelativePath
+    );
+    const removedCount = log.attempts.length - attempts.length;
 
-  await writeProviderDownloadAttemptLog({
-    ...log,
-    attempts,
-    updatedAt: new Date().toISOString()
+    if (!removedCount) {
+      return 0;
+    }
+
+    await writeJsonFileAtomic(logPath, {
+      ...log,
+      attempts,
+      updatedAt: new Date().toISOString()
+    } satisfies ProviderDownloadAttemptLog);
+
+    return removedCount;
   });
-
-  return removedCount;
 }
 
-async function writeProviderDownloadLog(log: ProviderDownloadLog) {
-  const logDirectory = await ensureMusicLibraryTargetDirectory([".spotifybu"]);
-  const logPath = path.join(
-    /* turbopackIgnore: true */ logDirectory,
-    "provider-downloads.json"
-  );
+async function providerLogFilePath(segments: string[]) {
+  const logDirectory = await ensureMusicLibraryTargetDirectory(segments.slice(0, -1));
 
-  await writeFile(logPath, `${JSON.stringify(log, null, 2)}\n`, "utf8");
-}
-
-async function writeProviderDownloadAttemptLog(log: ProviderDownloadAttemptLog) {
-  const logDirectory = await ensureMusicLibraryTargetDirectory([".spotifybu"]);
-  const logPath = path.join(
-    /* turbopackIgnore: true */ logDirectory,
-    "provider-download-attempts.json"
-  );
-
-  await writeFile(logPath, `${JSON.stringify(log, null, 2)}\n`, "utf8");
+  return path.join(/* turbopackIgnore: true */ logDirectory, segments.at(-1) ?? "");
 }
 
 async function recordProviderDownloadAttempt(
   entry: ProviderDownloadAttemptLogEntry
 ) {
   try {
-    const log = await readProviderDownloadAttemptLog();
-    const now = new Date().toISOString();
+    const logPath = await providerLogFilePath(attemptLogSegments);
 
-    log.attempts.push(entry);
-    log.attempts = log.attempts.slice(-maxAttemptLogEntries);
-    log.updatedAt = now;
+    await withJsonFileLock(logPath, async () => {
+      const log = await readProviderDownloadAttemptLog();
 
-    await writeProviderDownloadAttemptLog(log);
+      log.attempts.push(entry);
+      log.attempts = log.attempts.slice(-maxAttemptLogEntries);
+      log.updatedAt = new Date().toISOString();
+
+      await writeJsonFileAtomic(logPath, log);
+    });
   } catch (error) {
     console.warn("[spotifybu.provider-download] could not write attempt log", {
       diagnosticId: entry.diagnosticId,
@@ -3160,31 +3155,55 @@ async function recordProviderDownloadAttempt(
   }
 }
 
-async function readProviderDownloadLog(): Promise<ProviderDownloadLog> {
+async function readProviderDownloadLog({
+  preserveCorruptFile = false
+}: {
+  preserveCorruptFile?: boolean;
+} = {}): Promise<ProviderDownloadLog> {
   const libraryPath = getMusicLibraryPath();
 
   if (!libraryPath) {
     return emptyProviderDownloadLog();
   }
 
-  try {
-    const contents = await readFile(
-      path.join(
-        /* turbopackIgnore: true */ libraryPath,
-        ...provenanceLogSegments
-      ),
-      "utf8"
-    );
-    const parsed = JSON.parse(contents) as Partial<ProviderDownloadLog>;
+  const logPath = path.join(
+    /* turbopackIgnore: true */ libraryPath,
+    ...provenanceLogSegments
+  );
+  let contents: string;
 
-    if (parsed.version !== 1 || !Array.isArray(parsed.downloads)) {
+  try {
+    contents = await readFile(logPath, "utf8");
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
       return emptyProviderDownloadLog();
     }
 
-    return parsed as ProviderDownloadLog;
-  } catch {
-    return emptyProviderDownloadLog();
+    // Returning an empty log here would let the next write erase history.
+    throw error;
   }
+
+  try {
+    const parsed = JSON.parse(contents) as Partial<ProviderDownloadLog>;
+
+    if (parsed.version === 1 && Array.isArray(parsed.downloads)) {
+      return parsed as ProviderDownloadLog;
+    }
+  } catch {
+    // Fall through to preserving the unreadable file below.
+  }
+
+  if (preserveCorruptFile) {
+    const preservedPath = logPath.replace(/\.json$/, `.corrupt-${Date.now()}.json`);
+
+    await rename(logPath, preservedPath);
+    console.warn(
+      "[spotifybu.provider-download] provenance log was unreadable; preserved it before starting a new log",
+      { preservedPath }
+    );
+  }
+
+  return emptyProviderDownloadLog();
 }
 
 function emptyProviderDownloadLog(): ProviderDownloadLog {
@@ -3273,4 +3292,8 @@ async function canAccess(filePath: string, mode: number) {
   } catch {
     return false;
   }
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
