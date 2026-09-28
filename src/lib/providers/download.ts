@@ -1728,6 +1728,39 @@ function providerBulkDownloadJobCounts(job: ProviderBulkDownloadJobRecord) {
   };
 }
 
+// Called once at server startup so bulk jobs interrupted by a container
+// restart continue without waiting for a browser to poll them.
+export function resumeInterruptedProviderBulkDownloadJobs() {
+  const rows = getSpotifyBuDatabase()
+    .prepare(
+      `
+        SELECT id
+        FROM provider_bulk_jobs
+        WHERE status IN ('queued', 'running', 'cancelling')
+        ORDER BY created_at ASC
+      `
+    )
+    .all() as Array<{ id: string }>;
+  const resumedJobIds: string[] = [];
+
+  for (const { id } of rows) {
+    const job = getProviderBulkDownloadJob(id);
+
+    if (job?.status === "queued") {
+      scheduleProviderBulkDownloadJob(job.id);
+      resumedJobIds.push(job.id);
+    }
+  }
+
+  if (resumedJobIds.length) {
+    console.info("[spotifybu.provider-download] resumed interrupted bulk jobs", {
+      jobIds: resumedJobIds
+    });
+  }
+
+  return resumedJobIds;
+}
+
 function getProviderBulkDownloadJob(jobId: string) {
   const memoryJob = providerBulkDownloadJobs.get(jobId);
 
