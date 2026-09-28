@@ -140,8 +140,9 @@ const plexPlaylistType = "15";
 const plexRequestTimeoutMs = 15000;
 const plexTrackSearchLimit = "25";
 const plexRatingKeyChunkSize = 150;
-const plexPlaylistVerificationAttempts = 3;
-const plexPlaylistVerificationDelayMs = 50;
+// Waits between checks that a new playlist exists; slower Plex servers (for
+// example on a NAS) can take a moment before it is visible.
+const plexPlaylistVerificationDelaysMs = [250, 500, 1000, 1500];
 
 export async function getPublicPlexSettings() {
   const settings = await loadPlexSettings();
@@ -715,7 +716,11 @@ async function verifyCreatedPlexPlaylist(
   settings: PlexSettings,
   playlistId: string | number
 ) {
-  for (let attempt = 0; attempt < plexPlaylistVerificationAttempts; attempt += 1) {
+  for (
+    let attempt = 0;
+    attempt <= plexPlaylistVerificationDelaysMs.length;
+    attempt += 1
+  ) {
     const playlist = await getPlexPlaylist(settings, playlistId).catch((error) => {
       if (error instanceof PlexApiError && error.status === 404) {
         return null;
@@ -728,8 +733,8 @@ async function verifyCreatedPlexPlaylist(
       return playlist;
     }
 
-    if (attempt < plexPlaylistVerificationAttempts - 1) {
-      await wait(plexPlaylistVerificationDelayMs);
+    if (attempt < plexPlaylistVerificationDelaysMs.length) {
+      await wait(plexPlaylistVerificationDelaysMs[attempt]);
     }
   }
 
