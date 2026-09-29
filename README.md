@@ -47,7 +47,7 @@ TrackKeep can source audio from files already present in the mounted Navidrome m
 - Resumable background bulk playlist jobs with cancellation, retry, per-track waits, chunk pauses, progress reporting, and partial-failure reporting
 - Ogg Opus output up to 192 kbps by default, configurable to 160/192/256 kbps caps, with optional MP3 192/256/320 kbps fallback and MP3 kept as a legacy compatibility option
 - Navidrome volume staging with idle cleanup for abandoned failed download/convert temp files
-- Docker image with Node.js, `ffmpeg`, prerelease/nightly-channel `yt-dlp[default]`, Python 3, and `pip`
+- Docker image with Node.js, `ffmpeg`, prerelease/nightly-channel `yt-dlp[default]`, Python 3, Mutagen (for preserving Opus artwork during organization), and `pip`
 - GitHub Container Registry image publishing for `dev`, `latest`, and version tags
 
 ## Docker Quick Start
@@ -150,7 +150,7 @@ Set these values before starting the app:
 | `TRACKKEEP_IMAGE` | No | Docker image tag to run. The checked-in Docker example defaults to `ghcr.io/thedinz/spotifybu:dev` for testing. Use `ghcr.io/thedinz/spotifybu:latest` for stable installs. |
 | `TRACKKEEP_PORT` | No | Host port for the web UI. Defaults to `3000`. |
 | `NEXT_PUBLIC_APP_URL` | No | Public URL for TrackKeep. Set this for reverse-proxy installs. If blank, TrackKeep derives it from `X-Forwarded-Host`/`X-Forwarded-Proto` or the request host. |
-| `TRACKKEEP_APP_SECRET` | Yes | Long random value used to sign TrackKeep's own login sessions. This is not your Spotify app Client Secret. |
+| `TRACKKEEP_APP_SECRET` | Yes | Long random value used to sign TrackKeep's own login sessions. This is not your Spotify app Client Secret. If it is blank or left as the documented placeholder, TrackKeep generates a random secret in `<TRACKKEEP_CONFIG_DIR>/app-secret` instead of signing sessions with a public value. |
 | `TRACKKEEP_DATABASE_PATH` | No | Optional SQLite path. Defaults to `<TRACKKEEP_CONFIG_DIR>/spotifybu.sqlite`. |
 | `TRACKKEEP_HOMEPAGE_API_KEY` | No | Enables the read-only Homepage stats endpoint when set. Use a separate long random value; do not reuse `TRACKKEEP_APP_SECRET`. |
 | `PUID` | No | User ID used by the TrackKeep process inside the container. Defaults to `1000` for compatibility with older images. On Unraid, set this to match NaviClean/Navidrome, commonly `99`. |
@@ -564,6 +564,10 @@ Navidrome uses the Subsonic API:
 ## Local Development
 
 For local non-Docker development:
+
+Install `ffmpeg`/`ffprobe` and Python 3 on your PATH. Opus organization and
+metadata backfill also require `python3 -m pip install 'mutagen>=1.47,<2'`
+(use `python` on Windows). Docker includes these dependencies.
 
 ```bash
 npm install

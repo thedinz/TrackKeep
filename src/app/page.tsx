@@ -53,6 +53,7 @@ type AppInfo = {
 type AppAuthStatus = {
   authenticated: boolean;
   authMode: "external" | "internal";
+  defaultCredentials?: boolean;
 };
 
 type SpotifyAuthConfigResponse = {
@@ -734,6 +735,7 @@ export default function Home() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [appAuthMode, setAppAuthMode] =
     useState<AppAuthStatus["authMode"]>("internal");
+  const [usingDefaultCredentials, setUsingDefaultCredentials] = useState(false);
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [spotifyAuthConfig, setSpotifyAuthConfig] =
     useState<SpotifyAuthConfigResponse | null>(null);
@@ -2193,6 +2195,9 @@ export default function Home() {
         setAppAuthMode(
           appSession.authMode === "external" ? "external" : "internal"
         );
+        setUsingDefaultCredentials(
+          appSession.authMode !== "external" && Boolean(appSession.defaultCredentials)
+        );
       } catch {
         if (!cancelled) {
           redirectToLogin();
@@ -3355,6 +3360,16 @@ export default function Home() {
                 more skipped tracks
               </span>
             ) : null}
+          </span>
+        </div>
+      ) : null}
+
+      {usingDefaultCredentials ? (
+        <div className="alert">
+          <ShieldCheck size={18} />
+          <span>
+            You are still using the default admin/admin login.{" "}
+            <a href="/settings">Change it in Settings</a>.
           </span>
         </div>
       ) : null}
