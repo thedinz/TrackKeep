@@ -98,6 +98,11 @@ test("bulk previews and queues exclude unavailable Spotify tracks", async () => 
 });
 
 test("provider downloads request Opus/192K and write tagged .opus files by default", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("The fake yt-dlp shebang script cannot be spawned on Windows.");
+    return;
+  }
+
   if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
     t.skip("ffmpeg and ffprobe are required for download metadata coverage.");
     return;
@@ -221,6 +226,11 @@ test("provider downloads request Opus/192K and write tagged .opus files by defau
 });
 
 test("provider downloads keep lower bitrate Opus sources without upconverting", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("The fake yt-dlp shebang script cannot be spawned on Windows.");
+    return;
+  }
+
   if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
     t.skip("ffmpeg and ffprobe are required for download bitrate coverage.");
     return;
@@ -293,6 +303,11 @@ test("provider downloads keep lower bitrate Opus sources without upconverting", 
 });
 
 test("provider downloads fall back from Opus to configured MP3 quality", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("The fake yt-dlp shebang script cannot be spawned on Windows.");
+    return;
+  }
+
   if (!(await hasCommand("ffmpeg")) || !(await hasCommand("ffprobe"))) {
     t.skip("ffmpeg and ffprobe are required for download fallback coverage.");
     return;
