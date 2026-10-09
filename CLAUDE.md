@@ -17,7 +17,7 @@ Every commit, merge, tag, PR and release is authored and committed as `thedinz <
 - `dev` is the working branch and `main` is stable. Feature branches merge into `dev`, and `dev` merges into `main`.
 - Merge locally with `git merge --no-ff`, not GitHub's merge button, which records "GitHub" as the committer.
 - A push to `dev` publishes `ghcr.io/thedinz/spotifybu:dev`, and a push to `main` publishes `:latest`, which existing installs pull. A `vX.Y.Z` tag publishes a versioned image. Only push release tags when asked.
-- The Docker workflow doesn't run tests, so run typecheck and tests locally before merging.
+- The "CI" workflow (`ci.yml`) runs typecheck and tests on every PR. The Docker workflow runs it first and only publishes if it passes. Merge once CI is green.
 
 ## Build and test
 

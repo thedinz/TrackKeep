@@ -952,6 +952,7 @@ docker run --rm -p 3000:3000 \
 - `src/app/api/spotify/playlists/[playlistId]/music-library/route.ts` replaces, appends, or full-syncs a matching Navidrome or Plex playlist from backed-up Spotify tracks.
 - `src/lib/session.ts` and `src/lib/server-session.ts` own PKCE cookie and Spotify token-session handling.
 - `.github/workflows/docker-image.yml` publishes GHCR images for `dev`, `main`, and `v*` tags. The `dev` branch publishes `dev`; `main` and version tags publish stable tags such as `latest`. The workflow runs `npm run check:yt-dlp` so image builds record the current yt-dlp release channel before publishing.
+- `.github/workflows/ci.yml` runs `npm run typecheck` and `npm test` (with ffmpeg and mutagen installed) on pull requests. The Docker workflow calls it first, so an image is only published after the checks pass.
 
 ### Source Providers
 
