@@ -7,6 +7,7 @@ import path from "node:path";
 import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
 import { persistPlaylistBackup } from "./backup-store.ts";
+import { closeSpotifyBuDatabase } from "./database.ts";
 import {
   backfillMusicLibrarySpotifyIdentityTags,
   clearMusicLibraryTrackOrganizationIgnore,
@@ -1833,6 +1834,9 @@ async function withOrganizeSettings(
   }
 
   t.after(async () => {
+    // Windows can't delete the SQLite file while the cached handle is open.
+    closeSpotifyBuDatabase();
+
     if (typeof previousConfigDirectory === "string") {
       process.env.SPOTIFYBU_CONFIG_DIR = previousConfigDirectory;
     } else {

@@ -62,6 +62,11 @@ export function getSpotifyBuDatabase() {
   return database;
 }
 
+export function closeSpotifyBuDatabase() {
+  database?.close();
+  database = null;
+}
+
 export function getSpotifyBuDatabasePath() {
   return (
     getTrackKeepEnvironmentValue("DATABASE_PATH")?.trim() ||
