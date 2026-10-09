@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "for d in \"$CLAUDE_PROJECT_DIR/../project-notes\" \"$CLAUDE_PROJECT_DIR/../../project-notes\"; do if [ -d \"$d/.git\" ]; then git -C \"$d\" pull -q --ff-only 2>/dev/null; cat \"$d/TrackKeep.md\" 2>/dev/null; break; fi; done; true",
+            "timeout": 30,
+            "statusMessage": "Loading the TrackKeep handbook"
+          }
+        ]
+      }
+    ]
+  }
+}

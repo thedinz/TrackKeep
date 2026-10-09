@@ -9,3 +9,4 @@ out/
 dist/
 coverage/
 *.tsbuildinfo
+.claude/settings.local.json
