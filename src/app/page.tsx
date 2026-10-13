@@ -584,6 +584,10 @@ type ProviderBulkDownloadJob = {
   id: string;
   items: ProviderBulkDownloadJobItem[];
   pendingCount: number;
+  playlist?: {
+    id: string;
+    name: string;
+  };
   request: {
     chunkPauseMs: number;
     chunkSize: number;
@@ -623,6 +627,17 @@ type ProviderBulkDownloadResponse = {
   job?: ProviderBulkDownloadJob;
 };
 
+type ProviderBulkJobSummary = Omit<ProviderBulkDownloadJob, "items">;
+
+type ProviderBulkJobHistoryResponse = {
+  jobs: ProviderBulkJobSummary[];
+  playlists: Array<{
+    id: string;
+    name: string;
+  }>;
+  totalCount: number;
+};
+
 type BulkDownloadProgress = {
   completedCount: number;
   failedCount: number;
@@ -642,6 +657,8 @@ const maxProviderDownloadPollAttempts = 720;
 const bulkProviderJobStorageKey = "spotifybu.bulkProviderJobId";
 const bulkProviderJobPlaylistStorageKey =
   "trackkeep.bulkProviderJobPlaylistId";
+const bulkJobHistoryPageSize = 20;
+const bulkJobHistoryUnknownPlaylistId = "unknown";
 const playlistAutoSyncStoragePrefix = "trackkeep.playlistAutoSync.v1";
 const playlistAutoSyncRetryDelayMs = 2500;
 const playlistAutoSyncMaxAttempts = 12;
@@ -717,6 +734,7 @@ export default function Home() {
   const bulkDownloadJobRef = useRef<ProviderBulkDownloadJob | null>(null);
   const playlistRefreshInFlightRef = useRef(false);
   const refreshedBulkJobIdRef = useRef<string | null>(null);
+  const bulkJobHistoryRequestRef = useRef(0);
   const selectedPlaylistIdRef = useRef<string | null>(null);
   const playlistAutoSyncTargetsRef = useRef(defaultPlaylistAutoSyncTargets);
   const playlistAutoSyncQueueRef = useRef(
@@ -850,6 +868,22 @@ export default function Home() {
     useState<ProviderBulkCandidatePreview | null>(null);
   const [bulkDownloadJob, setBulkDownloadJob] =
     useState<ProviderBulkDownloadJob | null>(null);
+  const [isBulkJobHistoryOpen, setIsBulkJobHistoryOpen] = useState(false);
+  const [isLoadingBulkJobHistory, setIsLoadingBulkJobHistory] = useState(false);
+  const [bulkJobHistory, setBulkJobHistory] =
+    useState<ProviderBulkJobHistoryResponse | null>(null);
+  const [bulkJobHistoryStatus, setBulkJobHistoryStatus] = useState("");
+  const [bulkJobHistoryPlaylistId, setBulkJobHistoryPlaylistId] = useState("");
+  const [bulkJobHistoryClearAge, setBulkJobHistoryClearAge] = useState("");
+  const [bulkJobHistoryPage, setBulkJobHistoryPage] = useState(0);
+  const [bulkJobHistoryDetail, setBulkJobHistoryDetail] =
+    useState<ProviderBulkDownloadJob | null>(null);
+  const [bulkJobHistoryMessage, setBulkJobHistoryMessage] = useState<
+    string | null
+  >(null);
+  const [bulkJobHistoryError, setBulkJobHistoryError] = useState<string | null>(
+    null
+  );
   const [libraryOrganizeMessage, setLibraryOrganizeMessage] =
     useState<string | null>(null);
   const [libraryOrganizeFailures, setLibraryOrganizeFailures] = useState<
@@ -2824,6 +2858,12 @@ export default function Home() {
   const applyBulkProviderJob = useCallback(
     (job: ProviderBulkDownloadJob) => {
       const newlyCompletedTrackPositions: number[] = [];
+      // A job retried from history can belong to a playlist other than the
+      // one on screen, where its track positions would mark the wrong rows.
+      const jobMatchesSelectedPlaylist =
+        !job.playlist ||
+        !selectedPlaylistIdRef.current ||
+        job.playlist.id === selectedPlaylistIdRef.current;
 
       setBulkDownloadJob(job);
       setBulkDownloadProgress(providerBulkJobProgress(job));
@@ -2838,7 +2878,7 @@ export default function Home() {
           setLibraryIndex(item.download.libraryIndex);
         }
 
-        if (item.download.relativePath) {
+        if (item.download.relativePath && jobMatchesSelectedPlaylist) {
           markDownloadedTrackInLibrary(item.track, item.download.relativePath);
         }
 
@@ -2916,6 +2956,10 @@ export default function Home() {
           fallbackQuality: providerDownloadSettings.mp3FallbackQuality,
           format: downloadFormat,
           items,
+          playlistId:
+            sourceKind === "playlist" ? selectedPlaylist?.id : undefined,
+          playlistName:
+            sourceKind === "playlist" ? selectedPlaylist?.name : undefined,
           quality: downloadQuality,
           rightsConfirmed: downloadRightsConfirmed
         }
@@ -2957,7 +3001,9 @@ export default function Home() {
     downloadQuality,
     downloadRightsConfirmed,
     providerDownloadSettings,
-    selectedPlaylistId
+    selectedPlaylist,
+    selectedPlaylistId,
+    sourceKind
   ]);
 
   const cancelBulkProviderJob = useCallback(async () => {
@@ -3032,6 +3078,250 @@ export default function Home() {
       setRequestError(errorMessage(error));
     }
   }, [applyBulkProviderJob, bulkDownloadJob]);
+
+  const loadBulkJobHistory = useCallback(async () => {
+    const requestId = bulkJobHistoryRequestRef.current + 1;
+    const params = bulkJobHistoryParams(
+      bulkJobHistoryStatus,
+      bulkJobHistoryPlaylistId
+    );
+
+    bulkJobHistoryRequestRef.current = requestId;
+    params.set("limit", String(bulkJobHistoryPageSize));
+    params.set("offset", String(bulkJobHistoryPage * bulkJobHistoryPageSize));
+    setIsLoadingBulkJobHistory(true);
+
+    try {
+      const history = await fetchJson<ProviderBulkJobHistoryResponse>(
+        `/api/providers/download/bulk?${params.toString()}`
+      );
+
+      if (bulkJobHistoryRequestRef.current !== requestId) {
+        return;
+      }
+
+      const lastPage = Math.max(
+        0,
+        Math.ceil(history.totalCount / bulkJobHistoryPageSize) - 1
+      );
+
+      if (bulkJobHistoryPage > lastPage) {
+        setBulkJobHistoryPage(lastPage);
+        return;
+      }
+
+      setBulkJobHistory(history);
+      setBulkJobHistoryError(null);
+    } catch (error) {
+      if (bulkJobHistoryRequestRef.current === requestId) {
+        setBulkJobHistoryError(errorMessage(error));
+      }
+    } finally {
+      if (bulkJobHistoryRequestRef.current === requestId) {
+        setIsLoadingBulkJobHistory(false);
+      }
+    }
+  }, [bulkJobHistoryPage, bulkJobHistoryPlaylistId, bulkJobHistoryStatus]);
+
+  const toggleBulkJobHistoryDetail = useCallback(
+    async (jobId: string) => {
+      if (bulkJobHistoryDetail?.id === jobId) {
+        setBulkJobHistoryDetail(null);
+        return;
+      }
+
+      try {
+        const response = await fetchJson<ProviderBulkDownloadResponse>(
+          `/api/providers/download/bulk/${encodeURIComponent(jobId)}`
+        );
+
+        setBulkJobHistoryDetail(response.job ?? null);
+        setBulkJobHistoryError(null);
+      } catch (error) {
+        setBulkJobHistoryError(errorMessage(error));
+      }
+    },
+    [bulkJobHistoryDetail?.id]
+  );
+
+  const retryBulkJobHistoryJob = useCallback(
+    async (jobId: string) => {
+      setBulkJobHistoryMessage(null);
+      setBulkJobHistoryError(null);
+      setBulkDownloadMessage(null);
+
+      try {
+        const response = await postJson<ProviderBulkDownloadResponse>(
+          `/api/providers/download/bulk/${encodeURIComponent(jobId)}`,
+          {
+            action: "retry"
+          }
+        );
+        const job = response.job;
+
+        if (!job) {
+          throw new Error("Provider bulk job did not return a job.");
+        }
+
+        // Tracks this job already finished were synced when they first
+        // completed, so only the retried ones should queue a playlist sync.
+        for (const item of job.items) {
+          if (item.status === "completed") {
+            autoSyncObservedBulkItemsRef.current.add(
+              `${job.id}:${item.track.position}`
+            );
+          }
+        }
+
+        if (job.playlist) {
+          bulkProviderJobPlaylistIdsRef.current.set(job.id, job.playlist.id);
+        }
+
+        try {
+          window.localStorage.setItem(bulkProviderJobStorageKey, job.id);
+
+          if (job.playlist) {
+            window.localStorage.setItem(
+              bulkProviderJobPlaylistStorageKey,
+              job.playlist.id
+            );
+          } else {
+            window.localStorage.removeItem(bulkProviderJobPlaylistStorageKey);
+          }
+        } catch {
+          // Local storage may be unavailable in hardened browser contexts.
+        }
+
+        setBulkJobHistoryDetail(null);
+        applyBulkProviderJob(job);
+        void loadBulkJobHistory();
+      } catch (error) {
+        setBulkJobHistoryError(errorMessage(error));
+      }
+    },
+    [applyBulkProviderJob, loadBulkJobHistory]
+  );
+
+  const forgetBulkProviderJob = useCallback((jobId: string) => {
+    setBulkJobHistoryDetail((current) =>
+      current?.id === jobId ? null : current
+    );
+
+    if (bulkDownloadJobRef.current?.id !== jobId) {
+      return;
+    }
+
+    setBulkDownloadJob(null);
+    setBulkDownloadMessage(null);
+    setBulkDownloadProgress(null);
+  }, []);
+
+  const deleteBulkJobHistoryJob = useCallback(
+    async (job: ProviderBulkJobSummary) => {
+      if (
+        !window.confirm(
+          `Delete this bulk job from the history?\n\n${bulkJobHistoryJobLabel(
+            job
+          )}\n\nDownloaded files and their provenance log are not touched.`
+        )
+      ) {
+        return;
+      }
+
+      setBulkJobHistoryMessage(null);
+      setBulkJobHistoryError(null);
+
+      try {
+        await deleteJson<{ deleted: boolean }>(
+          `/api/providers/download/bulk/${encodeURIComponent(job.id)}`,
+          {}
+        );
+        forgetBulkProviderJob(job.id);
+        setBulkJobHistoryMessage("Deleted 1 bulk job from the history.");
+        await loadBulkJobHistory();
+      } catch (error) {
+        setBulkJobHistoryError(errorMessage(error));
+      }
+    },
+    [forgetBulkProviderJob, loadBulkJobHistory]
+  );
+
+  const clearBulkJobHistory = useCallback(async () => {
+    const params = bulkJobHistoryParams(
+      bulkJobHistoryStatus,
+      bulkJobHistoryPlaylistId
+    );
+    const scopeLabels = [
+      bulkJobHistoryStatus ? "with the selected status" : "",
+      bulkJobHistoryPlaylistId ? "for the selected playlist" : "",
+      bulkJobHistoryClearAge
+        ? `last updated more than ${bulkJobHistoryClearAge} days ago`
+        : ""
+    ].filter(Boolean);
+
+    if (bulkJobHistoryClearAge) {
+      params.set("olderThanDays", bulkJobHistoryClearAge);
+    }
+
+    if (
+      !window.confirm(
+        `Delete every finished bulk job${
+          scopeLabels.length ? ` ${scopeLabels.join(", ")}` : ""
+        } from the history?\n\nRunning and queued jobs are kept. Downloaded files and their provenance log are not touched.`
+      )
+    ) {
+      return;
+    }
+
+    setBulkJobHistoryMessage(null);
+    setBulkJobHistoryError(null);
+
+    try {
+      const response = await deleteJson<{ deletedCount: number }>(
+        `/api/providers/download/bulk?${params.toString()}`,
+        {}
+      );
+      const currentJob = bulkDownloadJobRef.current;
+
+      // The job shown in the bulk panel may have been one of those cleared.
+      if (currentJob && isProviderBulkJobTerminal(currentJob)) {
+        await fetchJson<ProviderBulkDownloadResponse>(
+          `/api/providers/download/bulk/${encodeURIComponent(currentJob.id)}`
+        ).catch(() => forgetBulkProviderJob(currentJob.id));
+      }
+
+      setBulkJobHistoryDetail(null);
+      setBulkJobHistoryMessage(
+        response.deletedCount
+          ? `Cleared ${numberFormatter.format(
+              response.deletedCount
+            )} finished bulk job${response.deletedCount === 1 ? "" : "s"}.`
+          : "No finished bulk jobs matched."
+      );
+      await loadBulkJobHistory();
+    } catch (error) {
+      setBulkJobHistoryError(errorMessage(error));
+    }
+  }, [
+    bulkJobHistoryClearAge,
+    bulkJobHistoryPlaylistId,
+    bulkJobHistoryStatus,
+    forgetBulkProviderJob,
+    loadBulkJobHistory
+  ]);
+
+  useEffect(() => {
+    if (!isBulkJobHistoryOpen) {
+      return;
+    }
+
+    void loadBulkJobHistory();
+  }, [
+    bulkDownloadJob?.id,
+    bulkDownloadJob?.status,
+    isBulkJobHistoryOpen,
+    loadBulkJobHistory
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3206,6 +3496,12 @@ export default function Home() {
       isProviderBulkJobTerminal(bulkDownloadJob) &&
       bulkDownloadJob.items.some((item) => item.status !== "completed")
   );
+  const bulkJobHistoryPageCount = Math.max(
+    1,
+    Math.ceil((bulkJobHistory?.totalCount ?? 0) / bulkJobHistoryPageSize)
+  );
+  const bulkJobHistoryDetailFailedItems =
+    bulkJobHistoryDetail?.items.filter((item) => item.status === "failed") ?? [];
 
   return (
     <main className="app-shell">
@@ -4553,6 +4849,300 @@ export default function Home() {
                       ) : null}
                     </section>
                   </div>
+                  <section className="backup-workflow-section bulk-job-history">
+                    <div className="bulk-job-history-header">
+                      <div>
+                        <h3>Bulk job history</h3>
+                        <p>
+                          Past bulk jobs for every playlist. Retry unfinished
+                          tracks or delete finished jobs you no longer need.
+                        </p>
+                      </div>
+                      <button
+                        aria-expanded={isBulkJobHistoryOpen}
+                        className="icon-command compact"
+                        onClick={() =>
+                          setIsBulkJobHistoryOpen((isOpen) => !isOpen)
+                        }
+                        title={
+                          isBulkJobHistoryOpen
+                            ? "Hide bulk job history"
+                            : "Show bulk job history"
+                        }
+                        type="button"
+                      >
+                        {isBulkJobHistoryOpen ? (
+                          <ChevronUp size={18} />
+                        ) : (
+                          <ChevronDown size={18} />
+                        )}
+                      </button>
+                    </div>
+                    {isBulkJobHistoryOpen ? (
+                      <>
+                        <div className="bulk-job-history-controls">
+                          <label className="provider-field">
+                            <span>Status</span>
+                            <select
+                              onChange={(event) => {
+                                setBulkJobHistoryStatus(event.target.value);
+                                setBulkJobHistoryPage(0);
+                              }}
+                              value={bulkJobHistoryStatus}
+                            >
+                              <option value="">All statuses</option>
+                              <option value="active">Running or queued</option>
+                              <option value="completed">Complete</option>
+                              <option value="failed">Needs review</option>
+                              <option value="cancelled">Cancelled</option>
+                            </select>
+                          </label>
+                          <label className="provider-field">
+                            <span>Playlist</span>
+                            <select
+                              onChange={(event) => {
+                                setBulkJobHistoryPlaylistId(event.target.value);
+                                setBulkJobHistoryPage(0);
+                              }}
+                              value={bulkJobHistoryPlaylistId}
+                            >
+                              <option value="">All playlists</option>
+                              {(bulkJobHistory?.playlists ?? []).map(
+                                (playlist) => (
+                                  <option key={playlist.id} value={playlist.id}>
+                                    {playlist.name}
+                                  </option>
+                                )
+                              )}
+                              <option value={bulkJobHistoryUnknownPlaylistId}>
+                                No playlist recorded
+                              </option>
+                            </select>
+                          </label>
+                          <label className="provider-field">
+                            <span>Clear finished</span>
+                            <select
+                              onChange={(event) =>
+                                setBulkJobHistoryClearAge(event.target.value)
+                              }
+                              value={bulkJobHistoryClearAge}
+                            >
+                              <option value="">Any age</option>
+                              <option value="7">Older than 7 days</option>
+                              <option value="30">Older than 30 days</option>
+                              <option value="90">Older than 90 days</option>
+                            </select>
+                          </label>
+                          <button
+                            className="command secondary compact"
+                            disabled={bulkJobHistoryStatus === "active"}
+                            onClick={() => void clearBulkJobHistory()}
+                            title="Delete finished bulk jobs that match the filters"
+                            type="button"
+                          >
+                            <Trash2 size={16} />
+                            Clear Finished
+                          </button>
+                        </div>
+                        {bulkJobHistoryError ? (
+                          <p className="provider-error" role="alert">
+                            {bulkJobHistoryError}
+                          </p>
+                        ) : null}
+                        {bulkJobHistoryMessage ? (
+                          <p className="provider-queue-note">
+                            {bulkJobHistoryMessage}
+                          </p>
+                        ) : null}
+                        {bulkJobHistory?.jobs.length ? (
+                          <div className="bulk-job-history-list">
+                            {bulkJobHistory.jobs.map((job) => {
+                              const isJobTerminal = isProviderBulkJobTerminal(job);
+                              const isDetailOpen =
+                                bulkJobHistoryDetail?.id === job.id;
+
+                              return (
+                                <div
+                                  className={`bulk-job-history-item ${job.status}`}
+                                  key={job.id}
+                                >
+                                  <div className="bulk-job-history-row">
+                                    <div className="bulk-job-history-summary">
+                                      <strong>
+                                        {job.playlist?.name ??
+                                          "No playlist recorded"}
+                                      </strong>
+                                      <span>
+                                        {providerBulkJobStatusLabel(job.status)} -{" "}
+                                        {numberFormatter.format(
+                                          job.completedCount
+                                        )}{" "}
+                                        of {numberFormatter.format(job.totalCount)}{" "}
+                                        backed up
+                                        {job.failedCount
+                                          ? `, ${numberFormatter.format(
+                                              job.failedCount
+                                            )} failed`
+                                          : ""}
+                                      </span>
+                                      <span>
+                                        Started {formatShortDate(job.createdAt)}
+                                        {job.completedAt
+                                          ? ` - finished ${formatShortDate(
+                                              job.completedAt
+                                            )}`
+                                          : ""}
+                                      </span>
+                                    </div>
+                                    <div className="bulk-job-history-actions">
+                                      <button
+                                        aria-expanded={isDetailOpen}
+                                        className="icon-command compact"
+                                        onClick={() =>
+                                          void toggleBulkJobHistoryDetail(job.id)
+                                        }
+                                        title={
+                                          isDetailOpen
+                                            ? "Hide job details"
+                                            : "Show job details"
+                                        }
+                                        type="button"
+                                      >
+                                        {isDetailOpen ? (
+                                          <ChevronUp size={18} />
+                                        ) : (
+                                          <ChevronDown size={18} />
+                                        )}
+                                      </button>
+                                      <button
+                                        className="icon-command compact"
+                                        disabled={
+                                          !isJobTerminal ||
+                                          job.completedCount >= job.totalCount ||
+                                          isDownloadingBulkProvider
+                                        }
+                                        onClick={() =>
+                                          void retryBulkJobHistoryJob(job.id)
+                                        }
+                                        title="Retry unfinished tracks in this job"
+                                        type="button"
+                                      >
+                                        <RotateCcw size={18} />
+                                      </button>
+                                      <button
+                                        className="icon-command compact"
+                                        disabled={!isJobTerminal}
+                                        onClick={() =>
+                                          void deleteBulkJobHistoryJob(job)
+                                        }
+                                        title={
+                                          isJobTerminal
+                                            ? "Delete this job from the history"
+                                            : "Cancel this job before deleting it"
+                                        }
+                                        type="button"
+                                      >
+                                        <Trash2 size={18} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                  {isDetailOpen && bulkJobHistoryDetail ? (
+                                    <div className="bulk-job-history-detail">
+                                      <span>
+                                        {bulkJobHistoryDetail.request.format.toUpperCase()}{" "}
+                                        {bulkJobHistoryDetail.request.quality}{" "}
+                                        kbps - diagnostic{" "}
+                                        {bulkJobHistoryDetail.diagnosticId}
+                                      </span>
+                                      {bulkJobHistoryDetailFailedItems.length ? (
+                                        <div className="provider-preview-list">
+                                          {bulkJobHistoryDetailFailedItems.map(
+                                            (item) => (
+                                              <div
+                                                className="provider-preview-item failed"
+                                                key={`${item.track.position}-${item.track.id ?? item.track.name}`}
+                                              >
+                                                <span>
+                                                  {item.track.position}.{" "}
+                                                  {item.track.name}
+                                                </span>
+                                                <strong>
+                                                  {providerDisplayName(
+                                                    item.providerId
+                                                  )}{" "}
+                                                  -{" "}
+                                                  {item.candidateTitle ??
+                                                    item.sourceUrl}
+                                                </strong>
+                                                <span>
+                                                  {item.error ??
+                                                    "Provider download failed."}
+                                                </span>
+                                                <a
+                                                  href={item.sourceUrl}
+                                                  rel="noreferrer"
+                                                  target="_blank"
+                                                >
+                                                  Review source
+                                                </a>
+                                              </div>
+                                            )
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <span>No failed tracks in this job.</span>
+                                      )}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="provider-queue-note">
+                            {isLoadingBulkJobHistory
+                              ? "Loading bulk job history"
+                              : bulkJobHistory
+                                ? "No bulk jobs match these filters."
+                                : "Bulk job history is unavailable."}
+                          </p>
+                        )}
+                        {bulkJobHistory &&
+                        bulkJobHistory.totalCount > bulkJobHistoryPageSize ? (
+                          <div className="bulk-job-history-pager">
+                            <button
+                              className="command secondary compact"
+                              disabled={bulkJobHistoryPage <= 0}
+                              onClick={() =>
+                                setBulkJobHistoryPage((page) => page - 1)
+                              }
+                              type="button"
+                            >
+                              Newer
+                            </button>
+                            <span>
+                              Page {bulkJobHistoryPage + 1} of{" "}
+                              {bulkJobHistoryPageCount} -{" "}
+                              {numberFormatter.format(bulkJobHistory.totalCount)}{" "}
+                              jobs
+                            </span>
+                            <button
+                              className="command secondary compact"
+                              disabled={
+                                bulkJobHistoryPage >= bulkJobHistoryPageCount - 1
+                              }
+                              onClick={() =>
+                                setBulkJobHistoryPage((page) => page + 1)
+                              }
+                              type="button"
+                            >
+                              Older
+                            </button>
+                          </div>
+                        ) : null}
+                      </>
+                    ) : null}
+                  </section>
                 </div>
               ) : null}
 
@@ -6378,7 +6968,29 @@ function providerBulkJobResultMessage(job: ProviderBulkDownloadJob) {
   }.`;
 }
 
-function isProviderBulkJobActive(job: ProviderBulkDownloadJob) {
+function bulkJobHistoryParams(status: string, playlistId: string) {
+  const params = new URLSearchParams();
+
+  if (status) {
+    params.set("status", status);
+  }
+
+  if (playlistId) {
+    params.set("playlistId", playlistId);
+  }
+
+  return params;
+}
+
+function bulkJobHistoryJobLabel(job: ProviderBulkJobSummary) {
+  return `${job.playlist?.name ?? "No playlist recorded"} - ${numberFormatter.format(
+    job.completedCount
+  )} of ${numberFormatter.format(job.totalCount)} backed up - started ${formatShortDate(
+    job.createdAt
+  )}`;
+}
+
+function isProviderBulkJobActive(job: ProviderBulkJobSummary) {
   return (
     job.status === "queued" ||
     job.status === "running" ||
@@ -6386,7 +6998,7 @@ function isProviderBulkJobActive(job: ProviderBulkDownloadJob) {
   );
 }
 
-function isProviderBulkJobTerminal(job: ProviderBulkDownloadJob) {
+function isProviderBulkJobTerminal(job: ProviderBulkJobSummary) {
   return (
     job.status === "cancelled" ||
     job.status === "completed" ||

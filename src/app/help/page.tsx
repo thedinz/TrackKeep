@@ -320,7 +320,9 @@ export default function HelpPage() {
               <p>
                 Search results are scored guesses, not Spotify audio. Single downloads
                 let you review the candidate; bulk backup previews the queue first and
-                retries alternate candidates when a source fails.
+                retries alternate candidates when a source fails. Bulk job history
+                lists past jobs, where you can retry unfinished tracks or delete
+                finished jobs. Deleting a job never touches downloaded files.
               </p>
             </article>
             <article>
