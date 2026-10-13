@@ -15,11 +15,16 @@ import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import {
+  clearFinishedProviderBulkDownloadJobs,
+  deleteProviderBulkDownloadJob,
   downloadAuthorizedProviderTrack,
+  getProviderBulkDownloadJobSnapshot,
+  listProviderBulkDownloadJobs,
   previewProviderBulkDownloadCandidates,
   providerDownloadFormatProfiles,
   startProviderBulkDownloadJob
 } from "./download.ts";
+import { closeSpotifyBuDatabase, getSpotifyBuDatabase } from "../database.ts";
 import {
   spotifyBuIdentityMetadataFromTagLookup,
   spotifyBuIdentityVersion
@@ -94,6 +99,133 @@ test("bulk previews and queues exclude unavailable Spotify tracks", async () => 
         rightsConfirmed: true
       }),
     /Add previewed provider candidates before starting bulk backup/
+  );
+});
+
+test("bulk job history lists, filters and deletes only finished jobs", async (t) => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "spotifybu-bulk-history-"));
+
+  t.after(async () => {
+    closeSpotifyBuDatabase();
+    await rm(tempRoot, {
+      force: true,
+      recursive: true
+    });
+  });
+
+  await withEnvironment(
+    {
+      TRACKKEEP_DATABASE_PATH: path.join(tempRoot, "history.sqlite")
+    },
+    async () => {
+      closeSpotifyBuDatabase();
+
+      const roadTrip = { id: "playlist-a", name: "Road Trip" };
+
+      insertBulkJobRow({
+        ageDays: 40,
+        id: "job-old-completed",
+        itemStatuses: ["completed", "completed"],
+        playlist: roadTrip,
+        status: "completed"
+      });
+      insertBulkJobRow({
+        ageDays: 10,
+        id: "job-cancelled",
+        itemStatuses: ["completed", "cancelled"],
+        status: "cancelled"
+      });
+      insertBulkJobRow({
+        ageDays: 2,
+        id: "job-new-failed",
+        itemStatuses: ["completed", "failed", "failed"],
+        playlist: roadTrip,
+        status: "failed"
+      });
+      insertBulkJobRow({
+        ageDays: 0,
+        id: "job-queued",
+        itemStatuses: ["pending"],
+        playlist: { id: "playlist-b", name: "Chill" },
+        status: "queued"
+      });
+
+      const everything = listProviderBulkDownloadJobs();
+
+      assert.equal(everything.totalCount, 4);
+      assert.deepEqual(
+        everything.jobs.map((job) => job.id),
+        ["job-queued", "job-new-failed", "job-cancelled", "job-old-completed"]
+      );
+      assert.deepEqual(everything.playlists, [
+        { id: "playlist-b", name: "Chill" },
+        roadTrip
+      ]);
+      assert.ok(everything.jobs.every((job) => !("items" in job)));
+
+      const failedJob = everything.jobs[1];
+
+      assert.equal(failedJob.totalCount, 3);
+      assert.equal(failedJob.completedCount, 1);
+      assert.equal(failedJob.failedCount, 2);
+      assert.deepEqual(failedJob.playlist, roadTrip);
+
+      assert.deepEqual(
+        listProviderBulkDownloadJobs({ status: "active" }).jobs.map(
+          (job) => job.id
+        ),
+        ["job-queued"]
+      );
+      assert.deepEqual(
+        listProviderBulkDownloadJobs({ playlistId: "playlist-a" }).jobs.map(
+          (job) => job.id
+        ),
+        ["job-new-failed", "job-old-completed"]
+      );
+      assert.deepEqual(
+        listProviderBulkDownloadJobs({ playlistId: "unknown" }).jobs.map(
+          (job) => job.id
+        ),
+        ["job-cancelled"]
+      );
+
+      const secondPage = listProviderBulkDownloadJobs({ limit: 1, offset: 1 });
+
+      assert.equal(secondPage.totalCount, 4);
+      assert.deepEqual(
+        secondPage.jobs.map((job) => job.id),
+        ["job-new-failed"]
+      );
+      assert.throws(
+        () => listProviderBulkDownloadJobs({ status: "bogus" }),
+        /Choose active, completed, failed or cancelled/
+      );
+
+      assert.equal(deleteProviderBulkDownloadJob("job-queued"), "active");
+      assert.equal(deleteProviderBulkDownloadJob("job-missing"), "not-found");
+      assert.throws(
+        () => clearFinishedProviderBulkDownloadJobs({ status: "active" }),
+        /Only completed, failed or cancelled bulk jobs can be cleared/
+      );
+      assert.throws(
+        () => clearFinishedProviderBulkDownloadJobs({ olderThanDays: 0.5 }),
+        /whole number of days/
+      );
+      assert.equal(listProviderBulkDownloadJobs().totalCount, 4);
+
+      assert.equal(clearFinishedProviderBulkDownloadJobs({ olderThanDays: 30 }), 1);
+      assert.equal(getProviderBulkDownloadJobSnapshot("job-old-completed"), null);
+
+      assert.ok(getProviderBulkDownloadJobSnapshot("job-new-failed"));
+      assert.equal(deleteProviderBulkDownloadJob("job-new-failed"), "deleted");
+      assert.equal(getProviderBulkDownloadJobSnapshot("job-new-failed"), null);
+
+      assert.equal(clearFinishedProviderBulkDownloadJobs(), 1);
+      assert.deepEqual(
+        listProviderBulkDownloadJobs().jobs.map((job) => job.id),
+        ["job-queued"]
+      );
+    }
   );
 });
 
@@ -466,6 +598,72 @@ const exampleTrack = {
   position: 1,
   trackNumber: 1
 } satisfies BackupTrack;
+
+function insertBulkJobRow({
+  ageDays,
+  id,
+  itemStatuses,
+  playlist,
+  status
+}: {
+  ageDays: number;
+  id: string;
+  itemStatuses: string[];
+  playlist?: { id: string; name: string };
+  status: string;
+}) {
+  const timestamp = new Date(
+    Date.now() - ageDays * 24 * 60 * 60 * 1000
+  ).toISOString();
+  const diagnosticId = `diagnostic-${id}`;
+
+  getSpotifyBuDatabase()
+    .prepare(
+      `
+        INSERT INTO provider_bulk_jobs (
+          id,
+          status,
+          diagnostic_id,
+          created_at,
+          updated_at,
+          snapshot_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      id,
+      status,
+      diagnosticId,
+      timestamp,
+      timestamp,
+      JSON.stringify({
+        createdAt: timestamp,
+        diagnosticId,
+        id,
+        items: itemStatuses.map((itemStatus, index) => ({
+          providerId: "youtube",
+          sourceUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+          status: itemStatus,
+          track: {
+            ...exampleTrack,
+            position: index + 1
+          }
+        })),
+        ...(playlist ? { playlist } : {}),
+        request: {
+          chunkPauseMs: 120000,
+          chunkSize: 3,
+          delayMs: 10000,
+          fallbackFormat: "none",
+          format: "opus",
+          quality: "192"
+        },
+        status,
+        updatedAt: timestamp
+      })
+    );
+}
 
 async function writeFakeYtDlp(directory: string) {
   await mkdir(directory, {
