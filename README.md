@@ -9,7 +9,7 @@ music server that works like a private Spotify.
 If Spotify removes a song, loses a licence, or you cancel your subscription, your
 playlists and the music in them are still on your own drive.
 
-Current stable release: `1.10.4` —
+Current stable release: `1.11.0` —
 [download / release notes](https://github.com/thedinz/TrackKeep/releases/latest)
 
 > **New here? Read this first.** TrackKeep is not a standalone music player. It
@@ -249,7 +249,7 @@ the right image.)
 | --- | --- |
 | `ghcr.io/thedinz/spotifybu:latest` | Normal installs. Built from `main`. |
 | `ghcr.io/thedinz/spotifybu:dev` | Testing upcoming changes. Built from `dev`, may be unstable. |
-| `ghcr.io/thedinz/spotifybu:1.10.4` | Pinning an exact release. |
+| `ghcr.io/thedinz/spotifybu:1.11.0` | Pinning an exact release. |
 
 #### Option 1 — Docker Compose (recommended)
 
