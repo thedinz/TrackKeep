@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  clearFinishedProviderBulkDownloadJobs,
+  listProviderBulkDownloadJobs,
   startProviderBulkDownloadJob,
   type AuthorizedProviderBulkDownloadRequest
 } from "@/lib/providers/download";
@@ -10,6 +12,58 @@ import { isUnavailableSpotifyBackupTrack } from "@/lib/spotify";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 900;
+
+export function GET(request: NextRequest) {
+  const { searchParams } = request.nextUrl;
+
+  try {
+    const history = listProviderBulkDownloadJobs({
+      limit: optionalNumericParam(searchParams.get("limit")),
+      offset: optionalNumericParam(searchParams.get("offset")),
+      playlistId: searchParams.get("playlistId") ?? undefined,
+      status: searchParams.get("status") ?? undefined
+    });
+
+    return NextResponse.json(history, {
+      headers: {
+        "Cache-Control": "no-store"
+      }
+    });
+  } catch (error) {
+    return bulkJobHistoryError(
+      error,
+      "TrackKeep could not list bulk backup jobs."
+    );
+  }
+}
+
+export function DELETE(request: NextRequest) {
+  const { searchParams } = request.nextUrl;
+
+  try {
+    const deletedCount = clearFinishedProviderBulkDownloadJobs({
+      olderThanDays: optionalNumericParam(searchParams.get("olderThanDays")),
+      playlistId: searchParams.get("playlistId") ?? undefined,
+      status: searchParams.get("status") ?? undefined
+    });
+
+    return NextResponse.json(
+      {
+        deletedCount
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store"
+        }
+      }
+    );
+  } catch (error) {
+    return bulkJobHistoryError(
+      error,
+      "TrackKeep could not clear finished bulk backup jobs."
+    );
+  }
+}
 
 export async function POST(request: NextRequest) {
   const session = await getSpotifySession();
@@ -63,6 +117,10 @@ export async function POST(request: NextRequest) {
         ...item,
         track: tracks[index]
       })),
+      playlistId:
+        typeof body.playlistId === "string" ? body.playlistId : undefined,
+      playlistName:
+        typeof body.playlistName === "string" ? body.playlistName : undefined,
       quality: String(body.quality ?? ""),
       rightsConfirmed: Boolean(body.rightsConfirmed)
     });
@@ -99,6 +157,21 @@ export async function POST(request: NextRequest) {
       request
     );
   }
+}
+
+function optionalNumericParam(value: string | null) {
+  return value === null || !value.trim() ? undefined : Number(value);
+}
+
+function bulkJobHistoryError(error: unknown, fallback: string) {
+  return NextResponse.json(
+    {
+      error: error instanceof Error ? error.message : fallback
+    },
+    {
+      status: 400
+    }
+  );
 }
 
 function numericBodyValue(value: unknown) {

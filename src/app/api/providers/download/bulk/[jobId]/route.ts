@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   cancelProviderBulkDownloadJob,
+  deleteProviderBulkDownloadJob,
   getProviderBulkDownloadJobSnapshot,
   retryProviderBulkDownloadJob
 } from "@/lib/providers/download";
@@ -73,6 +74,37 @@ export async function POST(request: NextRequest, context: RouteContext) {
     {
       diagnosticId: job.diagnosticId,
       job
+    },
+    {
+      headers: {
+        "Cache-Control": "no-store"
+      }
+    }
+  );
+}
+
+export async function DELETE(_request: Request, context: RouteContext) {
+  const { jobId } = await context.params;
+  const result = deleteProviderBulkDownloadJob(jobId);
+
+  if (result !== "deleted") {
+    return NextResponse.json(
+      {
+        error:
+          result === "active"
+            ? "Cancel this bulk job and wait for it to stop before deleting it."
+            : "Provider bulk download job not found."
+      },
+      {
+        status: result === "active" ? 409 : 404
+      }
+    );
+  }
+
+  return NextResponse.json(
+    {
+      deleted: true,
+      jobId
     },
     {
       headers: {

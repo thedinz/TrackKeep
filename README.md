@@ -9,7 +9,7 @@ music server that works like a private Spotify.
 If Spotify removes a song, loses a licence, or you cancel your subscription, your
 playlists and the music in them are still on your own drive.
 
-Current stable release: `1.10.4` —
+Current stable release: `1.11.0` —
 [download / release notes](https://github.com/thedinz/TrackKeep/releases/latest)
 
 > **New here? Read this first.** TrackKeep is not a standalone music player. It
@@ -249,7 +249,7 @@ the right image.)
 | --- | --- |
 | `ghcr.io/thedinz/spotifybu:latest` | Normal installs. Built from `main`. |
 | `ghcr.io/thedinz/spotifybu:dev` | Testing upcoming changes. Built from `dev`, may be unstable. |
-| `ghcr.io/thedinz/spotifybu:1.10.4` | Pinning an exact release. |
+| `ghcr.io/thedinz/spotifybu:1.11.0` | Pinning an exact release. |
 
 #### Option 1 — Docker Compose (recommended)
 
@@ -443,6 +443,7 @@ names remain supported as legacy fallbacks.
 - Reviewed single-track source downloads for YouTube and JioSaavn using `yt-dlp`, alternate candidate fallback, and background job polling
 - Dry-run bulk candidate previews with live progress before provider downloads
 - Resumable background bulk playlist jobs with cancellation, retry, per-track waits, chunk pauses, progress reporting, and partial-failure reporting
+- Bulk job history with status and playlist filters, per-job retry and delete, and manual cleanup of finished jobs
 - Ogg Opus output up to 192 kbps by default, configurable to 160/192/256 kbps caps, with optional MP3 192/256/320 kbps fallback and MP3 kept as a legacy compatibility option
 - Navidrome volume staging with idle cleanup for abandoned failed download/convert temp files
 - Docker image with Node.js, `ffmpeg`, prerelease/nightly-channel `yt-dlp[default]`, Python 3, Mutagen (for preserving Opus artwork during organization), and `pip`
@@ -945,8 +946,8 @@ docker run --rm -p 3000:3000 \
 - `src/app/api/providers/download/status/[jobId]/route.ts` reports provider download job status for UI polling.
 - `src/app/api/providers/download/batch/route.ts` supports confirmed throttled provider download queues.
 - `src/app/api/providers/download/bulk/preview/route.ts` dry-runs provider candidate selection for missing tracks.
-- `src/app/api/providers/download/bulk/route.ts` starts persisted background bulk provider jobs.
-- `src/app/api/providers/download/bulk/[jobId]/route.ts` reports, cancels, and retries bulk provider jobs.
+- `src/app/api/providers/download/bulk/route.ts` starts persisted background bulk provider jobs, lists the job history, and clears finished jobs.
+- `src/app/api/providers/download/bulk/[jobId]/route.ts` reports, cancels, retries, and deletes bulk provider jobs.
 - `src/app/api/music-library/organize/route.ts` moves or renames matched local files into their planned Navidrome album paths in small batches.
 - `src/app/api/plex/settings/route.ts` reads and saves Plex playlist sync settings.
 - `src/app/api/spotify/playlists/[playlistId]/music-library/route.ts` replaces, appends, or full-syncs a matching Navidrome or Plex playlist from backed-up Spotify tracks.
@@ -971,4 +972,3 @@ See [docs/source-providers.md](docs/source-providers.md).
 - Add long-term backup history browsing and restore flows
 - Add owned-file import workflows for music the user already has outside the Navidrome folder
 - Add more provider adapters where the user's authorization model is clear
-- Add richer bulk job history filtering and cleanup controls

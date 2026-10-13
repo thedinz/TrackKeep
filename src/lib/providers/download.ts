@@ -208,6 +208,8 @@ export type AuthorizedProviderBulkDownloadRequest = {
   fallbackQuality?: string;
   format?: string;
   items: AuthorizedProviderDownloadBatchItem[];
+  playlistId?: string;
+  playlistName?: string;
   quality?: string;
   rightsConfirmed: boolean;
 };
@@ -259,6 +261,11 @@ export type ProviderBulkDownloadJobItemSnapshot = {
   track: BackupTrack;
 };
 
+export type ProviderBulkDownloadJobPlaylist = {
+  id: string;
+  name: string;
+};
+
 export type ProviderBulkDownloadJobSnapshot = {
   cancelRequestedAt?: string;
   completedAt?: string;
@@ -269,6 +276,7 @@ export type ProviderBulkDownloadJobSnapshot = {
   id: string;
   items: ProviderBulkDownloadJobItemSnapshot[];
   pendingCount: number;
+  playlist?: ProviderBulkDownloadJobPlaylist;
   request: {
     chunkPauseMs: number;
     chunkSize: number;
@@ -282,6 +290,22 @@ export type ProviderBulkDownloadJobSnapshot = {
   status: ProviderBulkDownloadJobStatus;
   totalCount: number;
   updatedAt: string;
+};
+
+export type ProviderBulkDownloadJobSummary = Omit<
+  ProviderBulkDownloadJobSnapshot,
+  "items"
+>;
+
+export type ProviderBulkDownloadJobHistoryFilter = {
+  playlistId?: string;
+  status?: string;
+};
+
+export type ProviderBulkDownloadJobHistory = {
+  jobs: ProviderBulkDownloadJobSummary[];
+  playlists: ProviderBulkDownloadJobPlaylist[];
+  totalCount: number;
 };
 
 type ProviderDownloadLog = {
@@ -315,6 +339,7 @@ type ProviderBulkDownloadJobRecord = {
   diagnosticId: string;
   id: string;
   items: ProviderBulkDownloadJobItemSnapshot[];
+  playlist?: ProviderBulkDownloadJobPlaylist;
   request: ProviderBulkDownloadJobSnapshot["request"];
   status: ProviderBulkDownloadJobStatus;
   updatedAt: string;
@@ -416,6 +441,19 @@ const attemptLogSegments = [".spotifybu", "provider-download-attempts.json"];
 const maxAttemptLogEntries = 200;
 const maxBatchItems = 500;
 const maxProviderDownloadJobs = 100;
+const maxProviderBulkJobHistoryPageSize = 50;
+const maxProviderBulkJobHistoryAgeDays = 3650;
+export const providerBulkJobHistoryUnknownPlaylistId = "unknown";
+const activeProviderBulkJobStatuses: ProviderBulkDownloadJobStatus[] = [
+  "queued",
+  "running",
+  "cancelling"
+];
+const finishedProviderBulkJobStatuses: ProviderBulkDownloadJobStatus[] = [
+  "cancelled",
+  "completed",
+  "failed"
+];
 const providerDownloadJobTtlMs = 2 * 60 * 60 * 1000;
 const defaultProviderBulkChunkSize = 3;
 const defaultProviderBulkDelayMs = 10000;
@@ -724,6 +762,222 @@ export function retryProviderBulkDownloadJob(jobId: string) {
   scheduleProviderBulkDownloadJob(job.id);
 
   return snapshotProviderBulkDownloadJob(job);
+}
+
+export function listProviderBulkDownloadJobs({
+  limit,
+  offset,
+  ...filter
+}: ProviderBulkDownloadJobHistoryFilter & {
+  limit?: number;
+  offset?: number;
+} = {}): ProviderBulkDownloadJobHistory {
+  const database = getSpotifyBuDatabase();
+  const { clauses, params } = providerBulkJobHistoryConditions(filter);
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const pageSize = clampPositiveInteger(
+    limit,
+    maxProviderBulkJobHistoryPageSize,
+    1,
+    maxProviderBulkJobHistoryPageSize
+  );
+  const pageOffset = clampPositiveInteger(offset, 0, 0, Number.MAX_SAFE_INTEGER);
+  const rows = database
+    .prepare(
+      `
+        SELECT snapshot_json
+        FROM provider_bulk_jobs
+        ${where}
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?
+      `
+    )
+    .all(...params, pageSize, pageOffset) as ProviderBulkDownloadJobRow[];
+  const total = database
+    .prepare(
+      `
+        SELECT COUNT(*) AS count
+        FROM provider_bulk_jobs
+        ${where}
+      `
+    )
+    .get(...params) as { count: number };
+  const playlists = database
+    .prepare(
+      `
+        SELECT DISTINCT
+          json_extract(snapshot_json, '$.playlist.id') AS id,
+          json_extract(snapshot_json, '$.playlist.name') AS name
+        FROM provider_bulk_jobs
+        WHERE json_extract(snapshot_json, '$.playlist.id') IS NOT NULL
+        ORDER BY name COLLATE NOCASE ASC
+      `
+    )
+    .all() as Array<{ id: string; name: string | null }>;
+  const jobs: ProviderBulkDownloadJobSummary[] = [];
+
+  for (const row of rows) {
+    try {
+      const job = JSON.parse(row.snapshot_json) as ProviderBulkDownloadJobRecord;
+
+      if (!job.id || !Array.isArray(job.items)) {
+        continue;
+      }
+
+      // The summary leaves out the per-track items, which can run to
+      // hundreds of entries per job.
+      const { items: _items, ...summary } = snapshotProviderBulkDownloadJob(job);
+
+      jobs.push(summary);
+    } catch {
+      continue;
+    }
+  }
+
+  return {
+    jobs,
+    playlists: playlists.map((playlist) => ({
+      id: playlist.id,
+      name: playlist.name || playlist.id
+    })),
+    totalCount: total.count
+  };
+}
+
+export function deleteProviderBulkDownloadJob(
+  jobId: string
+): "active" | "deleted" | "not-found" {
+  const job = getProviderBulkDownloadJob(jobId);
+
+  if (
+    activeProviderBulkDownloadJobs.has(jobId) ||
+    (job && !finishedProviderBulkJobStatuses.includes(job.status))
+  ) {
+    return "active";
+  }
+
+  const result = getSpotifyBuDatabase()
+    .prepare(
+      `
+        DELETE FROM provider_bulk_jobs
+        WHERE id = ?
+          AND status IN (${finishedProviderBulkJobStatuses.map(() => "?").join(", ")})
+      `
+    )
+    .run(jobId, ...finishedProviderBulkJobStatuses);
+
+  providerBulkDownloadJobs.delete(jobId);
+
+  return Number(result.changes) ? "deleted" : "not-found";
+}
+
+// Only finished jobs are ever cleared. Provenance for the downloaded files
+// lives in the music folder's provider download log, not in these rows.
+export function clearFinishedProviderBulkDownloadJobs({
+  olderThanDays,
+  ...filter
+}: ProviderBulkDownloadJobHistoryFilter & {
+  olderThanDays?: number;
+} = {}) {
+  const database = getSpotifyBuDatabase();
+  const { clauses, params } = providerBulkJobHistoryConditions(
+    filter,
+    finishedProviderBulkJobStatuses
+  );
+
+  if (olderThanDays !== undefined) {
+    if (
+      !Number.isInteger(olderThanDays) ||
+      olderThanDays < 1 ||
+      olderThanDays > maxProviderBulkJobHistoryAgeDays
+    ) {
+      throw new Error(
+        `Choose a whole number of days between 1 and ${maxProviderBulkJobHistoryAgeDays}.`
+      );
+    }
+
+    clauses.push("updated_at < ?");
+    params.push(
+      new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString()
+    );
+  }
+
+  const rows = database
+    .prepare(
+      `
+        SELECT id
+        FROM provider_bulk_jobs
+        WHERE ${clauses.join(" AND ")}
+      `
+    )
+    .all(...params) as Array<{ id: string }>;
+  const deleteJob = database.prepare(
+    `
+      DELETE FROM provider_bulk_jobs
+      WHERE id = ?
+        AND status IN (${finishedProviderBulkJobStatuses.map(() => "?").join(", ")})
+    `
+  );
+  let deletedCount = 0;
+
+  for (const { id } of rows) {
+    if (activeProviderBulkDownloadJobs.has(id)) {
+      continue;
+    }
+
+    if (Number(deleteJob.run(id, ...finishedProviderBulkJobStatuses).changes)) {
+      providerBulkDownloadJobs.delete(id);
+      deletedCount += 1;
+    }
+  }
+
+  return deletedCount;
+}
+
+function providerBulkJobHistoryConditions(
+  filter: ProviderBulkDownloadJobHistoryFilter,
+  allowedStatuses?: ProviderBulkDownloadJobStatus[]
+) {
+  const clauses: string[] = [];
+  const params: string[] = [];
+  const status = filter.status?.trim() ?? "";
+  const playlistId = filter.playlistId?.trim() ?? "";
+  const statuses =
+    status === "active"
+      ? activeProviderBulkJobStatuses
+      : finishedProviderBulkJobStatuses.includes(
+            status as ProviderBulkDownloadJobStatus
+          )
+        ? [status as ProviderBulkDownloadJobStatus]
+        : status
+          ? null
+          : (allowedStatuses ?? []);
+
+  if (
+    !statuses ||
+    (allowedStatuses &&
+      statuses.some((candidate) => !allowedStatuses.includes(candidate)))
+  ) {
+    throw new Error(
+      allowedStatuses
+        ? "Only completed, failed or cancelled bulk jobs can be cleared."
+        : "Choose active, completed, failed or cancelled."
+    );
+  }
+
+  if (statuses.length) {
+    clauses.push(`status IN (${statuses.map(() => "?").join(", ")})`);
+    params.push(...statuses);
+  }
+
+  if (playlistId === providerBulkJobHistoryUnknownPlaylistId) {
+    clauses.push("json_extract(snapshot_json, '$.playlist.id') IS NULL");
+  } else if (playlistId) {
+    clauses.push("json_extract(snapshot_json, '$.playlist.id') = ?");
+    params.push(playlistId);
+  }
+
+  return { clauses, params };
 }
 
 export async function downloadAuthorizedProviderBatch(
@@ -1480,6 +1734,14 @@ function buildProviderBulkDownloadJob(
   );
   const now = new Date().toISOString();
   const diagnosticId = providerDownloadDiagnosticId();
+  const playlistId =
+    typeof request.playlistId === "string"
+      ? request.playlistId.trim().slice(0, 200)
+      : "";
+  const playlistName =
+    typeof request.playlistName === "string"
+      ? request.playlistName.trim().slice(0, 300)
+      : "";
   const items = request.items.map((item) => {
     validateTrack(item.track);
     const providerId = assertDownloadProvider(item.providerId);
@@ -1510,6 +1772,9 @@ function buildProviderBulkDownloadJob(
     diagnosticId,
     id: providerBulkDownloadJobId(),
     items,
+    ...(playlistId
+      ? { playlist: { id: playlistId, name: playlistName || playlistId } }
+      : {}),
     request: {
       chunkPauseMs,
       chunkSize,
@@ -1698,6 +1963,7 @@ function snapshotProviderBulkDownloadJob(
     id: job.id,
     items: job.items,
     pendingCount: counts.pendingCount,
+    ...(job.playlist ? { playlist: job.playlist } : {}),
     request: job.request,
     runningCount: counts.runningCount,
     status: job.status,

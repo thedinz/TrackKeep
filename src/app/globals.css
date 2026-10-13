@@ -2561,6 +2561,109 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   width: 100%;
 }
 
+.bulk-job-history-header,
+.bulk-job-history-row {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.bulk-job-history-header > div,
+.bulk-job-history-summary {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.bulk-job-history-header .icon-command,
+.bulk-job-history-actions .icon-command {
+  flex: 0 0 auto;
+  width: 38px;
+}
+
+.bulk-job-history-controls {
+  align-items: end;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+}
+
+.bulk-job-history-controls .command {
+  min-height: 40px;
+  width: auto;
+}
+
+.bulk-job-history-list {
+  display: grid;
+  gap: 6px;
+  max-height: 420px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.bulk-job-history-item {
+  background: rgba(5, 8, 6, 0.45);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  font-size: 0.78rem;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+}
+
+.bulk-job-history-item.completed {
+  border-color: rgba(37, 230, 109, 0.34);
+}
+
+.bulk-job-history-item.failed {
+  border-color: rgba(255, 122, 92, 0.38);
+}
+
+.bulk-job-history-item.cancelled {
+  border-color: rgba(243, 184, 75, 0.5);
+}
+
+.bulk-job-history-summary strong {
+  color: var(--ink);
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
+.bulk-job-history-summary span,
+.bulk-job-history-detail > span,
+.bulk-job-history-pager span {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.bulk-job-history-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.bulk-job-history-detail {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.bulk-job-history-pager {
+  align-items: center;
+  display: flex;
+  font-size: 0.78rem;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.bulk-job-history-pager .command {
+  width: auto;
+}
+
 .provider-download h3,
 .provider-download p {
   margin: 0;
@@ -3028,7 +3131,8 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   .signal-grid,
   .summary-strip,
   .settings-inline-grid,
-  .backup-workflow-grid {
+  .backup-workflow-grid,
+  .bulk-job-history-controls {
     grid-template-columns: 1fr;
   }
 
