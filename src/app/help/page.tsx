@@ -326,6 +326,17 @@ export default function HelpPage() {
               </p>
             </article>
             <article>
+              <FileSearch size={22} />
+              <h3>Playlist history is kept</h3>
+              <p>
+                TrackKeep saves a snapshot whenever a playlist's name or track list
+                changes. Backups on the dashboard lists them, shows what was added
+                or removed, exports any snapshot as JSON, and can restore one to a
+                Navidrome or Plex playlist, even after Spotify changed or removed
+                the playlist.
+              </p>
+            </article>
+            <article>
               <ListChecks size={22} />
               <h3>Matching protects the playlist</h3>
               <p>

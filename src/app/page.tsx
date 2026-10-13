@@ -8,6 +8,7 @@ import {
   Clock3,
   Download,
   HardDrive,
+  History,
   CircleHelp,
   Link2,
   ListMusic,
@@ -3555,6 +3556,15 @@ export default function Home() {
               Connect Spotify
             </a>
           )}
+
+          <a
+            className="icon-command"
+            href="/backups"
+            title="Playlist backup history"
+          >
+            <History size={18} />
+            Backups
+          </a>
 
           <a className="icon-command" href="/settings" title="Settings">
             <Settings size={18} />
