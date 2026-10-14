@@ -1259,6 +1259,135 @@ button {
   min-height: 0;
 }
 
+.backups-grid {
+  align-items: start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
+  margin: 0 auto;
+  max-width: 1200px;
+  width: 100%;
+}
+
+.backups-grid .panel {
+  min-height: 0;
+  min-width: 0;
+}
+
+.backups-snapshot-list {
+  display: grid;
+  gap: 6px;
+  max-height: 560px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.backups-snapshot {
+  background: rgba(5, 8, 6, 0.45);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  display: grid;
+  font-size: 0.8rem;
+  gap: 3px;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.backups-snapshot:hover,
+.backups-snapshot.selected {
+  border-color: rgba(37, 230, 109, 0.5);
+}
+
+.backups-snapshot.selected {
+  background: rgba(37, 230, 109, 0.08);
+}
+
+.backups-snapshot strong {
+  color: var(--ink);
+  font-size: 0.86rem;
+}
+
+.backups-snapshot span {
+  overflow-wrap: anywhere;
+}
+
+.backups-pager,
+.backups-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.backups-pager {
+  justify-content: space-between;
+}
+
+.backups-comparison {
+  color: var(--ink);
+  margin: 0;
+}
+
+.backups-restore-result {
+  background: rgba(37, 230, 109, 0.1);
+  border: 1px solid rgba(37, 230, 109, 0.36);
+  border-radius: 8px;
+  color: #b9ffd0;
+  display: grid;
+  font-size: 0.84rem;
+  gap: 6px;
+  padding: 10px;
+}
+
+.backups-restore-result ul {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  padding-left: 18px;
+}
+
+.backups-track-section {
+  display: grid;
+  gap: 8px;
+}
+
+.backups-track-list {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  list-style: none;
+  margin: 0;
+  max-height: 480px;
+  overflow: auto;
+  padding: 0;
+}
+
+.backups-track-list li {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  font-size: 0.82rem;
+  gap: 2px;
+  padding: 7px 10px;
+}
+
+.backups-track-list li:last-child {
+  border-bottom: 0;
+}
+
+.backups-track-list strong {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.backups-track-list span {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .settings-body {
   display: grid;
   gap: 16px;
@@ -3132,6 +3261,7 @@ button.folder-plan-status.organize:hover:not(:disabled) {
   .summary-strip,
   .settings-inline-grid,
   .backup-workflow-grid,
+  .backups-grid,
   .bulk-job-history-controls {
     grid-template-columns: 1fr;
   }

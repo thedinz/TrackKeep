@@ -444,6 +444,7 @@ names remain supported as legacy fallbacks.
 - Dry-run bulk candidate previews with live progress before provider downloads
 - Resumable background bulk playlist jobs with cancellation, retry, per-track waits, chunk pauses, progress reporting, and partial-failure reporting
 - Bulk job history with status and playlist filters, per-job retry and delete, and manual cleanup of finished jobs
+- Playlist backup history: a snapshot each time a playlist's name or track list changes, with what was added or removed, JSON export, and restore of any snapshot to a Navidrome or Plex playlist
 - Ogg Opus output up to 192 kbps by default, configurable to 160/192/256 kbps caps, with optional MP3 192/256/320 kbps fallback and MP3 kept as a legacy compatibility option
 - Navidrome volume staging with idle cleanup for abandoned failed download/convert temp files
 - Docker image with Node.js, `ffmpeg`, prerelease/nightly-channel `yt-dlp[default]`, Python 3, Mutagen (for preserving Opus artwork during organization), and `pip`
@@ -945,6 +946,8 @@ docker run --rm -p 3000:3000 \
 - `src/app/api/providers/download/route.ts` starts confirmed single-track provider download jobs.
 - `src/app/api/providers/download/status/[jobId]/route.ts` reports provider download job status for UI polling.
 - `src/app/api/providers/download/batch/route.ts` supports confirmed throttled provider download queues.
+- `src/app/api/playlist-backups/route.ts` lists playlists with saved snapshots and each playlist's snapshot history.
+- `src/app/api/playlist-backups/[backupId]/route.ts` returns or exports one snapshot, and `restore/route.ts` beneath it restores a snapshot to Navidrome or Plex.
 - `src/app/api/providers/download/bulk/preview/route.ts` dry-runs provider candidate selection for missing tracks.
 - `src/app/api/providers/download/bulk/route.ts` starts persisted background bulk provider jobs, lists the job history, and clears finished jobs.
 - `src/app/api/providers/download/bulk/[jobId]/route.ts` reports, cancels, retries, and deletes bulk provider jobs.
@@ -969,6 +972,5 @@ See [docs/source-providers.md](docs/source-providers.md).
 
 ### Roadmap
 
-- Add long-term backup history browsing and restore flows
 - Add owned-file import workflows for music the user already has outside the Navidrome folder
 - Add more provider adapters where the user's authorization model is clear
