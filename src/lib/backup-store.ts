@@ -115,7 +115,7 @@ export function persistPlaylistBackup({
         SELECT id, snapshot_hash
         FROM playlist_backups
         WHERE playlist_id = ?
-        ORDER BY created_at DESC, id DESC
+        ORDER BY created_at DESC, rowid DESC
         LIMIT 1
       `
     )
@@ -253,7 +253,7 @@ export function listPlaylistBackupPlaylists(): PlaylistBackupPlaylistSummary[] {
           SELECT latest.id
           FROM playlist_backups AS latest
           WHERE latest.playlist_id = backup.playlist_id
-          ORDER BY latest.created_at DESC, latest.id DESC
+          ORDER BY latest.created_at DESC, latest.rowid DESC
           LIMIT 1
         )
         ORDER BY playlist_name COLLATE NOCASE ASC
@@ -300,7 +300,7 @@ export function listPlaylistBackupHistory(
         SELECT ${playlistBackupHistoryColumns}
         FROM playlist_backups
         WHERE playlist_id = ?
-        ORDER BY created_at DESC, id DESC
+        ORDER BY created_at DESC, rowid DESC
         LIMIT ? OFFSET ?
       `
     )
@@ -369,7 +369,7 @@ export function getPlaylistBackupSnapshotDetail(
         SELECT ${playlistBackupHistoryColumns}
         FROM playlist_backups
         WHERE playlist_id = ?
-        ORDER BY created_at DESC, id DESC
+        ORDER BY created_at DESC, rowid DESC
         LIMIT 1
       `
     )
@@ -487,7 +487,7 @@ function getLatestPlaylistBackupRows(options?: { includePayload?: boolean }) {
         SELECT latest.id
         FROM playlist_backups AS latest
         WHERE latest.playlist_id = backup.playlist_id
-        ORDER BY latest.created_at DESC, latest.id DESC
+        ORDER BY latest.created_at DESC, latest.rowid DESC
         LIMIT 1
       )
       ORDER BY playlist_name COLLATE NOCASE ASC
@@ -572,7 +572,7 @@ function compactLegacyPlaylistBackups(db: DatabaseSync) {
       `
         SELECT id, playlist_id, payload_json
         FROM playlist_backups
-        ORDER BY playlist_id ASC, created_at ASC, id ASC
+        ORDER BY playlist_id ASC, created_at ASC, rowid ASC
       `
     )
     .iterate() as Iterable<{

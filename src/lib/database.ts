@@ -3,11 +3,17 @@ import path from "path";
 import { DatabaseSync } from "node:sqlite";
 import { getTrackKeepEnvironmentValue } from "./trackkeep-env";
 
-let database: DatabaseSync | null = null;
+// The connection lives on globalThis so every copy of this module shares it.
+// Test loaders on Node 22 and Next dev reloads can load the module twice, and
+// a second copy would otherwise keep its own connection after the first one
+// is closed or pointed at another file.
+const databaseState = ((globalThis as {
+  trackKeepDatabaseState?: { database: DatabaseSync | null };
+}).trackKeepDatabaseState ??= { database: null });
 
 export function getSpotifyBuDatabase() {
-  if (database) {
-    return database;
+  if (databaseState.database) {
+    return databaseState.database;
   }
 
   const databasePath = getSpotifyBuDatabasePath();
@@ -16,7 +22,9 @@ export function getSpotifyBuDatabase() {
     recursive: true
   });
 
-  database = new DatabaseSync(databasePath);
+  const database = new DatabaseSync(databasePath);
+
+  databaseState.database = database;
   database.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
@@ -63,8 +71,8 @@ export function getSpotifyBuDatabase() {
 }
 
 export function closeSpotifyBuDatabase() {
-  database?.close();
-  database = null;
+  databaseState.database?.close();
+  databaseState.database = null;
 }
 
 export function getSpotifyBuDatabasePath() {

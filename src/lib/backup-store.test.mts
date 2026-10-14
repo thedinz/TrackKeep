@@ -43,6 +43,12 @@ test("an unchanged playlist refreshes its newest snapshot instead of adding one"
 
 test("playlist changes are recorded as history with what changed", async (t) => {
   await useTemporaryDatabase(t);
+  // Every save lands in the same millisecond, so ordering has to fall back to
+  // the order the snapshots were saved in.
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: Date.parse("2026-10-01T12:00:00.000Z")
+  });
 
   const original = persistPlaylistBackup({
     playlist: examplePlaylist,
